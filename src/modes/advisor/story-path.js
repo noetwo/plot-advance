@@ -2,7 +2,7 @@ import { soCallModel } from '../../bootstrap.js';
 import { convoStreamKeyForMode, persistConvo } from '../../core/chat-metadata.js';
 import { cancelPostReply, postReplyCancelsOnChatSwitch } from '../../core/post-reply.js';
 import { POST_REPLY_CALL_TIMEOUT_MS, getCtx, getSettings, uiConfirm } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { addSystemNote, clearNoteOpts, loadConvoForChat } from './cards.js';
 import { ADVISOR_REMIND_AFTER, dropLegacyGuides, getPath, setPath } from './metadata.js';
 import { renderPlanBar } from './ui.js';
@@ -23,6 +23,9 @@ import { buildWorldInfo } from '../../st/adapters.js';
 import { addMessage } from '../../ui/messages.js';
 import { currentOracleMode, refreshDraftCard, toggleWindow } from '../../ui/mode-shell.js';
 import { maybeWrapJb, presetCurationActive } from '../../ui/settings.js';
+import { abortCtl, advisorMode, convo, isGenerating, nextCid, setConvoStreamKey, setLiveCondense, setLiveForge } from '../../core/runtime-state.js';
+import { nodeDetailJob, setNodeDetailJob, setPathEditDraft } from './state.js';
+import { win } from '../../ui/state.js';
 
 /* ------------------------------------------------------------------ *
  * 剧情脉络（2.5.0）—— 纯函数层。时钟 now = 主聊天消息数，由调用方注入（chatMsgCount()）。
@@ -116,7 +119,7 @@ export async function adoptPath(parsed, speed) {
             : '已开始引导：主聊天的 AI 会逐步把剧情推向这个目标（你正常进行 RP 即可）。可以在上方的方案条里调整推进速度、查看注入内容，或停止引导。';
     }
     abortNodeDetailJob();
-    sharedState.pathEditDraft = null;
+    setPathEditDraft(null);
     if (!setPath(path)) {
         addSystemNote('无法保存引导：当前似乎没有打开任何聊天。');
         return false;
@@ -134,7 +137,7 @@ export function pathComplete() {
     if (!path) return;
     const multi = pathIsMulti(path);
     abortNodeDetailJob();
-    sharedState.pathEditDraft = null;
+    setPathEditDraft(null);
     const r = pathAdvance(path, chatMsgCount());
     if (r.ended) {
         setPath(null);
@@ -160,7 +163,7 @@ export async function pathAbandon() {
     if (!path) return;
     if (pathIsMulti(path) && !(await uiConfirm('确定放弃？整条剧情脉络和引导都会清除，主聊天恢复原状。'))) return;
     abortNodeDetailJob();
-    sharedState.pathEditDraft = null;
+    setPathEditDraft(null);
     setPath(null);
     applyPlanInjection();
     renderPlanBar();
@@ -174,17 +177,17 @@ export async function pathSendBack() {
     const path = getPath();
     if (!path) return;
     toggleWindow(true);
-    if (!sharedState.advisorMode) await toggleAdvisor();   // 开关型：已在参谋房则不动
+    if (!advisorMode) await toggleAdvisor();   // 开关型：已在参谋房则不动
     // 换房确认里点了「取消」= 留在原来那一房：开场白绝不能落到别的房里。
-    if (!sharedState.advisorMode) return;
+    if (!advisorMode) return;
     const node = pathActiveNode(path);
     const where = pathIsMulti(path)
         ? `剧情脉络「${path.title || '未命名'}」的${pathProgressLabel(path)}${node ? `「${node.name}」` : ''}`
         : `方案「${path.title || '未命名'}」`;
     const content = P('advisor.sendBack', { where });
-    const entry = { id: ++sharedState.cidSeq, role: 'assistant', content };
+    const entry = { id: nextCid(), role: 'assistant', content };
     entry._el = addMessage('assistant', content, entry);
-    sharedState.convo.push(entry);
+    convo.push(entry);
     persistConvo();
 }
 
@@ -221,12 +224,12 @@ function pathJobKey(path, node) {
     return `${chatIdentityKey()}|${path.adoptedAt}|${node.id}`;
 }
 function abortNodeDetailJob() {
-    const job = sharedState.nodeDetailJob;
-    sharedState.nodeDetailJob = null;
+    const job = nodeDetailJob;
+    setNodeDetailJob(null);
     if (job) { try { job.ctl.abort(); } catch (e) { /* ignore */ } }
 }
 export function nodeDetailWriting(path, node) {
-    return !!(sharedState.nodeDetailJob && path && node && sharedState.nodeDetailJob.key === pathJobKey(path, node));
+    return !!(nodeDetailJob && path && node && nodeDetailJob.key === pathJobKey(path, node));
 }
 export async function writePathNodeDetail() {
     const path = getPath();
@@ -234,7 +237,7 @@ export async function writePathNodeDetail() {
     if (!node || nodeDetailWriting(path, node)) return;
     abortNodeDetailJob();
     const job = { key: pathJobKey(path, node), ctl: new AbortController() };
-    sharedState.nodeDetailJob = job;
+    setNodeDetailJob(job);
     renderPlanBar();
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; job.ctl.abort(); }, POST_REPLY_CALL_TIMEOUT_MS);
@@ -251,8 +254,8 @@ export async function writePathNodeDetail() {
     } finally {
         clearTimeout(timer);
     }
-    if (sharedState.nodeDetailJob !== job) return;   // 已被取消，或被新的一次顶掉
-    sharedState.nodeDetailJob = null;
+    if (nodeDetailJob !== job) return;   // 已被取消，或被新的一次顶掉
+    setNodeDetailJob(null);
     const cur = getPath();
     const curNode = pathActiveNode(cur);
     if (!curNode || pathJobKey(cur, curNode) !== job.key) { renderPlanBar(); return; }
@@ -292,10 +295,10 @@ function parseNodeDetail(text) {
 
 // 参谋设置里「后面节点的详细什么时候写」两段按钮 + 一行说明。
 export function syncNodeDetailSeg() {
-    if (!sharedState.win) return;
+    if (!win) return;
     const later = wantAutoDetail();
-    sharedState.win.querySelectorAll('#so-adv-detail-seg [data-v]').forEach((b) => b.classList.toggle('active', (b.dataset.v === 'later') === later));
-    const hint = sharedState.win.querySelector('#so-adv-detail-hint');
+    win.querySelectorAll('#so-adv-detail-seg [data-v]').forEach((b) => b.classList.toggle('active', (b.dataset.v === 'later') === later));
+    const hint = win.querySelector('#so-adv-detail-hint');
     if (hint) {
         hint.textContent = later
             ? '参谋先只写第 1 个节点的详细；每完成一个节点，参谋看着刚演完的剧情写下一个。更贴合，但每换一个节点多一次调用。'
@@ -359,26 +362,26 @@ export function onChatChanged() {
     if (postReplyCancelsOnChatSwitch()) cancelPostReply();
     // 保活：切聊天必须显式中断在途的后台锻造 / 深度精简并清两槽——它们属于【旧聊天】（用旧卡/草稿生成），
     // 绝不能把结果写进新聊天。清空后 runForge / runCondenseDepth 的完成/失败分支会看到身份不符而丢弃落盘。
-    if (sharedState.isGenerating && sharedState.abortCtl) { try { sharedState.abortCtl.abort(); } catch (e) { /* ignore */ } }
-    sharedState.liveForge = null;
-    sharedState.liveCondense = null;
+    if (isGenerating && abortCtl) { try { abortCtl.abort(); } catch (e) { /* ignore */ } }
+    setLiveForge(null);
+    setLiveCondense(null);
     clearNoteOpts();      // 换聊天即作废本会话的记录按钮材料：撤销 / 换 swipe 针对的是旧聊天的 MVU / 楼层，跨聊天重挂会写错对象
     closeMvuEditor();     // 🎛 变量编辑器：卡里摆的是【旧聊天】的 stat_data 快照与脏表，跨聊天按「应用」就是往新聊天写旧路径 —— 直接关掉（没开时是空操作）
     cancelMvuedScan();    // 🎛 并掐掉在途的「分析取值规则」（它的结果已注定被丢弃：白烧钱，还会让新聊天的扫描键僵在「分析中…」最长 120 秒）。刻意不放进 closeMvuEditor —— ✕ / 点背景关卡不该中断本聊天的扫描
     // 剧情脉络（2.5.0）：旧版的单拍方案 / 序列直接丢掉；「到了再写」在途的调用属于旧聊天，掐掉；方案条上没保存的修改作废。
     dropLegacyGuides();
     abortNodeDetailJob();
-    sharedState.pathEditDraft = null;
+    setPathEditDraft(null);
     applyPlanInjection();
-    if (sharedState.win) renderPlanBar();
+    if (win) renderPlanBar();
     checkPlanReminder();
-    sharedState.convoStreamKey = convoStreamKeyForMode(currentOracleMode(), getSettings());   // 新聊天：可见流复位到当前模式应在的房间（旧流已由自身写入落盘；这里不 sync，免把旧 convo 灌进新聊天元数据）
+    setConvoStreamKey(convoStreamKeyForMode(currentOracleMode(), getSettings()));   // 新聊天：可见流复位到当前模式应在的房间（旧流已由自身写入落盘；这里不 sync，免把旧 convo 灌进新聊天元数据）
     loadConvoForChat();   // 用户功能请求：把本聊天保存的侧聊历史载入窗口（per-chat 持久化）
     refreshSummaryUI();   // 用户功能请求：刷新本聊天的运行概要编辑器
     loadDiagSelForChat(); // 用户功能请求：载入本聊天的诊断「精选世界书条目」选择
     if (ENABLE_WI_CUSTOM_PICK) refreshWiCustomUI();   // 🌐 自定义范围清单随聊天重画（它自己读 metadata）
     loadFixCfgForChat();  // ✨ 校正模式 Phase 4：把校正控件重置成本聊天的生效配置（per-chat 持久化）
-    if (sharedState.win) refreshDraftCard();  // 角色工坊：把本聊天保存的草稿常驻卡载入 / 清空（per-chat 持久化，随切换刷新）
+    if (win) refreshDraftCard();  // 角色工坊：把本聊天保存的草稿常驻卡载入 / 清空（per-chat 持久化，随切换刷新）
     // ✨/📋 1.77.0：回到这个聊天时，把切走那会儿暂存下来的校正 / 模板成品落地。放在【最后】——记录要落进
     // loadConvoForChat() 刚载好的那份侧聊里。不 await（与 drainPendingPostReply 同一约定：事件监听不该被
     // 一趟 saveChat 拖住）；没有暂存时是即时返回的空操作。

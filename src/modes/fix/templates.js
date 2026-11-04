@@ -1,6 +1,6 @@
 import { saveChatMetadata } from '../../core/chat-metadata.js';
 import { getCtx, getSettings, save, uiConfirm } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { ADVISOR_PROMPT_KEY, FIX_CFG_META_KEY, getChatMetadataSafe, getPath } from '../advisor/metadata.js';
 import { parseExcludeTags } from '../diagnose/mvu.js';
 import { filterBundleCfg, normalizeScopeInput } from './algorithms.js';
@@ -9,6 +9,9 @@ import { ADVISOR_SPEEDS, ENABLE_FIX_CUSTOM_TASK, ENABLE_FIX_TEMPLATE_HUB, ENABLE
 import { fixSampleTemplateByName, fixTemplateIsBuiltin } from '../../prompts/helpers.js';
 import { P, promptIsCustom } from '../../prompts/registry.js';
 import { MVU_UPDATE_TAG } from '../../st/adapters.js';
+import { setSoGuideArmed, setSoGuideText, soGuideArmed, soGuideText } from '../advisor/state.js';
+import { fixHubSkipWarned, fixHubState, fixShareOpenSeq, fixTplDirty, nextFixShareOpenSeq, setFixHubSkipWarned, setFixShareOpenSeq, setFixTplDirty, setFixTplDirtyFor } from './state.js';
+import { win } from '../../ui/state.js';
 
 /* ------------------------------------------------------------------ *
  * ✨ 校正模式 Phase 4：校正配置按【当前聊天】持久化（同 plan/convo/summary/diagwi 风格）。
@@ -193,7 +196,7 @@ const FIX_HUB_ERR_TEXT = Object.freeze({
     '_fallback': '内容格式不对',
 });
 const fixHubIdRe = /^t\d{4,}$/;
-sharedState.fixHubSkipWarned = false;   // 坏条目只 console.warn 一次（spec §5）
+   // 坏条目只 console.warn 一次（spec §5）
 
 // 清洗口径（与仓库 clean 逐条相同）：孤立代理 → U+FFFD、CRLF / CR → LF、去 C0/C1 控制字符（留 \t \n）。
 function fixHubClean(s) {
@@ -299,7 +302,7 @@ function fixHubParseLibrary(body) {
         seen.add(t.id);
         templates.push(t);
     }
-    if (skipped && !sharedState.fixHubSkipWarned) { sharedState.fixHubSkipWarned = true; console.warn(`[Story Oracle] 模板广场：${skipped} 个条目格式不对，已跳过`); }
+    if (skipped && !fixHubSkipWarned) { setFixHubSkipWarned(true); console.warn(`[Story Oracle] 模板广场：${skipped} 个条目格式不对，已跳过`); }
     return { ok: true, lib: { generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : '', tags, templates }, skipped };
 }
 
@@ -359,7 +362,7 @@ function fixHubLibraryUrlsDefault() {
  * 卡片骨架（buildFixHubCard 里那段静态 innerHTML）不含任何外来数据。
  * ------------------------------------------------------------------ */
 const FIX_HUB_CACHE_KEY = 'so-fixhub-cache-v1';
-sharedState.fixHubState = { lib: null, source: '', fetchedAt: 0, tag: '', q: '', open: new Set(), pending: '' };
+
 
 // 缓存 = localStorage 里的 { fetchedAt, url, body }；每次读写都 try/catch（隐私模式 / 满了 / 被禁用都照常能用）。
 function fixHubCacheRead() {
@@ -386,7 +389,7 @@ function fixHubLibTime(lib) {
 // 真广场出了新格式 → 不写缓存。网上拿到的比本地缓存还旧（只连得上陈旧镜像）→ 继续用缓存那份、不回写。
 // 全失败 → 回缓存（source:'cache'）；连缓存都没有 → unreachable。
 async function fixHubLoadLibrary({ force = false } = {}) {
-    if (!force && sharedState.fixHubState.lib) return { ok: true, lib: sharedState.fixHubState.lib, source: sharedState.fixHubState.source, fetchedAt: sharedState.fixHubState.fetchedAt };
+    if (!force && fixHubState.lib) return { ok: true, lib: fixHubState.lib, source: fixHubState.source, fetchedAt: fixHubState.fetchedAt };
     const urls = fixHubLibraryUrlsDefault();
     const results = await Promise.all(urls.map(async (url) => {
         const ctl = new AbortController();
@@ -411,28 +414,28 @@ async function fixHubLoadLibrary({ force = false } = {}) {
         const cachedParsed = cachedNow ? fixHubParseLibrary(cachedNow.body) : null;
         const fetchedAt = Date.now();
         if (cachedParsed && cachedParsed.ok && fixHubLibTime(cachedParsed.lib) > fixHubLibTime(best.parsed.lib)) {
-            Object.assign(sharedState.fixHubState, { lib: cachedParsed.lib, source: 'net', fetchedAt });
+            Object.assign(fixHubState, { lib: cachedParsed.lib, source: 'net', fetchedAt });
             return { ok: true, lib: cachedParsed.lib, source: 'net', fetchedAt };
         }
         fixHubCacheWrite({ fetchedAt, url: best.url, body: best.text });
-        Object.assign(sharedState.fixHubState, { lib: best.parsed.lib, source: 'net', fetchedAt });
+        Object.assign(fixHubState, { lib: best.parsed.lib, source: 'net', fetchedAt });
         return { ok: true, lib: best.parsed.lib, source: 'net', fetchedAt };
     }
     if (results.some((r) => r && r.parsed.reason === 'schema')) {
         // 真广场换了新格式：内存里那份旧列表作废（否则搜索 / 点标签的重画会把它画回提示上面）；存储缓存不动。
-        sharedState.fixHubState.lib = null;
+        fixHubState.lib = null;
         return { ok: false, reason: 'schema' };
     }
     const cached = fixHubCacheRead();
     const parsed = cached ? fixHubParseLibrary(cached.body) : null;
     if (parsed && parsed.ok) {
-        Object.assign(sharedState.fixHubState, { lib: parsed.lib, source: 'cache', fetchedAt: cached.fetchedAt });
+        Object.assign(fixHubState, { lib: parsed.lib, source: 'cache', fetchedAt: cached.fetchedAt });
         return { ok: true, lib: parsed.lib, source: 'cache', fetchedAt: cached.fetchedAt };
     }
     // 存储缓存用不了（隐私模式 / 被清 / 坏了）但这次会话里拉到过 → 那份就是离线副本（Prince 裁：保留列表）。
-    if (sharedState.fixHubState.lib) {
-        sharedState.fixHubState.source = 'cache';
-        return { ok: true, lib: sharedState.fixHubState.lib, source: 'cache', fetchedAt: sharedState.fixHubState.fetchedAt };
+    if (fixHubState.lib) {
+        fixHubState.source = 'cache';
+        return { ok: true, lib: fixHubState.lib, source: 'cache', fetchedAt: fixHubState.fetchedAt };
     }
     return { ok: false, reason: 'unreachable' };
 }
@@ -489,7 +492,7 @@ function fixHubLocalNames() {
 // 下载 = 存成普通 {name,prompt} 模板 + 记一笔已下载 + 选中它。脏着先问（Review Focus 1，沿用「切换」同一句）；
 // 取消 = 什么都不动。新名字避让用户库 + 内置示例名（Review Focus 2：saveFixTemplate 会硬拒保留名）。
 async function fixHubDownload(entry, mode) {
-    if (sharedState.fixTplDirty && !(await uiConfirm('当前模板正文有未保存的改动，放弃并切换？'))) return false;
+    if (fixTplDirty && !(await uiConfirm('当前模板正文有未保存的改动，放弃并切换？'))) return false;
     const s = getSettings();
     const mine = fixHubLocalNames();
     const installed = fixHubPruneInstalled(s.fixHubInstalled, mine);
@@ -502,11 +505,11 @@ async function fixHubDownload(entry, mode) {
     save();
     setFixCfg({ fixC_template: name });
     populateFixTemplates();
-    const sel = sharedState.win && sharedState.win.querySelector('#so-fixc-template');
-    const box = sharedState.win && sharedState.win.querySelector('#so-fixc-prompt');
+    const sel = win && win.querySelector('#so-fixc-template');
+    const box = win && win.querySelector('#so-fixc-prompt');
     if (sel) sel.value = name;
     if (box) box.value = entry.prompt;
-    sharedState.fixTplDirty = false; sharedState.fixTplDirtyFor = name; updateFixTplDirtyMarker();
+    setFixTplDirty(false); setFixTplDirtyFor(name); updateFixTplDirtyMarker();
     updateFixVerdict();
     // 名字来自广场（不可信）：显式要求 toastr 转义，不依赖 ST 的全局默认。
     if (typeof toastr !== 'undefined') toastr.success(`已下载：〔${name}〕`, '', { escapeHtml: true });
@@ -514,7 +517,7 @@ async function fixHubDownload(entry, mode) {
 }
 
 function buildFixHubCard() {
-    let el = sharedState.win.querySelector('#so-fixhub');
+    let el = win.querySelector('#so-fixhub');
     if (el) return el;
     el = document.createElement('div');
     el.id = 'so-fixhub';
@@ -529,36 +532,36 @@ function buildFixHubCard() {
         '<div id="so-fixhub-list"></div>' +
         '<div id="so-fixhub-foot" class="so-hint"></div>' +
         '</div>';
-    sharedState.win.appendChild(el);
+    win.appendChild(el);
     el.addEventListener('click', (e) => { if (e.target === el) closeFixHub(); });   // 点遮罩关闭
     el.querySelector('.so-warn-x').addEventListener('click', closeFixHub);
     el.querySelector('#so-fixhub-refresh').addEventListener('click', () => fixHubRefresh(true));
-    el.querySelector('#so-fixhub-search').addEventListener('input', (e) => { sharedState.fixHubState.q = e.target.value; fixHubRender(); });
+    el.querySelector('#so-fixhub-search').addEventListener('input', (e) => { fixHubState.q = e.target.value; fixHubRender(); });
     el.querySelector('#so-fixhub-tags').addEventListener('click', (e) => {
         const chip = e.target.closest('.so-fixhub-chip');
         if (!chip) return;
-        sharedState.fixHubState.tag = chip.dataset.tag || '';
+        fixHubState.tag = chip.dataset.tag || '';
         fixHubRender();
     });
     el.querySelector('#so-fixhub-list').addEventListener('click', async (e) => {
         const item = e.target.closest('.so-fixhub-item');
-        if (!item || !sharedState.fixHubState.lib) return;
-        const entry = sharedState.fixHubState.lib.templates.find((t) => t.id === item.dataset.id);
+        if (!item || !fixHubState.lib) return;
+        const entry = fixHubState.lib.templates.find((t) => t.id === item.dataset.id);
         if (!entry) return;
         if (e.target.closest('.so-fixhub-preview')) {
-            if (sharedState.fixHubState.open.has(entry.id)) sharedState.fixHubState.open.delete(entry.id); else sharedState.fixHubState.open.add(entry.id);
+            if (fixHubState.open.has(entry.id)) fixHubState.open.delete(entry.id); else fixHubState.open.add(entry.id);
         } else if (e.target.closest('.so-fixhub-dl')) {
             const st = fixHubInstallStatus(entry, getSettings().fixHubInstalled || {}, fixHubLocalNames());
-            if (st === 'update') sharedState.fixHubState.pending = entry.id;
+            if (st === 'update') fixHubState.pending = entry.id;
             else if (st === 'none') await fixHubDownload(entry, 'new');
         } else if (e.target.closest('.so-fixhub-overwrite')) {
-            sharedState.fixHubState.pending = '';
+            fixHubState.pending = '';
             await fixHubDownload(entry, 'overwrite');
         } else if (e.target.closest('.so-fixhub-copy')) {
-            sharedState.fixHubState.pending = '';
+            fixHubState.pending = '';
             await fixHubDownload(entry, 'copy');
         } else if (e.target.closest('.so-fixhub-cancel')) {
-            sharedState.fixHubState.pending = '';
+            fixHubState.pending = '';
         } else return;
         fixHubRender();
     });
@@ -567,20 +570,20 @@ function buildFixHubCard() {
 
 // 按 fixHubState 重画标签条 / 列表 / 状态行 / 页脚。本地那份被改名或删掉的已下载记录在这里剪掉并落盘（spec §3.6）。
 function fixHubRender() {
-    const el = sharedState.win && sharedState.win.querySelector('#so-fixhub');
+    const el = win && win.querySelector('#so-fixhub');
     if (!el) return;
     const statusEl = el.querySelector('#so-fixhub-status');
     const listEl = el.querySelector('#so-fixhub-list');
     const tagsEl = el.querySelector('#so-fixhub-tags');
     const footEl = el.querySelector('#so-fixhub-foot');
-    const libNow = sharedState.fixHubState.lib;
+    const libNow = fixHubState.lib;
     tagsEl.textContent = '';
     if (!libNow) { listEl.textContent = ''; footEl.textContent = ''; return; }
-    if (sharedState.fixHubState.tag && !libNow.tags.includes(sharedState.fixHubState.tag)) sharedState.fixHubState.tag = '';   // 标签被 Prince 撤掉了 → 回「全部」
+    if (fixHubState.tag && !libNow.tags.includes(fixHubState.tag)) fixHubState.tag = '';   // 标签被 Prince 撤掉了 → 回「全部」
     for (const t of ['', ...libNow.tags]) {
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = 'so-fixhub-chip' + (sharedState.fixHubState.tag === t ? ' so-on' : '');
+        chip.className = 'so-fixhub-chip' + (fixHubState.tag === t ? ' so-on' : '');
         chip.dataset.tag = t;
         chip.textContent = t || '全部';
         tagsEl.appendChild(chip);
@@ -589,17 +592,17 @@ function fixHubRender() {
     const localNames = fixHubLocalNames();
     const installed = fixHubPruneInstalled(s.fixHubInstalled, localNames);
     if (Object.keys(installed).length !== Object.keys(s.fixHubInstalled || {}).length) { s.fixHubInstalled = installed; save(); }
-    fixHubRenderList(listEl, fixHubFilter(libNow.templates, { tag: sharedState.fixHubState.tag, q: sharedState.fixHubState.q }), {
-        installed, localNames, open: sharedState.fixHubState.open, pending: sharedState.fixHubState.pending,
+    fixHubRenderList(listEl, fixHubFilter(libNow.templates, { tag: fixHubState.tag, q: fixHubState.q }), {
+        installed, localNames, open: fixHubState.open, pending: fixHubState.pending,
     });
-    statusEl.textContent = sharedState.fixHubState.source === 'cache' ? `离线副本 · 更新于 ${fixHubMmDd(sharedState.fixHubState.fetchedAt)}` : '';
+    statusEl.textContent = fixHubState.source === 'cache' ? `离线副本 · 更新于 ${fixHubMmDd(fixHubState.fetchedAt)}` : '';
     // 页脚「更新于」= 广场本身最后一次发布（generatedAt）；解析不了（含 1970 的空仓占位）才退回拉取时刻。
     const gen = Date.parse(libNow.generatedAt);
-    footEl.textContent = `共 ${libNow.templates.length} 个模板 · 更新于 ${fixHubMmDd(gen > 0 ? gen : sharedState.fixHubState.fetchedAt)}`;
+    footEl.textContent = `共 ${libNow.templates.length} 个模板 · 更新于 ${fixHubMmDd(gen > 0 ? gen : fixHubState.fetchedAt)}`;
 }
 
 async function fixHubRefresh(force) {
-    const el = sharedState.win && sharedState.win.querySelector('#so-fixhub');
+    const el = win && win.querySelector('#so-fixhub');
     if (!el) return;
     const r = await fixHubLoadLibrary({ force });
     const statusEl = el.querySelector('#so-fixhub-status');
@@ -623,23 +626,23 @@ async function fixHubRefresh(force) {
 }
 
 export function openFixHub() {
-    if (!ENABLE_FIX_TEMPLATE_HUB || !sharedState.win) return;
+    if (!ENABLE_FIX_TEMPLATE_HUB || !win) return;
     const el = buildFixHubCard();
     el.classList.add('open');
     // 先用缓存秒开，再联网刷新（spec §4.1 第 1 条）。
-    if (!sharedState.fixHubState.lib) {
+    if (!fixHubState.lib) {
         const cached = fixHubCacheRead();
         const parsed = cached ? fixHubParseLibrary(cached.body) : null;
-        if (parsed && parsed.ok) Object.assign(sharedState.fixHubState, { lib: parsed.lib, source: 'cache', fetchedAt: cached.fetchedAt });
+        if (parsed && parsed.ok) Object.assign(fixHubState, { lib: parsed.lib, source: 'cache', fetchedAt: cached.fetchedAt });
     }
     fixHubRender();
     fixHubRefresh(true);
 }
 
 function closeFixHub() {
-    const el = sharedState.win && sharedState.win.querySelector('#so-fixhub');
+    const el = win && win.querySelector('#so-fixhub');
     if (el) el.classList.remove('open');
-    sharedState.fixHubState.pending = '';
+    fixHubState.pending = '';
 }
 
 /* ------------------------------------------------------------------ *
@@ -649,7 +652,7 @@ function closeFixHub() {
  * ------------------------------------------------------------------ */
 const FIX_HUB_AUTHOR_KEY = 'so-fixhub-author-v1';
 const FIX_HUB_TAGS_FALLBACK = ['去AI味', '润色文风', '翻译', '格式整理', '视角人称', '扩写补写', '精简', '其他'];
-sharedState.fixShareOpenSeq = 0;   // 每次开卡 +1：开卡时的异步拉取回来晚了（卡已关 / 已重开）就不再往卡上写
+   // 每次开卡 +1：开卡时的异步拉取回来晚了（卡已关 / 已重开）就不再往卡上写
 
 // '' = 可以分享；否则 = 为什么不行（点 📤 时以 toast 说明）。
 function fixHubShareBlockedReason(name, s, dirty) {
@@ -752,7 +755,7 @@ function fixHubShareRenderUpdate(el, libNow) {
 }
 
 function buildFixShareCard() {
-    let el = sharedState.win.querySelector('#so-fixshare');
+    let el = win.querySelector('#so-fixshare');
     if (el) return el;
     el = document.createElement('div');
     el.id = 'so-fixshare';
@@ -775,7 +778,7 @@ function buildFixShareCard() {
         '<div id="so-fixshare-btns">' +
         '<button type="button" id="so-fixshare-copy" class="so-fixhub-btn so-fixshare-go">复制分享文本</button>' +
         '</div></div>';
-    sharedState.win.appendChild(el);
+    win.appendChild(el);
     el.addEventListener('click', (e) => { if (e.target === el) closeFixShare(); });   // 点遮罩关闭
     el.querySelector('.so-warn-x').addEventListener('click', closeFixShare);
     el.querySelector('#so-fixshare-tags').addEventListener('click', (e) => {
@@ -796,14 +799,14 @@ function buildFixShareCard() {
 // 开卡：不可分享 → toast 说明原因、不开；可分享 → 立刻用内置标签表开卡（不等网络），广场拉回来后换成现行
 // 标签表 + 填「更新」下拉；拉不到（旗关 = 从不联网；或无缓存）→ 保留内置表、隐藏「更新」勾选。
 export async function openFixShare() {
-    if (!sharedState.win) return;
+    if (!win) return;
     const s = getSettings();
-    const name = (sharedState.win.querySelector('#so-fixc-template') || {}).value || '';
-    const blocked = fixHubShareBlockedReason(name, s, sharedState.fixTplDirty);
+    const name = (win.querySelector('#so-fixc-template') || {}).value || '';
+    const blocked = fixHubShareBlockedReason(name, s, fixTplDirty);
     if (blocked) { if (typeof toastr !== 'undefined') toastr.info(blocked); return; }
     const tpl = normalizeFixTemplates(s.fixTemplates).find((t) => t.name === name);
     const el = buildFixShareCard();
-    const seq = ++sharedState.fixShareOpenSeq;
+    const seq = nextFixShareOpenSeq();
     el.querySelector('#so-fixshare-name').value = tpl.name;
     el.querySelector('#so-fixshare-prompt').value = tpl.prompt;
     let author = '';
@@ -820,13 +823,13 @@ export async function openFixShare() {
     fixHubShareRenderUpdate(el, null);
     el.classList.add('open');
     // 广场：先认内存 / 缓存（与广场卡同一份状态），都没有才联网。
-    if (!sharedState.fixHubState.lib) {
+    if (!fixHubState.lib) {
         const cached = fixHubCacheRead();
         const parsed = cached ? fixHubParseLibrary(cached.body) : null;
-        if (parsed && parsed.ok) Object.assign(sharedState.fixHubState, { lib: parsed.lib, source: 'cache', fetchedAt: cached.fetchedAt });
+        if (parsed && parsed.ok) Object.assign(fixHubState, { lib: parsed.lib, source: 'cache', fetchedAt: cached.fetchedAt });
     }
     const r = await fixHubLoadLibrary({ force: false });
-    if (seq !== sharedState.fixShareOpenSeq || !el.classList.contains('open')) return;
+    if (seq !== fixShareOpenSeq || !el.classList.contains('open')) return;
     const libNow = r.ok ? r.lib : null;
     el._soTags = libNow && libNow.tags.length ? libNow.tags : FIX_HUB_TAGS_FALLBACK;
     el._soKnown = libNow ? libNow.templates.map((t) => t.id) : null;
@@ -835,8 +838,8 @@ export async function openFixShare() {
 }
 
 function closeFixShare() {
-    sharedState.fixShareOpenSeq += 1;
-    const el = sharedState.win && sharedState.win.querySelector('#so-fixshare');
+    setFixShareOpenSeq(fixShareOpenSeq + (1));
+    const el = win && win.querySelector('#so-fixshare');
     if (el) el.classList.remove('open');
 }
 
@@ -1082,8 +1085,8 @@ export function pathInjectionText(path, s = getSettings()) {
 // 酒馆助手的 generate（MVU 额外模型解析、「重新处理变量」按钮）拼请求时直接读全部已登记的扩展注入，又不触发
 // GENERATION_STARTED——常驻登记会被它们一并带走（副模型看到剧情导向就去勾别的插件留下的「本拍已落」，云端实证 2026-10-25）。
 const GUIDE_GEN_TYPES = ['normal', 'regenerate', 'swipe', 'continue'];
-sharedState.soGuideText = '';       // 当前该注入的整段（applyPlanInjection 算好放这里）
-sharedState.soGuideArmed = false;   // 正处在主聊天拼提示词的那一段
+       // 当前该注入的整段（applyPlanInjection 算好放这里）
+   // 正处在主聊天拼提示词的那一段
 
 function registerGuideSlot(text) {
     const ctx = getCtx();
@@ -1108,12 +1111,12 @@ function registerGuideSlot(text) {
 // 预览提示词）也挂——它同样会发 GENERATE_AFTER_DATA，随即撤下。
 export function armGuide(type) {
     if (!GUIDE_GEN_TYPES.includes(type || 'normal')) return;
-    sharedState.soGuideArmed = true;
-    registerGuideSlot(sharedState.soGuideText);
+    setSoGuideArmed(true);
+    registerGuideSlot(soGuideText);
 }
 export function disarmGuide() {
-    if (!sharedState.soGuideArmed) return;
-    sharedState.soGuideArmed = false;
+    if (!soGuideArmed) return;
+    setSoGuideArmed(false);
     registerGuideSlot('');
 }
 
@@ -1125,8 +1128,8 @@ export function applyPlanInjection() {
     // 同一时间只有当前节点在引导主聊天；暂停、没有当前节点（元数据被外力弄脏）都注入空串。
     const path = getPath();
     const text = (path && !path.paused) ? pathInjectionText(path) : '';
-    sharedState.soGuideText = text;
-    return registerGuideSlot(sharedState.soGuideArmed ? text : '');
+    setSoGuideText(text);
+    return registerGuideSlot(soGuideArmed ? text : '');
 }
 
 

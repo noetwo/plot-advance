@@ -26,7 +26,7 @@
 
 import { maybePostReply, mvuCompatLifecycleMark, postReplyHandlesType, supersedePostReply, supersedePostReplyOnChatSwitch } from './core/post-reply.js';
 import { getCtx, getSettings, renderConnPresets, renderModelBar, renderQpManager, save } from './core/settings.js';
-import { sharedState } from './core/state.js';
+
 import { checkPlanReminder, ensureSoSeqCleanupRegex, onChatChanged } from './modes/advisor/story-path.js';
 import { captureLwbSnapshot } from './modes/chat/context.js';
 import { mvuedScheduleRefresh } from './modes/diagnose/editor.js';
@@ -42,48 +42,47 @@ import { callDirect, callProfile, callProfileStream, resolveEndpointUrl, streamD
 import { applyWindowSkin, syncChatBarButton, syncFixSelBarButton, syncQrButton } from './ui/chat-entry.js';
 import { loadPromptEditor, populateSysPromptPresets, refreshProfiles, renderPromptNav } from './ui/settings.js';
 import { buildWindow } from './ui/window.js';
+import { mvuApi } from './st/runtime-state.js';
+import { setModelMenuOpen, setQpMenuOpen, setSettingsTab as setSettingsTabState, settingsTab, win } from './ui/state.js';
 
 
-jQuery(() => {
-    try {
-        init();
-    } catch (e) {
-        console.error('[Story Oracle] init failed:', e);
-    }
-});
 
 // ---------- 设置面板：分页 ----------
 const SETTINGS_TABS = ['conn', 'ctx', 'persona', 'prompt', 'qp', 'ui'];
 const SETTINGS_TAB_KEY = 'so.settings.tab';   // 记住上次打开的页（只存在本浏览器）
-sharedState.settingsTab = 'conn';
-try {
-    const t = localStorage.getItem(SETTINGS_TAB_KEY);
-    if (SETTINGS_TABS.includes(t)) sharedState.settingsTab = t;
-} catch (e) { /* 无痕 / 禁用存储时就用默认页 */ }
+
+function restoreSettingsTab() {
+    let tab = 'conn';
+    try {
+        const saved = localStorage.getItem(SETTINGS_TAB_KEY);
+        if (SETTINGS_TABS.includes(saved)) tab = saved;
+    } catch (e) { /* 无痕 / 禁用存储时就用默认页 */ }
+    setSettingsTabState(tab);
+}
 
 export function setSettingsTab(tab) {
     if (!SETTINGS_TABS.includes(tab)) tab = 'conn';
-    sharedState.settingsTab = tab;
+    setSettingsTabState(tab);
     try { localStorage.setItem(SETTINGS_TAB_KEY, tab); } catch (e) { /* 同上 */ }
-    if (!sharedState.win) return;
-    for (const b of sharedState.win.querySelectorAll('.so-set-tab')) {
+    if (!win) return;
+    for (const b of win.querySelectorAll('.so-set-tab')) {
         const on = b.dataset.tab === tab;
         b.classList.toggle('active', on);
         b.setAttribute('aria-selected', on ? 'true' : 'false');
     }
-    for (const p of sharedState.win.querySelectorAll('.so-set-page')) p.classList.toggle('active', p.dataset.tab === tab);
+    for (const p of win.querySelectorAll('.so-set-page')) p.classList.toggle('active', p.dataset.tab === tab);
     if (tab === 'prompt') renderPromptNav();
     if (tab === 'qp') renderQpManager();
 }
 
 // 打开 / 关闭设置（open 不传 = 切换）。打开时铺满窗口，并刷新几处要现取的列表。
 export function toggleSettings(open, tab) {
-    if (!sharedState.win) return;
-    const panel = sharedState.win.querySelector('#so-settings');
+    if (!win) return;
+    const panel = win.querySelector('#so-settings');
     const on = panel.classList.toggle('open', open);
-    sharedState.win.classList.toggle('so-settings-open', on);   // CSS 据此让出消息区、输入区与模式栏
-    sharedState.modelMenuOpen = false;
-    sharedState.qpMenuOpen = false;
+    win.classList.toggle('so-settings-open', on);   // CSS 据此让出消息区、输入区与模式栏
+    setModelMenuOpen(false);
+    setQpMenuOpen(false);
     renderModelBar();
     if (!on) return;
     refreshProfiles();
@@ -91,17 +90,17 @@ export function toggleSettings(open, tab) {
     loadPromptEditor();
     renderConnPresets();
     if (ENABLE_WI_CUSTOM_PICK) refreshWiCustomUI();
-    setSettingsTab(tab || sharedState.settingsTab);
+    setSettingsTab(tab || settingsTab);
 }
 // 用 getSettings().connPresets 重画预设下拉（尽量保留当前选中项）。
 // A5：把 ⋯ 工具菜单里的项（普通聊天 / 剧情概要 / 调试 / 设置）搬到标题栏、删掉 ⋯ 包裹。
 // 幂等（wrap 已删则 no-op）。移动 DOM 节点会保留其已绑事件监听，故在 buildWindow 全部接线后调用即安全。
 // 默认关（toolsInHeader）；开时省一次点击，⋯ 菜单默认保留给未来的小模式。原生化自二创 tools-expand。
 export function applyToolsInHeader() {
-    if (!sharedState.win) return false;
-    const wrap = sharedState.win.querySelector('.so-tools-wrap');
-    const menu = sharedState.win.querySelector('#so-tools-menu');
-    const header = sharedState.win.querySelector('#so-header-btns');
+    if (!win) return false;
+    const wrap = win.querySelector('.so-tools-wrap');
+    const menu = win.querySelector('#so-tools-menu');
+    const header = win.querySelector('#so-header-btns');
     if (!wrap || !menu || !header) return false;
     // 插到两条分组线【之间】（⋯ 原来住的位置）——搬完仍是 模式│工具│🗑✕ 三组。插在第一条线前的
     // 旧插法，删掉 ⋯ 包裹后两条线会贴成「‖」双线、模式和工具挤成一团（1.37.1）。
@@ -138,23 +137,25 @@ export async function soCallModel(messages, opts = {}) {
 // 连接配置能直接带过来），代价是两者不能同时启用。原版先跑完会留下 #so-window / StoryOracleAPI；
 // 原版还没跑时，它的脚本标签也已经在页面上（酒馆按 /scripts/extensions/third-party/<目录>/ 加载）。
 // 末尾的 / 让它匹配不到 story-oracle-lite 自己。
-// 自己这份脚本的路径（酒馆用 import() 按 ES 模块加载扩展）。启动守卫靠它把自己从脚本标签里排除——
-// 仓库改名 plot-advance 之前从 GitHub 按网址安装的剧情推进，文件夹名就叫 story-oracle，和原版同名。
-const SO_SELF_PATH = (() => {
-    try { return decodeURIComponent(new URL('../index.js', import.meta.url).pathname); } catch (e) { return ''; }
-})();
-// 二创版（不论装在哪个文件夹、装了几份）在模块求值的那一刻就登记自己的路径；先登记的那份是「主位」，
-// 其余在 init 里让路。不能靠脚本标签互认：酒馆会把同一批（loading_order 相同）扩展的脚本标签先一起挂上再并行求值，
+// 自己这份入口脚本的路径由 index.js 传入；bootstrap 求值时不读取宿主或 import.meta。
+let SO_SELF_PATH = '';
+let SO_FORKS = [];
+// 二创版（不论装在哪个文件夹、装了几份）在 init 时登记自己的路径；先登记的那份是「主位」，
+// 其余让路。不能靠脚本标签互认：酒馆会把同一批（loading_order 相同）扩展的脚本标签先一起挂上再并行求值，
 // 两份二创版都看得见对方的标签，就会双双退出（2.2.2 实测）。原版没有这套登记，靠它先建的 #so-window /
 // StoryOracleAPI 认出来——它的 loading_order 是 100，比我们早一批，正常情况下总是先跑完。
-const SO_FORKS = (() => {
+function registerOracleFork(entryUrl) {
     try {
+        SO_SELF_PATH = decodeURIComponent(new URL(entryUrl).pathname);
         const list = Array.isArray(window.__storyOracleForks) ? window.__storyOracleForks : [];
         window.__storyOracleForks = list;
         if (SO_SELF_PATH && !list.includes(SO_SELF_PATH)) list.push(SO_SELF_PATH);
-        return list;
-    } catch (e) { return []; }
-})();
+        SO_FORKS = list;
+    } catch (e) {
+        SO_SELF_PATH = '';
+        SO_FORKS = [];
+    }
+}
 const SO_ORIGINAL_WAIT_MS = 8000;
 // 原版「故事神谕」或另一份剧情推进在跑吗？'other' = 该让路；'none' = 放心启动；'wait' = 有个叫 story-oracle 的文件夹（原版的
 // 名字）挂了脚本、但它既没登记成二创版也还没建窗口——多半是原版还没跑到初始化，等它一会儿再判。
@@ -174,7 +175,9 @@ function otherOracleState() {
 }
 
 // 启动：先确认没有原版「故事神谕」或另一份剧情推进在跑（otherOracleState），再正式初始化（initNow）。
-function init() {
+export function init(entryUrl) {
+    restoreSettingsTab();
+    registerOracleFork(entryUrl);
     const startedAt = Date.now();
     const check = () => {
         const st = otherOracleState();
@@ -271,8 +274,8 @@ function initNow() {
             // 可能在重试之间反复把 isDuringExtraAnalysis 置 false；只有整批策略返回后，MVU 才会跑最终
             // handleVariablesInMessage 并发 UPDATE_ENDED。这里记的是生命周期信号，不读私有 store / 重试次数。
             try {
-                ctx.eventSource.on('mag_variable_update_started', () => mvuCompatLifecycleMark('started', sharedState.mvuApi || window.Mvu));
-                ctx.eventSource.on('mag_variable_update_ended', () => mvuCompatLifecycleMark('ended', sharedState.mvuApi || window.Mvu));
+                ctx.eventSource.on('mag_variable_update_started', () => mvuCompatLifecycleMark('started', mvuApi || window.Mvu));
+                ctx.eventSource.on('mag_variable_update_ended', () => mvuCompatLifecycleMark('ended', mvuApi || window.Mvu));
             } catch (e) { console.debug('[Story Oracle] MVU 兼容生命周期事件未接上：', e); }
             if (ENABLE_LWB_BRIDGE) {
                 // 小白X 记忆桥：主聊天生成期（小白X 已写注入槽、尚未清）抓一份总结缓存。只读、不改提示词。

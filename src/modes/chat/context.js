@@ -1,6 +1,6 @@
 import { convoForPrompt, getSummary } from '../../core/chat-metadata.js';
 import { getCtx, getSettings } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { parseStoryPlans } from '../advisor/cards.js';
 import { getLbApplySnapshot, getPath } from '../advisor/metadata.js';
 import { wantAutoDetail } from '../advisor/story-path.js';
@@ -13,6 +13,13 @@ import { P, buildSystemPrompt, wrapTranscriptEnvelope } from '../../prompts/regi
 import { locateTagOpen } from '../../ui/messages.js';
 import { escapeHtml } from '../../ui/mode-shell.js';
 import { currentJbModeKey, maybeWrapJb, presetCurationActive } from '../../ui/settings.js';
+import { advisorMode, builderMode, diagnoseMode, fixMode, lorebookMode } from '../../core/runtime-state.js';
+import { advStatData } from '../advisor/state.js';
+import { chatWorldData, lwbSummaryCache, setLwbSummaryCache, worldInfoBlock } from './state.js';
+import { diagLatestUpdate, diagStatData } from '../diagnose/state.js';
+import { fixActiveMode, fixAutoPromptFlavor, fixAutoPromptVersion, fixCardBlock, fixContextBlock, fixCustomJoin, fixCustomTemplateText, fixExtraKeep, fixSummaryBlock, fixTargetProse, fixWorldBlock } from '../fix/state.js';
+import { lbContextText } from '../lorebook/state.js';
+import { regexEngine, setSoMdConverter, soMdConverter } from '../../st/runtime-state.js';
 
 // ===== 外部扩展世界信息桥接（用户功能请求）=========================================
 // 让神谕读到「住在别的扩展自己系统里」的世界信息——主聊天与 MVU 之外、神谕原本看不到的后台世界。
@@ -70,8 +77,8 @@ export function assembleExternalWorld() {
 // 外部世界信息区块。无数据时返回 ''（被 parts.filter(Boolean) / pushMsg 跳过）——与参谋的 stat_data
 // 一样属「可选情报，没有就整段省略」，不像普通模式 stat 那样留拒答占位。
 export function buildChatWorldSection() {
-    if (!sharedState.chatWorldData) return '';
-    return P('ctx.world', { world: sharedState.chatWorldData });
+    if (!chatWorldData) return '';
+    return P('ctx.world', { world: chatWorldData });
 }
 
 // 用户功能请求：用户粘贴的运行概要 / 前情提要（本聊天）。在【普通聊天】与【剧情参谋】模式下
@@ -139,7 +146,7 @@ export function getLwbSummaryText() {
     if (!ENABLE_LWB_BRIDGE) return '';
     try {
         if (!getSettings().chatIncludeLwb) return '';
-        return String(sharedState.lwbSummaryCache || '').trim();
+        return String(lwbSummaryCache || '').trim();
     } catch (e) {
         console.warn('[Story Oracle] 读取小白X 总结缓存失败（本次跳过）：', e);
         return '';
@@ -148,12 +155,12 @@ export function getLwbSummaryText() {
 
 // 切聊天回填(a)：先清缓存，再从本聊天 metadata 快照回填（不设门于开关——缓存即事实，读取器负责按开关拦）。
 export function primeLwbFromMetadata() {
-    sharedState.lwbSummaryCache = '';
+    setLwbSummaryCache('');
     if (!ENABLE_LWB_BRIDGE) return;
     try {
         const md = getCtx().chatMetadata;
         const t = md && typeof md[LWB_SNAPSHOT_META_KEY] === 'string' ? md[LWB_SNAPSHOT_META_KEY].trim() : '';
-        if (t) sharedState.lwbSummaryCache = t;
+        if (t) setLwbSummaryCache(t);
     } catch (e) { /* 静默 */ }
 }
 
@@ -195,7 +202,7 @@ export function captureLwbSnapshot() {
         const ctx = getCtx();
         const text = extractLwbInjectedText(ctx.extensionPrompts);
         if (!text) return;
-        sharedState.lwbSummaryCache = text;
+        setLwbSummaryCache(text);
         const md = ctx.chatMetadata;
         if (md) {
             md[LWB_SNAPSHOT_META_KEY] = text;
@@ -208,7 +215,7 @@ export function captureLwbSnapshot() {
 function shouldWarmLwb() {
     if (!ENABLE_LWB_BRIDGE) return false;
     try {
-        return !!getSettings().chatIncludeLwb && !String(sharedState.lwbSummaryCache || '').trim();
+        return !!getSettings().chatIncludeLwb && !String(lwbSummaryCache || '').trim();
     } catch (e) { return false; }
 }
 
@@ -221,8 +228,8 @@ export async function warmLwbSummaryIfCold() {
         if (!mod || typeof mod.buildNonVectorPromptText !== 'function') return;
         const text = String(mod.buildNonVectorPromptText() || '').trim();
         if (!text) return;
-        if (String(sharedState.lwbSummaryCache || '').trim()) return;   // 竞态兜底：期间被真实抓拍填了就不覆盖
-        sharedState.lwbSummaryCache = text;
+        if (String(lwbSummaryCache || '').trim()) return;   // 竞态兜底：期间被真实抓拍填了就不覆盖
+        setLwbSummaryCache(text);
         const md = getCtx().chatMetadata;
         if (md) {
             md[LWB_SNAPSHOT_META_KEY] = text;
@@ -234,7 +241,7 @@ export async function warmLwbSummaryIfCold() {
 export function buildDiagnosePrompt(ctx, s) {
     // 手动诊断模式：用 generateReply 现算好的模块状态变量。
     return buildDiagnosePromptFrom(ctx, s, {
-        wiBlock: sharedState.worldInfoBlock, statStr: sharedState.diagStatData, latestBlock: sharedState.diagLatestUpdate,
+        wiBlock: worldInfoBlock, statStr: diagStatData, latestBlock: diagLatestUpdate,
     });
 }
 
@@ -257,7 +264,7 @@ function buildFixSpanEnvelope(b) {
 function buildFixSpanPrompt(ctx, s, sel) {
     let subst = (t) => t;
     if (ctx && typeof ctx.substituteParams === 'function') subst = (t) => { try { return ctx.substituteParams(t); } catch (e) { return t; } };
-    return subst(P('fix.span', null, s || undefined)) + '\n\n' + buildFixSpanEnvelope({ card: sharedState.fixCardBlock, summary: sharedState.fixSummaryBlock, context: sharedState.fixContextBlock, full: (sel && sel.full) || '', span: (sel && sel.text) || '' });
+    return subst(P('fix.span', null, s || undefined)) + '\n\n' + buildFixSpanEnvelope({ card: fixCardBlock, summary: fixSummaryBlock, context: fixContextBlock, full: (sel && sel.full) || '', span: (sel && sel.text) || '' });
 }
 
 // 选段调用的消息数组（单一来源，R9）：单段路径 runFixSelect 与多段批发 runFixSelectBatch 都从这儿拿——
@@ -323,28 +330,28 @@ export function buildFixPrompt(ctx, s) {
     // raw:false 时 MVU 块已被 stripMechanismBlocks 剥掉，句里提 <UpdateVariable> 只是空转、无害。
     // 沿用识别【有分段表】时 fixCustomJoin 恒 null ⇒ 不附：那条路的包裹与结构块由代码收进 head/tail 或保留区锚点，
     // 模型根本碰不到，再叮嘱「原样保留结构块」会与「系统已经替你收走了」自相矛盾。
-    const custom = (ENABLE_FIX_CUSTOM_TASK && sharedState.fixActiveMode === 'custom');
-    const customRawTable = !!(custom && sharedState.fixCustomJoin);
+    const custom = (ENABLE_FIX_CUSTOM_TASK && fixActiveMode === 'custom');
+    const customRawTable = !!(custom && fixCustomJoin);
     const base = custom
-        ? (sharedState.fixCustomTemplateText + '\n\n' + P('fix.customFooter', null, s) + (customRawTable ? '\n' + P('fix.customRawNote', null, s) : ''))
-        : (override || (sharedState.fixActiveMode === 'manual'
+        ? (fixCustomTemplateText + '\n\n' + P('fix.customFooter', null, s) + (customRawTable ? '\n' + P('fix.customRawNote', null, s) : ''))
+        : (override || (fixActiveMode === 'manual'
             ? P('fix.manual', null, s)
-            : resolveFixAutoPrompt({ promptVersion: sharedState.fixAutoPromptVersion, promptFlavor: sharedState.fixAutoPromptFlavor }, s)));
+            : resolveFixAutoPrompt({ promptVersion: fixAutoPromptVersion, promptFlavor: fixAutoPromptFlavor }, s)));
     let subst = (t) => t;
     if (ctx && typeof ctx.substituteParams === 'function') {
         subst = (t) => { try { return ctx.substituteParams(t); } catch (e) { return t; } };
     }
-    const reply = sharedState.fixTargetProse || '（未捕获到待校正的回复——请确认主聊天里已有一条 AI 回复）';
+    const reply = fixTargetProse || '（未捕获到待校正的回复——请确认主聊天里已有一条 AI 回复）';
     const envelope = custom
         ? buildFixEnvelope({ reply })   // 📋 自定义：本版只发正文（角色卡 / 世界书 / 概要 / 前文有意不带，spec §10）
-        : buildFixEnvelope({ card: sharedState.fixCardBlock, world: sharedState.fixWorldBlock, summary: sharedState.fixSummaryBlock, context: sharedState.fixContextBlock, reply });
+        : buildFixEnvelope({ card: fixCardBlock, world: fixWorldBlock, summary: fixSummaryBlock, context: fixContextBlock, reply });
     let prompt = subst(base) + '\n\n' + envelope;
     // 排除·保留区：正文里嵌了 ⟦SO_KEEP_n⟧ 占位锚点时，明确要求模型原样留在原位（弄丢了由 composeFixedReply 兜底接回）。
-    if (Array.isArray(sharedState.fixExtraKeep) && sharedState.fixExtraKeep.length) {
+    if (Array.isArray(fixExtraKeep) && fixExtraKeep.length) {
         prompt += '\n\n' + P('fix.keepAnchors', null, s);
     }
     // 手动模式：尾附「结构块保留」软约束（自动走信封 / 分段保护，不需要——也避免干扰调优过的自动提示）。
-    if (sharedState.fixActiveMode === 'manual') {
+    if (fixActiveMode === 'manual') {
         prompt += '\n\n' + fixManualStructuralNote();
     }
     return prompt;
@@ -468,7 +475,7 @@ function formatLbSnapshotBlock(bookText, applySnap) {
 }
 // 非纯封装：从模块级 lbContextText + 当前聊天的应用快照现拼快照块。
 function buildLorebookSnapshotBlock() {
-    return formatLbSnapshotBlock(sharedState.lbContextText, getLbApplySnapshot());
+    return formatLbSnapshotBlock(lbContextText, getLbApplySnapshot());
 }
 // 尾部快照消息（钉在全部对话历史之后；裸路径与预设路径共用，保证书正文只出现这一次、且恒在末尾）。
 export function lbSnapshotMsg() {
@@ -500,8 +507,8 @@ function buildAdvisorPathBlock(path, since) {
 // 对话记录。over（可选）= { wi, stat }：显式给世界书和变量（「到了再写」的单独调用用），不传就用 generateReply
 // 备好的那两个全局。
 export function buildAdvisorPrompt(ctx, s, over) {
-    const wiText = over ? over.wi : sharedState.worldInfoBlock;
-    const statText = over ? over.stat : sharedState.advStatData;
+    const wiText = over ? over.wi : worldInfoBlock;
+    const statText = over ? over.stat : advStatData;
     const parts = [P('advisor.system', null, s)];
     // 方案格式单独一段推，不并进内置正文——自定义过参谋提示词的用户覆盖掉的只是内置正文，格式仍到得了他们手上。
     // 预设路径复用本函数产物（advBlock），所以这一处同时喂到裸参谋与预设参谋两条路（同柏宝书 / 小白X 记忆桥的漏斗）。
@@ -583,20 +590,20 @@ function messageVisibleForTranscript(m, includeHidden) {
 // Story-context turns as role-tagged objects {role:'user'|'assistant', name, text}.
 // Mirrors ST's prompt builder: drop system messages, run each through the regex
 // engine (isPrompt, depth relative to full chat), trim empties, take last N.
-export function buildTranscriptTurns(ctx, s, keepMechanism = sharedState.diagnoseMode) {
+export function buildTranscriptTurns(ctx, s, keepMechanism = diagnoseMode) {
     if (s.contextDepth === 0) return [];
     const coreChat = (ctx.chat || []).filter((m) => messageVisibleForTranscript(m, s.includeHiddenFloors));
-    const useRegex = s.applyRegex && sharedState.regexEngine && sharedState.regexEngine.getRegexedString;
+    const useRegex = s.applyRegex && regexEngine && regexEngine.getRegexedString;
 
     let processed = coreChat.map((m, index) => {
         let text = m.mes;
         if (useRegex) {
             const placement = m.is_user
-                ? sharedState.regexEngine.regex_placement.USER_INPUT
-                : sharedState.regexEngine.regex_placement.AI_OUTPUT;
+                ? regexEngine.regex_placement.USER_INPUT
+                : regexEngine.regex_placement.AI_OUTPUT;
             const depth = coreChat.length - index - 1; // last message = depth 0
             try {
-                text = sharedState.regexEngine.getRegexedString(text, placement, { isPrompt: true, depth });
+                text = regexEngine.getRegexedString(text, placement, { isPrompt: true, depth });
             } catch (e) {
                 console.warn('[Story Oracle] regex failed on a message; using raw.', e);
             }
@@ -689,12 +696,12 @@ export function stripReasoningTags(text) {
 //   forPrompt=false -> display stage (markdown); rarely needed directly because
 //                      renderReplyHtml() applies it via ST's own formatter.
 export function applyOutputRegex(text, forPrompt) {
-    if (!sharedState.regexEngine || !sharedState.regexEngine.getRegexedString || !sharedState.regexEngine.regex_placement) return text;
+    if (!regexEngine || !regexEngine.getRegexedString || !regexEngine.regex_placement) return text;
     try {
         const opts = forPrompt
             ? { isPrompt: true, isMarkdown: false, depth: 0 }
             : { isPrompt: false, isMarkdown: true, depth: 0 };
-        const out = sharedState.regexEngine.getRegexedString(String(text || ''), sharedState.regexEngine.regex_placement.AI_OUTPUT, opts);
+        const out = regexEngine.getRegexedString(String(text || ''), regexEngine.regex_placement.AI_OUTPUT, opts);
         return (typeof out === 'string') ? out : text;
     } catch (e) {
         console.warn('[Story Oracle] output regex failed; using raw reply.', e);
@@ -706,16 +713,16 @@ export function applyOutputRegex(text, forPrompt) {
 // path main chat uses — so display-stage regex, markdown, and HTML/CSS widgets
 // (e.g. a status-bar beautifier) render identically here. Returns null if the
 // formatter isn't available, signaling the caller to fall back to plain text.
-sharedState.soMdConverter = null;
+
 // 只渲染 Markdown（不跑 ST 正则引擎）——用于普通聊天【关闭「应用正则」】时的显示。showdown + DOMPurify 均由 ST 挂在 window 上。
 // 拿不到库时返回 null，调用方回退纯文本（jsdom 无这两个库 → null → textContent，安全）。
 export function renderMarkdownOnly(text) {
     try {
-        if (!sharedState.soMdConverter && typeof window !== 'undefined' && window.showdown) {
-            sharedState.soMdConverter = new window.showdown.Converter({ simpleLineBreaks: true, strikethrough: true, tables: true, literalMidWordUnderscores: true });
+        if (!soMdConverter && typeof window !== 'undefined' && window.showdown) {
+            setSoMdConverter(new window.showdown.Converter({ simpleLineBreaks: true, strikethrough: true, tables: true, literalMidWordUnderscores: true }));
         }
-        if (sharedState.soMdConverter && typeof window !== 'undefined' && window.DOMPurify) {
-            const html = window.DOMPurify.sanitize(sharedState.soMdConverter.makeHtml(String(text || '')));
+        if (soMdConverter && typeof window !== 'undefined' && window.DOMPurify) {
+            const html = window.DOMPurify.sanitize(soMdConverter.makeHtml(String(text || '')));
             if (typeof html === 'string' && html) return html;
         }
     } catch (e) {
@@ -826,23 +833,23 @@ export function renderAdvisorReplyHtml(text) {
 
 export function buildMessages() {
     const s = getSettings();
-    if (sharedState.lorebookMode && s.lorebookUsePreset && presetCurationActive(s)) {
+    if (lorebookMode && s.lorebookUsePreset && presetCurationActive(s)) {
         return buildLorebookPresetMessages(s);
     }
-    if (sharedState.advisorMode && s.advisorUsePreset && presetCurationActive(s)) {
+    if (advisorMode && s.advisorUsePreset && presetCurationActive(s)) {
         return buildAdvisorPresetMessages(s);
     }
-    if (sharedState.fixMode && fixUsePresetFor(s, 'manual') && presetCurationActive(s)) {
+    if (fixMode && fixUsePresetFor(s, 'manual') && presetCurationActive(s)) {
         return buildFixPresetMessages(s);   // 自由发挥（手动）：用户那句话在 convoForPrompt() 里，directive 省略
     }
-    if (sharedState.builderMode && s.bldUsePreset && presetCurationActive(s)) {
+    if (builderMode && s.bldUsePreset && presetCurationActive(s)) {
         return buildBuilderPresetMessages(s);   // 访谈经预设（opt-in）；锻造走 runForge，永不经此
     }
-    if (sharedState.diagnoseMode && s.diagnoseUsePreset && presetCurationActive(s)) {
+    if (diagnoseMode && s.diagnoseUsePreset && presetCurationActive(s)) {
         // 诊断经预设（1.43.0，opt-in）：破限 / 越狱用。directive 省略 = 用户那句话在 convoForPrompt() 里
         return buildDiagnosePresetMessages(s, buildDiagnosePrompt(getCtx(), s));
     }
-    if (!sharedState.diagnoseMode && !sharedState.lorebookMode && !sharedState.advisorMode && !sharedState.fixMode && !sharedState.builderMode && presetCurationActive(s)) {
+    if (!diagnoseMode && !lorebookMode && !advisorMode && !fixMode && !builderMode && presetCurationActive(s)) {
         return buildPresetMessages(s);
     }
     // 内置破限（1.40.0）：包裹神谕自己建好的这一组。普通聊天默认开、其余模式一律 opt-in（诊断自 1.43.0 起也接得上，门是 diagnoseUsePreset）
@@ -852,6 +859,6 @@ export function buildMessages() {
         [{ role: 'system', content: buildSystemPrompt() }, ...convoForPrompt()],
         currentJbModeKey(), s);
     // F5：世界书模式把书正文钉成【全部对话历史之后】的尾部快照块（唯一权威；只此一处，末尾恒在）。
-    if (sharedState.lorebookMode) wrapped.push(lbSnapshotMsg());
+    if (lorebookMode) wrapped.push(lbSnapshotMsg());
     return wrapped;
 }

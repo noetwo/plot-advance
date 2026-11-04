@@ -2,7 +2,7 @@ import { applyToolsInHeader, setSettingsTab, soCallModel, toggleSettings } from 
 import { confirmConvoSwap, confirmModeSwitch, convoStreamKeyForMode, getDiagWiMeta, getWiCustomMeta, serializeDiagSel, setDiagWiMeta, setSummary, setWiCustomMeta } from '../core/chat-metadata.js';
 import { diagRetryMax } from '../core/post-reply.js';
 import { QP_DEFAULTS, closeConnPicker, closeModelMenu, closeQpMenu, connPresetSnapshot, connPresetUpsert, getSettings, qpNewId, renderConnPresets, renderModelBar, renderQpManager, save, uiConfirm, uiPrompt } from '../core/settings.js';
-import { sharedState } from '../core/state.js';
+
 import { addSystemNote, clearConversation, modeEntryNote, renderEmptyState, syncConvoStream } from '../modes/advisor/cards.js';
 import { getPath } from '../modes/advisor/metadata.js';
 import { maybeWritePathDetail, pathAbandon, pathComplete, pathSendBack, syncNodeDetailSeg, toggleGuidePause } from '../modes/advisor/story-path.js';
@@ -30,19 +30,24 @@ import { applyInitialGeometry, makeDraggable, makeResizable, onFullscreenEscKeyd
 import { copyTextRobust } from './messages.js';
 import { currentOracleMode, onDocClickOutside, openAutoDiagWarn, openAutoFixWarn, openCuration, reflectAutoDiagCheckbox, setAutoDiagnose, setOracleMode, soEnterShouldSend, soIsMobileForEnter, soReadSendOnEnter, toggleBuilder, toggleDiagnose, toggleFix, toggleLorebook, toggleWindow, updateDiagButtonVisual, updateFixButtonVisual } from './mode-shell.js';
 import { applyModeVisibility, applyPromptEditorUiState, buildCurationRows, curationRowsFromSnapshot, getCuratedSnapshot, loadPromptEditor, onPresetSelected, populateSysPromptPresets, presetCurationActive, refreshProfiles, refreshPromptBadges, updateBadge, updateWiHint } from './settings.js';
+import { setPriorOracleMode } from '../core/runtime-state.js';
+import { planBarEl, setPlanBarEl } from '../modes/advisor/state.js';
+import { diagEntrySel } from '../modes/diagnose/state.js';
+import { fixTplDirty, fixTplDirtyFor, setFixTplDirty, setFixTplDirtyFor } from '../modes/fix/state.js';
+import { connPickerOpen, inputEl, messagesEl, modelMenuOpen, peFleshAbort, peFleshUndo, promptEditId, qpManageMode, qpMenuOpen, sendBtn, setInputEl, setMessagesEl, setModeBadge, setPeFleshAbort, setPeFleshUndo, setSendBtn, setSoFollowStream, settingsTab, setWin, win } from './state.js';
 
 /* ------------------------------------------------------------------ *
  * The floating window
  * ------------------------------------------------------------------ */
-Object.assign(sharedState, { win: undefined, messagesEl: undefined, inputEl: undefined, sendBtn: undefined, modeBadge: undefined });
+
 
 export function buildWindow() {
     if (document.getElementById('so-window')) return;
     const s = getSettings();
 
-    sharedState.win = document.createElement('div');
-    sharedState.win.id = 'so-window';
-    sharedState.win.style.display = 'none';
+    setWin(document.createElement('div'));
+    win.id = 'so-window';
+    win.style.display = 'none';
     applyInitialGeometry(s);
     // 视口变化时把窗口重新夹回可见区——旋屏 / 手机软键盘弹收 / 浏览器地址栏伸缩都会改变【可见】视口，
     // 否则 position:fixed 的窗口标题栏（唯一带 ✕ 关闭 + 拖动把手的地方）可能被挤出屏外、再也够不到
@@ -51,7 +56,7 @@ export function buildWindow() {
     window.addEventListener('orientationchange', scheduleEnsureInView);
     if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleEnsureInView);
 
-    sharedState.win.innerHTML = `
+    win.innerHTML = `
         <div id="so-header">
             <div id="so-title"><i class="fa-solid fa-moon"></i> 剧情推进 <span id="so-mode-badge"></span><span id="so-diag-pill">诊断</span><span id="so-lb-pill">世界书</span><span id="so-adv-pill">参谋</span></div>
             <div id="so-header-btns">
@@ -661,23 +666,23 @@ export function buildWindow() {
         </div>
         <div id="so-resize-grip" title="拖动调整大小" aria-label="调整窗口大小"></div>
     `;
-    document.body.appendChild(sharedState.win);
+    document.body.appendChild(win);
 
-    sharedState.messagesEl = sharedState.win.querySelector('#so-messages');
-    sharedState.inputEl = sharedState.win.querySelector('#so-input');
-    sharedState.sendBtn = sharedState.win.querySelector('#so-send');
-    sharedState.modeBadge = sharedState.win.querySelector('#so-mode-badge');
+    setMessagesEl(win.querySelector('#so-messages'));
+    setInputEl(win.querySelector('#so-input'));
+    setSendBtn(win.querySelector('#so-send'));
+    setModeBadge(win.querySelector('#so-mode-badge'));
 
     bindControls();
     enhanceIconButtonA11y();
     loadSettingsIntoForm();
-    sharedState.planBarEl = sharedState.win.querySelector('#so-plan-bar');
+    setPlanBarEl(win.querySelector('#so-plan-bar'));
     // 手机：整条标题栏（含 8 个按钮）都能起拖——按钮太多、留给拖动的空隙太少（用户反馈「手机拖不动」）。
     // 复用折叠药丸那套（1.17.5）：dragFromButtons 放行「在按钮上起拖」，再用 6px 位移阈值区分轻点/拖动，
     // suppressNextClick 吞掉拖完补发的一下 click，所以轻点按钮照常触发、拖动才移动窗口。桌面（≥600）不传、行为不变。
-    makeDraggable(sharedState.win, sharedState.win.querySelector('#so-header'), { left: 'winLeft', top: 'winTop' },
+    makeDraggable(win, win.querySelector('#so-header'), { left: 'winLeft', top: 'winTop' },
         { dragFromButtons: () => window.innerWidth < 600 });
-    makeResizable(sharedState.win, sharedState.win.querySelector('#so-resize-grip'));
+    makeResizable(win, win.querySelector('#so-resize-grip'));
     renderEmptyState();
     renderPlanBar();
 }
@@ -686,13 +691,13 @@ export function buildWindow() {
 // role=button + 可聚焦（tabindex）+ Enter/空格触发，并把每个按钮已有的 title 复用为屏幕阅读器
 // 的可读名（aria-label）。这样整套图标工具栏对键盘 / 读屏用户也完全可用，且无需改动任何模板标记。
 function enhanceIconButtonA11y() {
-    sharedState.win.querySelectorAll('.so-iconbtn').forEach(enhanceIconBtnNode);
+    win.querySelectorAll('.so-iconbtn').forEach(enhanceIconBtnNode);
     // 委托键盘事件：聚焦某个图标按钮时按 Enter / 空格即等同点击（原生 <button> 的默认行为）。
     // 输入框 / 文本域里的按键不会命中（closest 找不到 .so-iconbtn），故不影响打字与「Enter 发送」。
-    sharedState.win.addEventListener('keydown', (e) => {
+    win.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
         const btn = e.target.closest && e.target.closest('.so-iconbtn');
-        if (!btn || !sharedState.win.contains(btn)) return;
+        if (!btn || !win.contains(btn)) return;
         e.preventDefault();
         btn.click();
     });
@@ -712,15 +717,15 @@ export function enhanceIconBtnNode(b) {
 function bindControls() {
     const s = getSettings();
 
-    sharedState.win.querySelector('#so-close-btn').addEventListener('click', () => toggleWindow(false));
-    sharedState.win.querySelector('#so-fullscreen-btn').addEventListener('click', () => setFullscreen());   // 全屏阅读切换（1.51.0）
+    win.querySelector('#so-close-btn').addEventListener('click', () => toggleWindow(false));
+    win.querySelector('#so-fullscreen-btn').addEventListener('click', () => setFullscreen());   // 全屏阅读切换（1.51.0）
     document.addEventListener('keydown', onFullscreenEscKeydown, true);   // 全屏时 ESC 退出（捕获阶段，gated on 全屏）
-    sharedState.win.querySelector('#so-clear-btn').addEventListener('click', clearConversation);
-    sharedState.win.querySelector('#so-diagnose-btn').addEventListener('click', toggleDiagnose);
-    sharedState.win.querySelector('#so-lorebook-btn').addEventListener('click', toggleLorebook);
-    sharedState.win.querySelector('#so-advisor-btn').addEventListener('click', toggleAdvisor);
-    sharedState.win.querySelector('#so-fix-btn').addEventListener('click', toggleFix);
-    sharedState.win.querySelector('#so-adv-preset').addEventListener('change', (e) => {
+    win.querySelector('#so-clear-btn').addEventListener('click', clearConversation);
+    win.querySelector('#so-diagnose-btn').addEventListener('click', toggleDiagnose);
+    win.querySelector('#so-lorebook-btn').addEventListener('click', toggleLorebook);
+    win.querySelector('#so-advisor-btn').addEventListener('click', toggleAdvisor);
+    win.querySelector('#so-fix-btn').addEventListener('click', toggleFix);
+    win.querySelector('#so-adv-preset').addEventListener('change', (e) => {
         const s2 = getSettings();
         s2.advisorUsePreset = e.target.checked;
         save();
@@ -732,23 +737,23 @@ function bindControls() {
     });
     // Live depth change re-registers the active injection — wired AFTER the
     // generic bind() below so the new value is already persisted when it runs.
-    sharedState.win.querySelector('#so-plan-show').addEventListener('click', () => {
+    win.querySelector('#so-plan-show').addEventListener('click', () => {
         // Query through planBarEl, not win — the strip may have been reparented
         // into the floating container by the time this fires.
-        const pre = sharedState.planBarEl.querySelector('#so-plan-directive');
+        const pre = planBarEl.querySelector('#so-plan-directive');
         const open = pre.classList.toggle('open');
-        sharedState.planBarEl.querySelector('#so-plan-show').textContent = open ? '▾ 收起注入内容' : '▸ 查看注入内容';
+        planBarEl.querySelector('#so-plan-show').textContent = open ? '▾ 收起注入内容' : '▸ 查看注入内容';
         if (open) pre.textContent = currentInjectionPreview();   // type-aware (sequence beat OR single plan)
     });
     // 引导条收起 / 展开箭头（用户反馈：停靠时默认收起、别挡聊天视图）。状态持久化；renderPlanBar 也同步。
-    sharedState.win.querySelector('#so-plan-collapse').addEventListener('click', () => {
+    win.querySelector('#so-plan-collapse').addEventListener('click', () => {
         const s = getSettings();
         s.planBarCollapsed = !s.planBarCollapsed;
         save();
         syncPlanBarCollapsed();
     });
     // ✏️ 修改当前目标（2.5.0）：在方案条的列表里就地编辑当前节点。
-    sharedState.win.querySelector('#so-plan-edit').addEventListener('click', () => {
+    win.querySelector('#so-plan-edit').addEventListener('click', () => {
         const path = getPath();
         const node = pathActiveNode(path);
         if (node) startPathEdit(node.id);
@@ -759,28 +764,28 @@ function bindControls() {
      * 排除面 = 一切 so- 前缀元素（本扩展全部选择器按约定带 so- 前缀，含浮条/toast/🌙）
      * + ST 弹窗 + 魔杖菜单（不排除会出现「点菜单先关窗、点菜单项又开窗」的双开关打架）。 */
     document.addEventListener('click', onDocClickOutside, true);
-    sharedState.win.querySelector('#so-plan-done').addEventListener('click', () => pathComplete());
-    sharedState.win.querySelector('#so-plan-pause').addEventListener('click', () => toggleGuidePause());
-    sharedState.win.querySelector('#so-plan-drop').addEventListener('click', () => { void pathAbandon(); });
+    win.querySelector('#so-plan-done').addEventListener('click', () => pathComplete());
+    win.querySelector('#so-plan-pause').addEventListener('click', () => toggleGuidePause());
+    win.querySelector('#so-plan-drop').addEventListener('click', () => { void pathAbandon(); });
     // 「找参谋改改」：开参谋房继续讨论（当前目标照常引导着）。
-    sharedState.win.querySelector('#so-seq-sendback').addEventListener('click', () => pathSendBack());
-    sharedState.win.querySelector('#so-lb-refresh').addEventListener('click', () => populateLorebookBooks(true));
-    sharedState.win.querySelector('#so-lb-book-list').addEventListener('change', (e) => {
+    win.querySelector('#so-seq-sendback').addEventListener('click', () => pathSendBack());
+    win.querySelector('#so-lb-refresh').addEventListener('click', () => populateLorebookBooks(true));
+    win.querySelector('#so-lb-book-list').addEventListener('change', (e) => {
         if (e.target && e.target.matches('input[type="checkbox"]')) onLbBookSelectionChange();
     });
-    sharedState.win.querySelector('#so-lb-book-all').addEventListener('click', () => {
-        sharedState.win.querySelectorAll('#so-lb-book-list input[type="checkbox"]').forEach((b) => { b.checked = true; });
+    win.querySelector('#so-lb-book-all').addEventListener('click', () => {
+        win.querySelectorAll('#so-lb-book-list input[type="checkbox"]').forEach((b) => { b.checked = true; });
         onLbBookSelectionChange();
     });
-    sharedState.win.querySelector('#so-lb-book-none').addEventListener('click', () => {
-        sharedState.win.querySelectorAll('#so-lb-book-list input[type="checkbox"]').forEach((b) => { b.checked = false; });
+    win.querySelector('#so-lb-book-none').addEventListener('click', () => {
+        win.querySelectorAll('#so-lb-book-list input[type="checkbox"]').forEach((b) => { b.checked = false; });
         onLbBookSelectionChange();
     });
-    sharedState.win.querySelector('#so-lb-story').addEventListener('change', (e) => {
+    win.querySelector('#so-lb-story').addEventListener('change', (e) => {
         getSettings().lorebookIncludeStory = e.target.checked;
         save();
     });
-    sharedState.win.querySelector('#so-lb-preset').addEventListener('change', (e) => {
+    win.querySelector('#so-lb-preset').addEventListener('change', (e) => {
         const s2 = getSettings();
         s2.lorebookUsePreset = e.target.checked;
         save();
@@ -790,29 +795,29 @@ function bindControls() {
                 : '已勾选「套用补全预设」，但目前还没有整理好的补全预设。请先到设置（齿轮）里选定并整理一个补全预设；在此之前，世界书模式仍用内置管家提示词。');
         }
     });
-    sharedState.win.querySelector('#so-lb-entries-toggle').addEventListener('click', () => {
-        sharedState.win.querySelector('#so-lb-entries').classList.toggle('open');
+    win.querySelector('#so-lb-entries-toggle').addEventListener('click', () => {
+        win.querySelector('#so-lb-entries').classList.toggle('open');
     });
     // 手机上把模式工具栏（各模式的配置栏）默认折叠，先把聊天区露出来；桌面保持展开。用户随后可自行开合。
     // 参谋 / 工坊此前漏在名单外：#so-messages 是 flex:1 1 0（basis 0 → 负剩余空间时收缩权重为 0），
     // 配置栏一旦比可用高度还高，被压没的就是聊天区。工坊锻造成功后仍会主动展开该面板（见 runForge）。
     if (window.matchMedia && window.matchMedia('(max-width: 600px)').matches) {
-        sharedState.win.querySelectorAll('#so-lb-collapse, #so-diag-collapse, #so-fix-collapse, #so-adv-collapse, #so-bld-collapse')
+        win.querySelectorAll('#so-lb-collapse, #so-diag-collapse, #so-fix-collapse, #so-adv-collapse, #so-bld-collapse')
             .forEach((d) => { d.open = false; });
     }
-    sharedState.win.querySelector('#so-lb-all').addEventListener('click', () => setAllLbEntries(true));
-    sharedState.win.querySelector('#so-lb-none').addEventListener('click', () => setAllLbEntries(false));
-    sharedState.win.querySelector('#so-lb-filtered').addEventListener('click', () => selectFilteredLbEntries());
-    sharedState.win.querySelector('#so-lb-blue').addEventListener('click', () => setLbEntriesByType('blue'));
-    sharedState.win.querySelector('#so-lb-green').addEventListener('click', () => setLbEntriesByType('green'));
-    sharedState.win.querySelector('#so-lb-disabled').addEventListener('click', () => setLbEntriesByType('off'));
-    sharedState.win.querySelector('#so-lb-preview-toggle').addEventListener('click', () => toggleLbPreview());
-    sharedState.win.querySelector('#so-lb-entries-filter').addEventListener('input', (e) => filterBookEntries('#so-lb-entries-list', e.target.value, updateLbFilteredBtn));
-    sharedState.win.querySelector('#so-lb-book-filter').addEventListener('input', (e) => filterLbBooks(e.target.value));
+    win.querySelector('#so-lb-all').addEventListener('click', () => setAllLbEntries(true));
+    win.querySelector('#so-lb-none').addEventListener('click', () => setAllLbEntries(false));
+    win.querySelector('#so-lb-filtered').addEventListener('click', () => selectFilteredLbEntries());
+    win.querySelector('#so-lb-blue').addEventListener('click', () => setLbEntriesByType('blue'));
+    win.querySelector('#so-lb-green').addEventListener('click', () => setLbEntriesByType('green'));
+    win.querySelector('#so-lb-disabled').addEventListener('click', () => setLbEntriesByType('off'));
+    win.querySelector('#so-lb-preview-toggle').addEventListener('click', () => toggleLbPreview());
+    win.querySelector('#so-lb-entries-filter').addEventListener('input', (e) => filterBookEntries('#so-lb-entries-list', e.target.value, updateLbFilteredBtn));
+    win.querySelector('#so-lb-book-filter').addEventListener('input', (e) => filterLbBooks(e.target.value));
     // 世界书「智能选条」🪄 入口（ENABLE_LB_SMART_SELECT）：创建门——关时按钮从不创建、字节级零变化。
     // 弹出输入框走懒建 overlay（openSmartSelect），不占选择器常驻空间（1.49.0 搜索框教训：picker 已很挤）。
     if (ENABLE_LB_SMART_SELECT) {
-        const tools = sharedState.win.querySelector('#so-lb-entries .so-lb-entries-tools');   // 📖 那条工具栏（class 有三处：诊断/工坊/世界书）
+        const tools = win.querySelector('#so-lb-entries .so-lb-entries-tools');   // 📖 那条工具栏（class 有三处：诊断/工坊/世界书）
         if (tools && !tools.querySelector('#so-lb-smart')) {
             const b = document.createElement('button');
             b.type = 'button';
@@ -827,16 +832,16 @@ function bindControls() {
     // 🎛 变量编辑器入口（ENABLE_MVU_EDITOR）。关时模板里就没有这个按钮 → querySelector 为 null，
     // 布线守卫与模板守卫同源，两处一起 no-op = 字节级零变化（同 ENABLE_DIAG_BODY_INJECT 的 bind 写法）。
     if (ENABLE_MVU_EDITOR) {
-        const mvuedBtn = sharedState.win.querySelector('#so-mvued-btn');
+        const mvuedBtn = win.querySelector('#so-mvued-btn');
         if (mvuedBtn) mvuedBtn.addEventListener('click', () => { openMvuEditor(); });
     }
     // 🩺 1.89.0：存档检查按钮（按一次就查一次，结果进诊断记录）。
     if (ENABLE_SCHEMA_DIAG) {
-        const hb = sharedState.win.querySelector('#so-diag-health-btn');
+        const hb = win.querySelector('#so-diag-health-btn');
         if (hb) hb.addEventListener('click', () => { maybeRunSaveHealth('button'); });
     }
     // 诊断经自定义补全预设（1.43.0，opt-in）——全局开关，同 advisorUsePreset 写法（写 getSettings + save）。
-    sharedState.win.querySelector('#so-diag-preset').addEventListener('change', (e) => {
+    win.querySelector('#so-diag-preset').addEventListener('change', (e) => {
         const s2 = getSettings();
         s2.diagnoseUsePreset = e.target.checked;
         save();
@@ -848,59 +853,59 @@ function bindControls() {
     });
     // 🩺 1.89.0：「被拒时让模型自动重写一次」（全局开关，写 getSettings + save）。
     if (ENABLE_SCHEMA_DIAG) {
-        const sr = sharedState.win.querySelector('#so-diag-schema-retry');
+        const sr = win.querySelector('#so-diag-schema-retry');
         if (sr) sr.addEventListener('change', (e) => { getSettings().diagSchemaRetry = e.target.checked; save(); });
     }
     // 诊断「精选世界书条目」绑定（用户功能请求；ENABLE_DIAG_WI_PICKER）。关掉时隐藏那一段、不挂任何处理器。
     if (ENABLE_DIAG_WI_PICKER) {
-        sharedState.win.querySelector('#so-diag-usesel').addEventListener('change', (e) => onDiagUseSelToggle(e.target.checked));
-        sharedState.win.querySelector('#so-diag-hybrid').addEventListener('change', (e) => onDiagHybridToggle(e.target.checked));
-        sharedState.win.querySelector('#so-diag-refresh').addEventListener('click', () => populateDiagWiBooks(true));
-        sharedState.win.querySelector('#so-diag-book').addEventListener('change', (e) => {
+        win.querySelector('#so-diag-usesel').addEventListener('change', (e) => onDiagUseSelToggle(e.target.checked));
+        win.querySelector('#so-diag-hybrid').addEventListener('change', (e) => onDiagHybridToggle(e.target.checked));
+        win.querySelector('#so-diag-refresh').addEventListener('click', () => populateDiagWiBooks(true));
+        win.querySelector('#so-diag-book').addEventListener('change', (e) => {
             const meta = getDiagWiMeta();
-            setDiagWiMeta({ use: meta.use, hybrid: meta.hybrid, target: e.target.value, sel: serializeDiagSel(sharedState.diagEntrySel) });
+            setDiagWiMeta({ use: meta.use, hybrid: meta.hybrid, target: e.target.value, sel: serializeDiagSel(diagEntrySel) });
             updateDiagHint();
             populateDiagWiEntries();
         });
-        sharedState.win.querySelector('#so-diag-entries-toggle').addEventListener('click', () => {
-            sharedState.win.querySelector('#so-diag-entries').classList.toggle('open');
+        win.querySelector('#so-diag-entries-toggle').addEventListener('click', () => {
+            win.querySelector('#so-diag-entries').classList.toggle('open');
         });
-        sharedState.win.querySelector('#so-diag-all').addEventListener('click', () => setAllDiagEntries(true));
-        sharedState.win.querySelector('#so-diag-none').addEventListener('click', () => setAllDiagEntries(false));
-        sharedState.win.querySelector('#so-diag-filtered').addEventListener('click', () => selectFilteredDiagEntries());
-        sharedState.win.querySelector('#so-diag-blue').addEventListener('click', () => setDiagEntriesByType('blue'));
-        sharedState.win.querySelector('#so-diag-green').addEventListener('click', () => setDiagEntriesByType('green'));
-        sharedState.win.querySelector('#so-diag-disabled').addEventListener('click', () => setDiagEntriesByType('off'));
-        sharedState.win.querySelector('#so-diag-entries-filter').addEventListener('input', (e) => filterBookEntries('#so-diag-entries-list', e.target.value, updateDiagFilteredBtn));
+        win.querySelector('#so-diag-all').addEventListener('click', () => setAllDiagEntries(true));
+        win.querySelector('#so-diag-none').addEventListener('click', () => setAllDiagEntries(false));
+        win.querySelector('#so-diag-filtered').addEventListener('click', () => selectFilteredDiagEntries());
+        win.querySelector('#so-diag-blue').addEventListener('click', () => setDiagEntriesByType('blue'));
+        win.querySelector('#so-diag-green').addEventListener('click', () => setDiagEntriesByType('green'));
+        win.querySelector('#so-diag-disabled').addEventListener('click', () => setDiagEntriesByType('off'));
+        win.querySelector('#so-diag-entries-filter').addEventListener('input', (e) => filterBookEntries('#so-diag-entries-list', e.target.value, updateDiagFilteredBtn));
     } else {
         // 只隐藏精选条目那一段 —— 预设行与它无关，不该被这个杀开关带走（1.43.0）
-        const wisel = sharedState.win.querySelector('#so-diag-wisel');
+        const wisel = win.querySelector('#so-diag-wisel');
         if (wisel) wisel.style.display = 'none';
     }
     // 🌐 世界书范围「自定义」绑定（1.81.0；旗关时 markup 不存在、整块不执行）。
     if (ENABLE_WI_CUSTOM_PICK) {
-        sharedState.win.querySelector('#so-wic-hybrid').addEventListener('change', (e) => {
+        win.querySelector('#so-wic-hybrid').addEventListener('change', (e) => {
             const meta = getWiCustomMeta();
             if (!meta) { e.target.checked = false; return; }
             setWiCustomMeta({ books: meta.books, hybrid: e.target.checked, sel: meta.sel });
         });
-        sharedState.win.querySelector('#so-wic-refresh').addEventListener('click', () => populateWiCustomBooks(true));
-        sharedState.win.querySelector('#so-wic-book-all').addEventListener('click', () => setAllWiCustomBooks(true));
-        sharedState.win.querySelector('#so-wic-book-none').addEventListener('click', () => setAllWiCustomBooks(false));
-        sharedState.win.querySelector('#so-wic-book-filter').addEventListener('input', (e) => filterWiCustomBooks(e.target.value));
-        sharedState.win.querySelector('#so-wic-entries-toggle').addEventListener('click', () => sharedState.win.querySelector('#so-wic-entries').classList.toggle('open'));
-        sharedState.win.querySelector('#so-wic-all').addEventListener('click', () => setAllWiCustomEntries(true));
-        sharedState.win.querySelector('#so-wic-none').addEventListener('click', () => setAllWiCustomEntries(false));
-        sharedState.win.querySelector('#so-wic-filtered').addEventListener('click', () => selectFilteredWiCustomEntries());
-        sharedState.win.querySelector('#so-wic-blue').addEventListener('click', () => setWiCustomEntriesByType('blue'));
-        sharedState.win.querySelector('#so-wic-green').addEventListener('click', () => setWiCustomEntriesByType('green'));
-        sharedState.win.querySelector('#so-wic-disabled').addEventListener('click', () => setWiCustomEntriesByType('off'));
-        sharedState.win.querySelector('#so-wic-entries-filter').addEventListener('input', (e) => filterBookEntries('#so-wic-entries-list', e.target.value, updateWiCustomFilteredBtn));
+        win.querySelector('#so-wic-refresh').addEventListener('click', () => populateWiCustomBooks(true));
+        win.querySelector('#so-wic-book-all').addEventListener('click', () => setAllWiCustomBooks(true));
+        win.querySelector('#so-wic-book-none').addEventListener('click', () => setAllWiCustomBooks(false));
+        win.querySelector('#so-wic-book-filter').addEventListener('input', (e) => filterWiCustomBooks(e.target.value));
+        win.querySelector('#so-wic-entries-toggle').addEventListener('click', () => win.querySelector('#so-wic-entries').classList.toggle('open'));
+        win.querySelector('#so-wic-all').addEventListener('click', () => setAllWiCustomEntries(true));
+        win.querySelector('#so-wic-none').addEventListener('click', () => setAllWiCustomEntries(false));
+        win.querySelector('#so-wic-filtered').addEventListener('click', () => selectFilteredWiCustomEntries());
+        win.querySelector('#so-wic-blue').addEventListener('click', () => setWiCustomEntriesByType('blue'));
+        win.querySelector('#so-wic-green').addEventListener('click', () => setWiCustomEntriesByType('green'));
+        win.querySelector('#so-wic-disabled').addEventListener('click', () => setWiCustomEntriesByType('off'));
+        win.querySelector('#so-wic-entries-filter').addEventListener('input', (e) => filterBookEntries('#so-wic-entries-list', e.target.value, updateWiCustomFilteredBtn));
     }
     // 标题栏「⋯」工具下拉：把 剧情概要 / 调试 / 设置 三个次级按钮收进一个下拉里。它们的 id 与各自
     // 的点击处理保持不变（只是被挪进菜单内），所以下面 openDebug / 设置开关 / openSummary 的绑定照旧生效。
-    const toolsBtn = sharedState.win.querySelector('#so-tools-btn');
-    const toolsMenu = sharedState.win.querySelector('#so-tools-menu');
+    const toolsBtn = win.querySelector('#so-tools-btn');
+    const toolsMenu = win.querySelector('#so-tools-menu');
     const closeToolsMenu = () => {
         if (!toolsMenu) return;
         toolsMenu.classList.remove('open');
@@ -925,19 +930,19 @@ function bindControls() {
     }
     // 「普通聊天」菜单项：从任何模式一键回普通聊天（仅切换视图——自动诊断如开启会继续在后台跑，
     // 诊断按钮仍红；要停自动诊断请点诊断按钮）。菜单收起由上面的 .so-tools-item 监听统一处理。
-    sharedState.win.querySelector('#so-normalchat-btn')?.addEventListener('click', async () => {
+    win.querySelector('#so-normalchat-btn')?.addEventListener('click', async () => {
         // 已在普通聊天 → 无事可做。
         if (currentOracleMode() === 'chat') return;
         if (!(await confirmModeSwitch('chat'))) return;   // 1.36.0 中断确认
-        sharedState.priorOracleMode = 'chat';
+        setPriorOracleMode('chat');
         setOracleMode('chat');
         modeEntryNote('已返回普通聊天模式。');
     });
-    sharedState.win.querySelector('#so-debug-btn').addEventListener('click', openDebug);
-    sharedState.win.querySelector('#so-debug-close').addEventListener('click', () => sharedState.win.querySelector('#so-debug').classList.remove('open'));
-    sharedState.win.querySelector('#so-debug-copy').addEventListener('click', async () => {
-        const btn = sharedState.win.querySelector('#so-debug-copy');
-        const ok = await copyTextRobust(sharedState.win.querySelector('#so-debug-body').textContent || '');
+    win.querySelector('#so-debug-btn').addEventListener('click', openDebug);
+    win.querySelector('#so-debug-close').addEventListener('click', () => win.querySelector('#so-debug').classList.remove('open'));
+    win.querySelector('#so-debug-copy').addEventListener('click', async () => {
+        const btn = win.querySelector('#so-debug-copy');
+        const ok = await copyTextRobust(win.querySelector('#so-debug-body').textContent || '');
         if (ok) {
             btn.innerHTML = '<i class="fa-solid fa-check"></i>';
             setTimeout(() => { btn.innerHTML = '<i class="fa-solid fa-copy"></i>'; }, 1200);
@@ -945,19 +950,19 @@ function bindControls() {
             btn.title = '复制失败 —— 请手动选择文本';
         }
     });
-    sharedState.win.querySelector('#so-builder-btn')?.addEventListener('click', toggleBuilder);
-    sharedState.win.querySelector('#so-settings-btn').addEventListener('click', () => toggleSettings());
+    win.querySelector('#so-builder-btn')?.addEventListener('click', toggleBuilder);
+    win.querySelector('#so-settings-btn').addEventListener('click', () => toggleSettings());
     // 用户功能请求：剧情概要编辑器（本聊天，自动保存到元数据）。
-    sharedState.win.querySelector('#so-summary-btn').addEventListener('click', openSummary);
+    win.querySelector('#so-summary-btn').addEventListener('click', openSummary);
     // 📥📤 导出 / 导入对话（1.60.0 / 1.61.0）：⋯ 工具菜单【不】设入口（Prince 2026-08-09 定案）。
     // 唯二的入口是 AI 气泡行上那对小按钮（见 addMessage）＋ 空页时的空态入口（见 renderEmptyState）。
-    sharedState.win.querySelector('#so-summary-close').addEventListener('click', () => sharedState.win.querySelector('#so-summary').classList.remove('open'));
-    sharedState.win.querySelector('#so-summary-text').addEventListener('input', (e) => {
+    win.querySelector('#so-summary-close').addEventListener('click', () => win.querySelector('#so-summary').classList.remove('open'));
+    win.querySelector('#so-summary-text').addEventListener('input', (e) => {
         setSummary(e.target.value);
         updateSummaryIndicator(e.target.value);
     });
-    sharedState.win.querySelector('#so-summary-clear').addEventListener('click', async () => {
-        const ta = sharedState.win.querySelector('#so-summary-text');
+    win.querySelector('#so-summary-clear').addEventListener('click', async () => {
+        const ta = win.querySelector('#so-summary-text');
         if (ta.value.trim() && !(await uiConfirm('确定清空本聊天的剧情概要吗？'))) return;
         ta.value = '';
         setSummary('');
@@ -965,18 +970,18 @@ function bindControls() {
         ta.focus();
     });
     // 用户功能请求：自动诊断首次开启前的一次性警告弹窗。
-    const autoWarnOverlay = sharedState.win.querySelector('#so-autowarn');
+    const autoWarnOverlay = win.querySelector('#so-autowarn');
     const closeAutoWarn = () => autoWarnOverlay.classList.remove('open');
-    sharedState.win.querySelector('#so-autowarn-cancel').addEventListener('click', closeAutoWarn);
-    sharedState.win.querySelector('#so-autowarn-ok').addEventListener('click', () => {
-        if (sharedState.win.querySelector('#so-autowarn-never').checked) { getSettings().autoDiagnoseWarned = true; save(); }
+    win.querySelector('#so-autowarn-cancel').addEventListener('click', closeAutoWarn);
+    win.querySelector('#so-autowarn-ok').addEventListener('click', () => {
+        if (win.querySelector('#so-autowarn-never').checked) { getSettings().autoDiagnoseWarned = true; save(); }
         closeAutoWarn();
         setAutoDiagnose(true);   // 1.65.0：确认后才真开（勾选框在弹窗打开那一刻已被拨回未勾选）
     });
     // 🩺 自动诊断勾选框（1.65.0，取代按钮三态循环的第二下点击）。勾上时若还没看过一次性警告，
     // 先把勾拨回去再弹窗——「确认」走 setAutoDiagnose(true) 才真开，「取消 / ✕ / 点遮罩」什么都不做，
     // 于是取消后 UI 与设置天然一致，不需要在三处关闭路径上各写一遍回滚。
-    const autoDiagChk = sharedState.win.querySelector('#so-diag-auto');
+    const autoDiagChk = win.querySelector('#so-diag-auto');
     if (autoDiagChk) autoDiagChk.addEventListener('change', () => {
         if (!autoDiagChk.checked) { setAutoDiagnose(false); return; }
         if (!getSettings().autoDiagnoseWarned) { autoDiagChk.checked = false; openAutoDiagWarn(); return; }
@@ -987,23 +992,23 @@ function bindControls() {
     autoWarnOverlay.querySelector('.so-warn-x').addEventListener('click', closeAutoWarn);
     autoWarnOverlay.addEventListener('click', (e) => { if (e.target === autoWarnOverlay) closeAutoWarn(); });
     // ✨ 校正：切到「自动校正」时的一次性标签块提醒（信息性，无需取消——已经切过去了，只是提醒）。
-    const fixWarnOverlay = sharedState.win.querySelector('#so-fixwarn');
+    const fixWarnOverlay = win.querySelector('#so-fixwarn');
     const closeFixWarn = () => fixWarnOverlay.classList.remove('open');
-    const fixWarnOk = sharedState.win.querySelector('#so-fixwarn-ok');
+    const fixWarnOk = win.querySelector('#so-fixwarn-ok');
     if (fixWarnOk) fixWarnOk.addEventListener('click', () => {
-        if (sharedState.win.querySelector('#so-fixwarn-never').checked) { getSettings().autoFixWarned = true; save(); }
+        if (win.querySelector('#so-fixwarn-never').checked) { getSettings().autoFixWarned = true; save(); }
         closeFixWarn();
     });
     // 同款手机逃生阀（顶部 ✕ + 点遮罩关闭）。
     fixWarnOverlay.querySelector('.so-warn-x').addEventListener('click', closeFixWarn);
     fixWarnOverlay.addEventListener('click', (e) => { if (e.target === fixWarnOverlay) closeFixWarn(); });
-    sharedState.win.querySelector('#so-profile-refresh').addEventListener('click', refreshProfiles);
-    sharedState.win.querySelector('#so-extraparams-btn').addEventListener('click', openExtraParams); // 附加参数（1.70.0）
+    win.querySelector('#so-profile-refresh').addEventListener('click', refreshProfiles);
+    win.querySelector('#so-extraparams-btn').addEventListener('click', openExtraParams); // 附加参数（1.70.0）
     updateExtraParamsHint(); // 开窗即反映「设了没设」，不用点开弹窗才知道
 
     // settings inputs -> persist
     const bind = (id, key, parse = (v) => v) => {
-        const el = sharedState.win.querySelector(id);
+        const el = win.querySelector(id);
         const evt = (el.type === 'checkbox') ? 'change' : 'input';
         el.addEventListener(evt, () => {
             s[key] = el.type === 'checkbox' ? el.checked : parse(el.value);
@@ -1023,8 +1028,8 @@ function bindControls() {
     bind('#so-direct-backend', 'directViaBackend'); // 1.17.23：经酒馆后端转发（避免直连 CORS）
     bind('#so-raw-url', 'directRawUrl');            // 1.22.0：地址原样使用（不自动补 /v1，原生化自二创「最终模式」）
     // A6：连接存档（端点 + 密钥 + 模型 + 地址原样开关 + 高级选项与生成参数的命名快照）。列表行上有「使用」「删除」，这里只管存新档。
-    sharedState.win.querySelector('#so-conn-preset-save').addEventListener('click', async () => {
-        const name = sharedState.win.querySelector('#so-conn-preset-name').value.trim();
+    win.querySelector('#so-conn-preset-save').addEventListener('click', async () => {
+        const name = win.querySelector('#so-conn-preset-name').value.trim();
         if (!name) { if (window.toastr) window.toastr.info('先给存档起个名字', '剧情推进'); return; }
         // 同名会覆盖：先问一句（改了当前存档想存回去，用存档栏下面的「保存到此存档」更顺手）
         const exists = (getSettings().connPresets || []).some((p) => p.name === name);
@@ -1032,40 +1037,40 @@ function bindControls() {
         getSettings().connPresets = connPresetUpsert(getSettings().connPresets, {
             ...connPresetSnapshot(getSettings()),
             name,
-            endpoint: sharedState.win.querySelector('#so-endpoint').value.trim(),
-            apiKey: sharedState.win.querySelector('#so-apikey').value.trim(),
-            model: sharedState.win.querySelector('#so-model').value.trim(),
-            rawUrl: sharedState.win.querySelector('#so-raw-url').checked,   // 1.22.0：地址原样开关随存档保存
+            endpoint: win.querySelector('#so-endpoint').value.trim(),
+            apiKey: win.querySelector('#so-apikey').value.trim(),
+            model: win.querySelector('#so-model').value.trim(),
+            rawUrl: win.querySelector('#so-raw-url').checked,   // 1.22.0：地址原样开关随存档保存
         });
         getSettings().connPresetActive = name;
         save();
-        sharedState.win.querySelector('#so-conn-preset-name').value = '';
+        win.querySelector('#so-conn-preset-name').value = '';
         renderConnPresets();
         renderModelBar();
     });
     // 连接方式：两段式按钮代替原来的下拉（下拉还在、只是藏起来，走既有 bind 落盘）。
-    for (const b of sharedState.win.querySelectorAll('#so-mode-seg [data-mode]')) {
+    for (const b of win.querySelectorAll('#so-mode-seg [data-mode]')) {
         b.addEventListener('click', () => {
-            const sel = sharedState.win.querySelector('#so-mode');
+            const sel = win.querySelector('#so-mode');
             if (sel.value === b.dataset.mode) return;
             sel.value = b.dataset.mode;
             sel.dispatchEvent(new Event('input', { bubbles: true }));
         });
     }
     // 设置分页 + 右上角关闭
-    for (const b of sharedState.win.querySelectorAll('.so-set-tab')) b.addEventListener('click', () => setSettingsTab(b.dataset.tab));
-    sharedState.win.querySelector('#so-settings-close').addEventListener('click', () => toggleSettings(false));
+    for (const b of win.querySelectorAll('.so-set-tab')) b.addEventListener('click', () => setSettingsTab(b.dataset.tab));
+    win.querySelector('#so-settings-close').addEventListener('click', () => toggleSettings(false));
     // ⚡ 设置「快捷指令」页：新建 / 补回预置的。
-    sharedState.win.querySelector('#so-qp-add').addEventListener('click', () => {
-        const mode = sharedState.qpManageMode || currentOracleMode();
+    win.querySelector('#so-qp-add').addEventListener('click', () => {
+        const mode = qpManageMode || currentOracleMode();
         getSettings().quickPrompts.push({ id: qpNewId(), mode, label: '新指令', text: '' });
         save();
         renderQpManager();
-        const names = sharedState.win.querySelectorAll('#so-qp-list .so-qp-name');
+        const names = win.querySelectorAll('#so-qp-list .so-qp-name');
         const last = names[names.length - 1];
         if (last) { last.focus(); last.select(); }
     });
-    sharedState.win.querySelector('#so-qp-restore').addEventListener('click', () => {
+    win.querySelector('#so-qp-restore').addEventListener('click', () => {
         const list = getSettings().quickPrompts;
         const missing = QP_DEFAULTS.filter((d) => !list.some((q) => q && q.id === d.id));
         for (const d of missing) list.push({ ...d });
@@ -1075,10 +1080,10 @@ function bindControls() {
     // 切换栏的菜单、快捷指令列表、设置里的存档弹出框：点别处或按 Esc 收起。
     document.addEventListener('click', (e) => {
         const inside = (sel) => !!(e.target && e.target.closest && e.target.closest(sel));
-        if (sharedState.modelMenuOpen && !inside('#so-model-bar')) closeModelMenu();
-        if (sharedState.qpMenuOpen && !inside('#so-model-bar')) closeQpMenu();
+        if (modelMenuOpen && !inside('#so-model-bar')) closeModelMenu();
+        if (qpMenuOpen && !inside('#so-model-bar')) closeQpMenu();
         // 删存档时弹出的确认框（酒馆的 dialog.popup）也算「里面」：确认完弹出框还开着，可以接着删
-        if (sharedState.connPickerOpen && !inside('#so-conn-preset-list, .popup, dialog')) closeConnPicker();
+        if (connPickerOpen && !inside('#so-conn-preset-list, .popup, dialog')) closeConnPicker();
     });
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') return;
@@ -1087,32 +1092,32 @@ function bindControls() {
         closeConnPicker();
     });
     // A5：工具移到标题栏开关——开时立刻搬（幂等）；关时提示刷新恢复（⋯ 包裹已删，重建靠 buildWindow）。
-    sharedState.win.querySelector('#so-tools-header-toggle').addEventListener('change', (e) => {
+    win.querySelector('#so-tools-header-toggle').addEventListener('change', (e) => {
         getSettings().toolsInHeader = e.target.checked;
         save();
         if (e.target.checked) applyToolsInHeader();
         else if (window.toastr) window.toastr.info('已关闭——刷新页面后恢复 ⋯ 工具菜单', '剧情推进');
     });
     // 精简版 1.2：快捷回复栏按钮开关——同样立刻放 / 撤。
-    sharedState.win.querySelector('#so-qr-toggle').addEventListener('change', (e) => {
+    win.querySelector('#so-qr-toggle').addEventListener('change', (e) => {
         getSettings().showQrButton = e.target.checked;
         save();
         syncQrButton();
     });
     // 用户功能请求：聊天栏快捷按钮开关——改设置后立刻放 / 撤按钮（不只是存）。
-    sharedState.win.querySelector('#so-chatbar-toggle').addEventListener('change', (e) => {
+    win.querySelector('#so-chatbar-toggle').addEventListener('change', (e) => {
         getSettings().showChatBarButton = e.target.checked;
         save();
         syncChatBarButton();
     });
     // 点击窗外自动收起（1.48.0）：只是存设置——监听器常驻，由 onDocClickOutside 每次读设置决定收不收。
-    sharedState.win.querySelector('#so-clickout-toggle').addEventListener('change', (e) => {
+    win.querySelector('#so-clickout-toggle').addEventListener('change', (e) => {
         getSettings().clickOutsideClose = e.target.checked;
         save();
     });
     // 1.45.0 窗口配色：改完立刻生效，不用刷新（同 #so-chatbar-toggle 的手感）。
     // 不走 bind()：bind 只存值，这里还要 applyWindowSkin 真去换类。
-    sharedState.win.querySelector('#so-window-skin').addEventListener('change', (e) => {
+    win.querySelector('#so-window-skin').addEventListener('change', (e) => {
         getSettings().windowSkin = e.target.value;
         save();
         applyWindowSkin(getSettings());
@@ -1124,9 +1129,9 @@ function bindControls() {
     bind('#so-adv-depth', 'advisorDepth', (v) => parseInt(v, 10));
     // After bind() has written the new depth, re-register the active injection —
     // otherwise the setting silently applies only on the next chat switch.
-    sharedState.win.querySelector('#so-adv-depth').addEventListener('input', () => applyPlanInjection());
+    win.querySelector('#so-adv-depth').addEventListener('input', () => applyPlanInjection());
     // 剧情脉络：后面节点的详细什么时候写（一次写全 / 到了再写）。改成「到了再写」时，当前节点还没详细就顺手请参谋写。
-    sharedState.win.querySelectorAll('#so-adv-detail-seg [data-v]').forEach((b) => b.addEventListener('click', () => {
+    win.querySelectorAll('#so-adv-detail-seg [data-v]').forEach((b) => b.addEventListener('click', () => {
         getSettings().advisorNodeDetail = b.dataset.v;
         save();
         syncNodeDetailSeg();
@@ -1142,7 +1147,7 @@ function bindControls() {
     if (ENABLE_AUTO_DIAGNOSE) bind('#so-diag-cowrite', 'autoDiagnoseCoWrite');         // 🧩 允许与其他脚本并写 MVU（1.83.0，opt-in）
     if (ENABLE_AUTO_DIAGNOSE) {   // 🔁 失败自动重试（2026-08-28）：主开关 + 次数 + 三枚分类
         bind('#so-diag-retry', 'autoDiagnoseRetry');
-        sharedState.win.querySelector('#so-diag-retry').addEventListener('change', () => reflectDiagRetryVisible());
+        win.querySelector('#so-diag-retry').addEventListener('change', () => reflectDiagRetryVisible());
         bind('#so-diag-retry-count', 'autoDiagnoseRetryMax', (v) => parseInt(v, 10));
         bind('#so-diag-retry-empty', 'autoDiagnoseRetryOnEmpty');
         bind('#so-diag-retry-format', 'autoDiagnoseRetryOnFormat');
@@ -1151,7 +1156,7 @@ function bindControls() {
     if (ENABLE_DIAG_BODY_INJECT) bind('#so-diag-inject', 'diagInjectBody');   // 🩺 诊断修正写进正文（1.65.0 起在「诊断设置」里，行同上）
     bind('#so-hidden', 'includeHiddenFloors');
     // —— 角色工坊设置 —— 全局设置（不是 per-chat）。
-    const bldTargetSel = sharedState.win.querySelector('#so-bld-target');
+    const bldTargetSel = win.querySelector('#so-bld-target');
     if (bldTargetSel && BUILDER_NPC_ONLY) {
         // 只保留 NPC：目标恒 npc，选择器整行藏起来（只有一个选项的下拉没意义）。
         getSettings().bldTarget = 'npc';
@@ -1188,9 +1193,9 @@ function bindControls() {
         });
     }
     renderBuilderChips();
-    sharedState.win.querySelector('#so-bld-chips-help')?.addEventListener('click', toggleBuilderChipsLegend);
-    const bldDepth = sharedState.win.querySelector('#so-bld-depth');
-    const bldDepthAll = sharedState.win.querySelector('#so-bld-depth-all');
+    win.querySelector('#so-bld-chips-help')?.addEventListener('click', toggleBuilderChipsLegend);
+    const bldDepth = win.querySelector('#so-bld-depth');
+    const bldDepthAll = win.querySelector('#so-bld-depth-all');
     const reflectBldDepth = () => {
         const d = getSettings().bldDepth;
         if (bldDepthAll) bldDepthAll.checked = d === -1;
@@ -1205,50 +1210,50 @@ function bindControls() {
     bind('#so-bld-dlgrich', 'bldDlgRich');
     bind('#so-bld-preset', 'bldUsePreset');   // T13：访谈经预设 opt-in（锻造不受影响）——同 bldSummary/bldStat 用 bind
     // ✂️ 锻造后自动精简（轻精简层）：总开关关 或 轻精简整体关闭（ENABLE_LIGHT_CONDENSE=false）时整行不渲染。
-    const bldAutoCondRow = sharedState.win.querySelector('#so-bld-autocond-row');
+    const bldAutoCondRow = win.querySelector('#so-bld-autocond-row');
     if (bldAutoCondRow && (!ENABLE_DRAFT_CONDENSE || !ENABLE_LIGHT_CONDENSE)) bldAutoCondRow.style.display = 'none';
     bind('#so-bld-autocond', 'bldAutoCondense');
     // ✂️✂️ 深度精简 = Opus-only 说明行（无勾选项；深度恒串行流式，见 runCondenseDepth）：总开关关时整行不渲染。
-    const bldCondInfoRow = sharedState.win.querySelector('#so-bld-condinfo');
+    const bldCondInfoRow = win.querySelector('#so-bld-condinfo');
     if (bldCondInfoRow && !ENABLE_DRAFT_CONDENSE) bldCondInfoRow.style.display = 'none';
-    const bldMaxTok = sharedState.win.querySelector('#so-bld-maxtok');
+    const bldMaxTok = win.querySelector('#so-bld-maxtok');
     if (bldMaxTok) {
         bldMaxTok.value = getSettings().bldMaxTokens || '';   // 建窗时回填当前值（原始字符串）
         bldMaxTok.addEventListener('change', () => { getSettings().bldMaxTokens = bldMaxTok.value.trim(); save(); });
     }
     // Tier 0 ③（1.25.0）：校正回复上限 —— 仿 bldMaxTok，空串=自动（地板 4096）。全局、对手动+自动都生效。
-    const fixMaxTok = sharedState.win.querySelector('#so-fix-maxtok');
+    const fixMaxTok = win.querySelector('#so-fix-maxtok');
     if (fixMaxTok) {
         fixMaxTok.value = getSettings().fixMaxTokens || '';
         fixMaxTok.addEventListener('change', () => { getSettings().fixMaxTokens = fixMaxTok.value.trim(); save(); });
     }
-    sharedState.win.querySelector('#so-bld-book-list')?.addEventListener('change', (e) => {
+    win.querySelector('#so-bld-book-list')?.addEventListener('change', (e) => {
         if (e.target && e.target.matches('input[type="checkbox"]')) onBldBookSelectionChange();
     });
     // 「全部激活」：清空选书、回到「跟随当前所有激活的世界书」（bldBooks = [] 语义），重画选书 / 选条目器。
-    sharedState.win.querySelector('#so-bld-books-active')?.addEventListener('click', () => {
+    win.querySelector('#so-bld-books-active')?.addEventListener('click', () => {
         getSettings().bldBooks = [];
         save();
         populateBuilderBooks();   // 重渲选书行（全取消勾）+ 更新摘要 + 刷新选条目器
     });
-    sharedState.win.querySelector('#so-bld-ent-all')?.addEventListener('click', () => setAllBldEntries(true));
-    sharedState.win.querySelector('#so-bld-ent-none')?.addEventListener('click', () => setAllBldEntries(false));
-    sharedState.win.querySelector('#so-bld-ent-filtered')?.addEventListener('click', () => selectFilteredBldEntries());
-    sharedState.win.querySelector('#so-bld-ent-blue')?.addEventListener('click', () => setBldEntriesByType('blue'));
-    sharedState.win.querySelector('#so-bld-ent-green')?.addEventListener('click', () => setBldEntriesByType('green'));
-    sharedState.win.querySelector('#so-bld-ent-filter')?.addEventListener('input', (e) => filterBookEntries('#so-bld-entry-list', e.target.value, updateBldFilteredBtn));
-    sharedState.win.querySelector('#so-bld-book-filter')?.addEventListener('input', (e) => filterBldBooks(e.target.value));
+    win.querySelector('#so-bld-ent-all')?.addEventListener('click', () => setAllBldEntries(true));
+    win.querySelector('#so-bld-ent-none')?.addEventListener('click', () => setAllBldEntries(false));
+    win.querySelector('#so-bld-ent-filtered')?.addEventListener('click', () => selectFilteredBldEntries());
+    win.querySelector('#so-bld-ent-blue')?.addEventListener('click', () => setBldEntriesByType('blue'));
+    win.querySelector('#so-bld-ent-green')?.addEventListener('click', () => setBldEntriesByType('green'));
+    win.querySelector('#so-bld-ent-filter')?.addEventListener('input', (e) => filterBookEntries('#so-bld-entry-list', e.target.value, updateBldFilteredBtn));
+    win.querySelector('#so-bld-book-filter')?.addEventListener('input', (e) => filterBldBooks(e.target.value));
     // ✨ 校正模式 Phase 4：校正配置按【当前聊天】持久化（chat A 的目标不渗进 chat B）。专用 bindFix——
     // 写到 setFixCfg（per-chat 元数据）而非 getSettings()；不写全局、不调 save()（setFixCfg 自己触发 saveChatMetadata）。
     const bindFix = (id, key, parse = (v) => v) => {
-        const el = sharedState.win.querySelector(id);
+        const el = win.querySelector(id);
         const evt = (el.type === 'checkbox') ? 'change' : 'input';
         el.addEventListener(evt, () => {
             setFixCfg({ [key]: el.type === 'checkbox' ? el.checked : parse(el.value) });
         });
     };
     // ✨ 校正 手动/自动 分家（2026-06-26）：下拉只切「显示哪套设置」（纯 UI 视图，全局存 fixSettingsView，不进 per-chat）。
-    const fixModeSel = sharedState.win.querySelector('#so-fix-mode-select');
+    const fixModeSel = win.querySelector('#so-fix-mode-select');
     if (fixModeSel) {
         fixModeSel.addEventListener('change', () => {
             getSettings().fixSettingsView = (fixModeSel.value === 'auto') ? 'auto' : ((ENABLE_FIX_CUSTOM_TASK && fixModeSel.value === 'custom') ? 'custom' : 'manual');
@@ -1261,12 +1266,12 @@ function bindControls() {
         });
     }
     // ✨ 经预设发送（破限 / 越狱用）—— 全局开关（不进 per-chat），同 advisorUsePreset 写法（写 getSettings + save）。
-    const fixmPresetCb = sharedState.win.querySelector('#so-fixm-preset');
+    const fixmPresetCb = win.querySelector('#so-fixm-preset');
     if (fixmPresetCb) fixmPresetCb.addEventListener('change', () => { getSettings().fixM_usePreset = fixmPresetCb.checked; save(); applyFixPresetLock(); });
-    const fixaPresetCb = sharedState.win.querySelector('#so-fixa-preset');
+    const fixaPresetCb = win.querySelector('#so-fixa-preset');
     if (fixaPresetCb) fixaPresetCb.addEventListener('change', () => { getSettings().fixA_usePreset = fixaPresetCb.checked; save(); applyFixPresetLock(); });
     // ✨ MVU「额外模型更新」抢写协调（opt-in，全局设置——用户环境级，不入 per-chat FIX_CFG_KEYS）。
-    const fixWaitMvuCb = sharedState.win.querySelector('#so-fix-wait-mvu');
+    const fixWaitMvuCb = win.querySelector('#so-fix-wait-mvu');
     if (fixWaitMvuCb) fixWaitMvuCb.addEventListener('change', () => { getSettings().fixWaitForMvu = fixWaitMvuCb.checked; save(); });
     // 数字框条数 parse：非数字 / 非正数 → -1（全部），正数原样。手动 / 自动各一份独立存储。
     const depthParse = (v) => { const n = parseInt(v, 10); return (Number.isNaN(n) || n <= 0) ? -1 : n; };
@@ -1280,7 +1285,7 @@ function bindControls() {
     bindFix('#so-fixm-summary', 'fixM_includeSummary');
     bindFix('#so-fixm-protectthink', 'fixM_protectThink');   // ✨ 思考块保护（W1）
     bindFix('#so-fixm-scope', 'fixM_scopeTag');   // 二创版 2.1：手动整篇的正文标签（留空 = 整条）
-    sharedState.win.querySelector('#so-fixm-scope').addEventListener('blur', (e) => {   // 失焦清洗：全角括号 / <> 包装 / 多词只取第一个
+    win.querySelector('#so-fixm-scope').addEventListener('blur', (e) => {   // 失焦清洗：全角括号 / <> 包装 / 多词只取第一个
         const cleaned = normalizeScopeInput(e.target.value);
         if (cleaned === e.target.value) return;
         e.target.value = cleaned;
@@ -1295,9 +1300,9 @@ function bindControls() {
     bindFix('#so-fix-tgt-archaic', 'fixA_targetArchaic');
     // ✨ 作用域标签（per-chat）。Phase 5（D+E）：用户在这里亲手打字 = 明确表达了意图，标记 fixA_scopeManual:true——
     // 之后 resolveFixScope 缓存未命中时永不代替用户改写，只会建议（suggest），不会自作主张 detected 采纳新标签。
-    sharedState.win.querySelector('#so-fix-scope').addEventListener('input', (e) => { setFixCfg({ fixA_scopeTag: e.target.value, fixA_scopeManual: true }); updateFixVerdict(); renderFixConfigWarnings(); });
+    win.querySelector('#so-fix-scope').addEventListener('input', (e) => { setFixCfg({ fixA_scopeTag: e.target.value, fixA_scopeManual: true }); updateFixVerdict(); renderFixConfigWarnings(); });
     // ✨ 防呆（1.18.0）：失焦清洗——IME 全角括号 / <>[] 包装 / 多词只取第一个（normalizeScopeInput）。留空是合法 opt-out，不动。
-    sharedState.win.querySelector('#so-fix-scope').addEventListener('blur', (e) => {
+    win.querySelector('#so-fix-scope').addEventListener('blur', (e) => {
         const cleaned = normalizeScopeInput(e.target.value);
         if (!e.target.value.trim() || cleaned === e.target.value) return;
         e.target.value = cleaned;
@@ -1306,17 +1311,17 @@ function bindControls() {
         renderFixConfigWarnings();
     });
     bindFix('#so-fix-join', 'fixA_pieceJoin');   // ✨ 整体校正 vs 分段逐次（per-chat，默认开）
-    sharedState.win.querySelector('#so-fix-join')?.addEventListener('change', () => { updateFixVerdict(); });
-    sharedState.win.querySelector('#so-fix-keep').addEventListener('input', (e) => { setFixCfg({ fixA_keepTags: e.target.value }); updateFixVerdict(); renderFixConfigWarnings(); });
-    sharedState.win.querySelector('#so-fix-drop').addEventListener('input', (e) => { setFixCfg({ fixA_dropTags: e.target.value }); renderFixConfigWarnings(); });
-    sharedState.win.querySelector('#so-fix-know').addEventListener('input', (e) => { setFixCfg({ fixA_knowledgeBoundary: e.target.value }); });
-    sharedState.win.querySelector('#so-fix-guard').addEventListener('input', (e) => { setFixCfg({ fixA_guardrails: e.target.value }); });
+    win.querySelector('#so-fix-join')?.addEventListener('change', () => { updateFixVerdict(); });
+    win.querySelector('#so-fix-keep').addEventListener('input', (e) => { setFixCfg({ fixA_keepTags: e.target.value }); updateFixVerdict(); renderFixConfigWarnings(); });
+    win.querySelector('#so-fix-drop').addEventListener('input', (e) => { setFixCfg({ fixA_dropTags: e.target.value }); renderFixConfigWarnings(); });
+    win.querySelector('#so-fix-know').addEventListener('input', (e) => { setFixCfg({ fixA_knowledgeBoundary: e.target.value }); });
+    win.querySelector('#so-fix-guard').addEventListener('input', (e) => { setFixCfg({ fixA_guardrails: e.target.value }); });
     // ✨ 校正提示词选择器（轻校 / 精校 + 侧重）：写 per-chat；切版本时即时显隐侧重行。归一在此就地做（只认 thorough / opus）。
-    sharedState.win.querySelector('#so-fix-prompt-version')?.addEventListener('change', (e) => {
+    win.querySelector('#so-fix-prompt-version')?.addEventListener('change', (e) => {
         setFixCfg({ fixA_promptVersion: e.target.value === 'thorough' ? 'thorough' : 'light' });
         applyFixFlavorView();
     });
-    sharedState.win.querySelector('#so-fix-prompt-flavor')?.addEventListener('change', (e) => {
+    win.querySelector('#so-fix-prompt-flavor')?.addEventListener('change', (e) => {
         setFixCfg({ fixA_promptFlavor: ['opus', 'gemini'].includes(e.target.value) ? e.target.value : 'deepseek' });
     });
     bindFix('#so-fix-card', 'fixA_includeCard');
@@ -1324,27 +1329,27 @@ function bindControls() {
     bindFix('#so-fix-ctx-depth', 'fixA_contextDepth', depthParse);
     bindFix('#so-fix-world', 'fixA_includeWorld');
     bindFix('#so-fixa-summary', 'fixA_includeSummary');
-    sharedState.win.querySelector('#so-fix-run').addEventListener('click', () => { runFixByTargets(); });
-    sharedState.win.querySelector('#so-fixsel-open')?.addEventListener('click', () => openFixSelectCard());   // ✂️ 选段校正（1.27.0）
+    win.querySelector('#so-fix-run').addEventListener('click', () => { runFixByTargets(); });
+    win.querySelector('#so-fixsel-open')?.addEventListener('click', () => openFixSelectCard());   // ✂️ 选段校正（1.27.0）
     // ✂️ 输入框上方快捷按钮开关（1.44.0）：改设置后立刻放 / 撤按钮（不只是存），同 🌙 那颗的手感。
-    sharedState.win.querySelector('#so-fixsel-barbtn')?.addEventListener('change', (e) => {
+    win.querySelector('#so-fixsel-barbtn')?.addEventListener('change', (e) => {
         getSettings().fixSelBarButton = e.target.checked;
         save();
         syncFixSelBarButton();
     });
     // ✂️ 回复右上角那颗的隐藏开关（1.77.0，opt-out `fixSelRowButton`）：同款手感——改设置后立刻
     // 重挂 / 拔掉（refreshFixChatEntry 起手就先拔光，所以取消勾选是当场生效，不必等楼层重建）。
-    sharedState.win.querySelector('#so-fixsel-rowbtn')?.addEventListener('change', (e) => {
+    win.querySelector('#so-fixsel-rowbtn')?.addEventListener('change', (e) => {
         getSettings().fixSelRowButton = e.target.checked;
         save();
         refreshFixChatEntry();
     });
-    sharedState.win.querySelector('#so-fix-scan')?.addEventListener('click', () => { scanFixScope(); });   // ✨ Phase 6：扫描本卡正文标签
-    sharedState.win.querySelector('#so-fix-reset')?.addEventListener('click', () => { resetFixCfg(); });   // ✨ Phase 7（M4）：恢复推荐设置
+    win.querySelector('#so-fix-scan')?.addEventListener('click', () => { scanFixScope(); });   // ✨ Phase 6：扫描本卡正文标签
+    win.querySelector('#so-fix-reset')?.addEventListener('click', () => { resetFixCfg(); });   // ✨ Phase 7（M4）：恢复推荐设置
     bindFix('#so-fix-auto', 'autoFixEnabled');   // 自动校正每条新回复（message_received 编排读 cfg.autoFixEnabled）
-    sharedState.win.querySelector('#so-fix-auto')?.addEventListener('change', updateFixButtonVisual);   // 改开关 → ✨ 金色指示即时对齐
+    win.querySelector('#so-fix-auto')?.addEventListener('change', updateFixButtonVisual);   // 改开关 → ✨ 金色指示即时对齐
     // ✨ 防呆（P5）：开自动但连接没配 → 一次性说明（fixEnvNote），否则用户只看到「什么都没发生」；顺带刷新判定行 / 警告盒。
-    sharedState.win.querySelector('#so-fix-auto')?.addEventListener('change', (e) => {
+    win.querySelector('#so-fix-auto')?.addEventListener('change', (e) => {
         if (e.target.checked) {
             const st = getSettings();
             const unset = (st.mode === 'direct' && (!st.endpoint || !st.model)) || (st.mode === 'profile' && !st.profileId);
@@ -1354,29 +1359,29 @@ function bindControls() {
         renderFixConfigWarnings();
     });
     // ✨ 校正 Phase 4：全局命名套餐库——加载 / 保存为… / 删除（saveFixBundle / loadFixBundle / deleteFixBundle + populateFixBundles）。
-    sharedState.win.querySelector('#so-fix-bundle-load').addEventListener('click', () => {
-        const sel = sharedState.win.querySelector('#so-fix-bundle');
+    win.querySelector('#so-fix-bundle-load').addEventListener('click', () => {
+        const sel = win.querySelector('#so-fix-bundle');
         const name = sel && sel.value;
         if (!name) { toastr.info('先选一个已存套餐'); return; }
         if (loadFixBundle(name)) toastr.success(`已加载套餐「${name}」到本聊天`);
     });
-    sharedState.win.querySelector('#so-fix-bundle-save').addEventListener('click', async () => {
+    win.querySelector('#so-fix-bundle-save').addEventListener('click', async () => {
         const name = await uiPrompt('给这套校正配置起个名字（如「硬核西幻」）：', '');
         const trimmed = (name || '').trim();
         if (!trimmed) return;   // 取消 / 空 = no-op
-        if (saveFixBundle(trimmed)) { populateFixBundles(); const sel = sharedState.win.querySelector('#so-fix-bundle'); if (sel) sel.value = trimmed; toastr.success(`已保存套餐「${trimmed}」`); }
+        if (saveFixBundle(trimmed)) { populateFixBundles(); const sel = win.querySelector('#so-fix-bundle'); if (sel) sel.value = trimmed; toastr.success(`已保存套餐「${trimmed}」`); }
     });
-    sharedState.win.querySelector('#so-fix-bundle-del').addEventListener('click', async () => {
-        const sel = sharedState.win.querySelector('#so-fix-bundle');
+    win.querySelector('#so-fix-bundle-del').addEventListener('click', async () => {
+        const sel = win.querySelector('#so-fix-bundle');
         const name = sel && sel.value;
         if (!name) { toastr.info('先选一个要删的套餐'); return; }
         if (!(await uiConfirm(`删除套餐「${name}」？`))) return;
         if (deleteFixBundle(name)) { populateFixBundles(); toastr.success(`已删除套餐「${name}」`); }
     });
     // 📋 自定义模板任务（1.77.0）：整块由旗 + 面板存在性双门控——旗关时面板根本没渲染，一个监听都不挂。
-    if (ENABLE_FIX_CUSTOM_TASK && sharedState.win.querySelector('#so-fix-custom-wrap')) {
-        sharedState.win.querySelector('#so-fixc-run').addEventListener('click', () => { runCustomTaskNow(); });
-        sharedState.win.querySelector('#so-fixc-auto').addEventListener('change', (e) => {
+    if (ENABLE_FIX_CUSTOM_TASK && win.querySelector('#so-fix-custom-wrap')) {
+        win.querySelector('#so-fixc-run').addEventListener('click', () => { runCustomTaskNow(); });
+        win.querySelector('#so-fixc-auto').addEventListener('change', (e) => {
             // 首次勾选【不】弹「自动模式会花钱」提醒（Prince 2026-09-04 定：模板档不需要这道一次性提醒）；
             // 自动面板 #so-fix-auto 的首弹保持原样。
             if (e.target.checked) {
@@ -1385,24 +1390,24 @@ function bindControls() {
             seedFixControls(); updateFixButtonVisual();
         });
         // 自动面板的勾选：勾上即回到校正任务（互斥）。任务变了 ✨ 金色指示也要跟着重算（pending 判据看 task）。
-        sharedState.win.querySelector('#so-fix-auto')?.addEventListener('change', (e) => { if (e.target.checked) { setFixCfg({ fixA_task: 'fix' }); seedFixControls(); updateFixButtonVisual(); } });
-        const tplSel = sharedState.win.querySelector('#so-fixc-template');
-        const tplBox = sharedState.win.querySelector('#so-fixc-prompt');
-        tplBox.addEventListener('input', () => { sharedState.fixTplDirty = true; updateFixTplDirtyMarker(); });   // 只置脏；归属由「回填正文」的那些地方记
+        win.querySelector('#so-fix-auto')?.addEventListener('change', (e) => { if (e.target.checked) { setFixCfg({ fixA_task: 'fix' }); seedFixControls(); updateFixButtonVisual(); } });
+        const tplSel = win.querySelector('#so-fixc-template');
+        const tplBox = win.querySelector('#so-fixc-prompt');
+        tplBox.addEventListener('input', () => { setFixTplDirty(true); updateFixTplDirtyMarker(); });   // 只置脏；归属由「回填正文」的那些地方记
         tplSel.addEventListener('change', async () => {
             // 用户【亲手】换模板才走这条确认；取消时退回【归属】而不是配置里的名字——脏着时配置可能早被
             // 切聊天 / 套餐改成别人了，退回配置等于把未保存的正文交给另一份模板。
-            if (sharedState.fixTplDirty && !(await uiConfirm('当前模板正文有未保存的改动，放弃并切换？'))) { tplSel.value = sharedState.fixTplDirtyFor || getEffectiveFixCfg(getSettings(), getFixCfg()).fixC_template || ''; updateFixTplDirtyMarker(); return; }
+            if (fixTplDirty && !(await uiConfirm('当前模板正文有未保存的改动，放弃并切换？'))) { tplSel.value = fixTplDirtyFor || getEffectiveFixCfg(getSettings(), getFixCfg()).fixC_template || ''; updateFixTplDirtyMarker(); return; }
             setFixCfg({ fixC_template: tplSel.value });
             const t = findFixTemplate(getSettings(), tplSel.value);
             tplBox.value = t ? t.prompt : '';
-            sharedState.fixTplDirty = false; sharedState.fixTplDirtyFor = tplSel.value; updateFixTplDirtyMarker();
+            setFixTplDirty(false); setFixTplDirtyFor(tplSel.value); updateFixTplDirtyMarker();
             updateFixVerdict();
         });
-        sharedState.win.querySelector('#so-fixc-tpl-new').addEventListener('click', async () => {
+        win.querySelector('#so-fixc-tpl-new').addEventListener('click', async () => {
             // 新建会把文本框清空——脏着时先问一句，与「亲手换模板」同一道防误覆盖闸（spec §4.3）。
             // 放在起名之前：用户改主意时连名字都不必编。
-            if (sharedState.fixTplDirty && !(await uiConfirm('当前模板正文有未保存的改动，放弃并新建？'))) return;
+            if (fixTplDirty && !(await uiConfirm('当前模板正文有未保存的改动，放弃并新建？'))) return;
             const name = (await uiPrompt('给这份模板起个名字（如「中译日」）：', '') || '').trim();
             if (!name) return;
             // 「已存在」只问【用户库】：findFixTemplate 现在会兜底到内置示例，拿它判会对着内置名多问一句
@@ -1413,12 +1418,12 @@ function bindControls() {
             // ——下拉显示内置那一份、正文框却空着，再按保存又是一次另存，纯属添乱。
             if (!saveFixTemplate(name, '')) return;
             setFixCfg({ fixC_template: name });
-            populateFixTemplates(); tplSel.value = name; tplBox.value = ''; sharedState.fixTplDirty = false; sharedState.fixTplDirtyFor = name; updateFixTplDirtyMarker(); updateFixVerdict();
+            populateFixTemplates(); tplSel.value = name; tplBox.value = ''; setFixTplDirty(false); setFixTplDirtyFor(name); updateFixTplDirtyMarker(); updateFixVerdict();
         });
-        sharedState.win.querySelector('#so-fixc-tpl-save').addEventListener('click', async () => {
+        win.querySelector('#so-fixc-tpl-save').addEventListener('click', async () => {
             // 写回【归属】那一份，不是下拉此刻显示的那一份：脏着时两者本就该相等（seed 会把下拉钉住），
             // 但归属才是这段文字真正的主人，按它写永远不会写错人。写完把配置也同步到实际保存的那份。
-            const name = sharedState.fixTplDirtyFor || tplSel.value;
+            const name = fixTplDirtyFor || tplSel.value;
             if (!name) { toastr.info('先新建或选一份模板'); return; }
             // 📋 内置示例是只读的（正文由电池钉死）：正文框照旧可改，但「保存」改走【另存为】——
             // 起个新名字存成用户自己的一份并选中它，示例本身一个字不动。收尾与「新建」逐项同一套。
@@ -1431,20 +1436,20 @@ function bindControls() {
                     && !(await uiConfirm(`模板「${copy}」已存在，覆盖？`))) return;
                 if (!saveFixTemplate(copy, tplBox.value)) return;
                 setFixCfg({ fixC_template: copy });
-                sharedState.fixTplDirty = false; sharedState.fixTplDirtyFor = copy; updateFixTplDirtyMarker();
+                setFixTplDirty(false); setFixTplDirtyFor(copy); updateFixTplDirtyMarker();
                 populateFixTemplates(); tplSel.value = copy;
                 updateFixVerdict();
                 toastr.success(`已另存为「${copy}」——内置示例本身不会被改动`);
                 return;
             }
             saveFixTemplate(name, tplBox.value);
-            sharedState.fixTplDirty = false; sharedState.fixTplDirtyFor = name; updateFixTplDirtyMarker();
+            setFixTplDirty(false); setFixTplDirtyFor(name); updateFixTplDirtyMarker();
             setFixCfg({ fixC_template: name });
             populateFixTemplates(); tplSel.value = name;
             updateFixVerdict();
             toastr.success(`已保存模板「${name}」`);
         });
-        sharedState.win.querySelector('#so-fixc-tpl-del').addEventListener('click', async () => {
+        win.querySelector('#so-fixc-tpl-del').addEventListener('click', async () => {
             const name = tplSel.value;
             if (!name) { toastr.info('先选一个要删的模板'); return; }
             // 内置示例删不掉（它根本不在 fixTemplates 里，deleteFixTemplate 会静默 false）——先说一句，
@@ -1456,7 +1461,7 @@ function bindControls() {
                 // 与正文一起搬过去认领它，否则「配置说没选、下拉显示着 A、正文却空着」，再点一次保存就把
                 // 用户从没打开过的 A 清空了（spec §4.3 防误覆盖）。清旗后交给 seedFixControls 统一回填
                 // ——它在「不脏」这一支里会把 fixTplDirtyFor 一并记成新认领的这份。
-                sharedState.fixTplDirty = false; sharedState.fixTplDirtyFor = ''; updateFixTplDirtyMarker();
+                setFixTplDirty(false); setFixTplDirtyFor(''); updateFixTplDirtyMarker();
                 setFixCfg({ fixC_template: '' });
                 populateFixTemplates();
                 setFixCfg({ fixC_template: tplSel.value || '' });
@@ -1467,10 +1472,10 @@ function bindControls() {
         });
         // 🌐 模板广场（1.86.0）：旗关时按钮根本没渲染，这里同门跳过。📤 分享恒在。
         if (ENABLE_FIX_TEMPLATE_HUB) {
-            sharedState.win.querySelector('#so-fixc-hub').addEventListener('click', openFixHub);
+            win.querySelector('#so-fixc-hub').addEventListener('click', openFixHub);
         }
-        sharedState.win.querySelector('#so-fixc-share').addEventListener('click', () => { openFixShare(); });
-        sharedState.win.querySelector('#so-fixc-mech').addEventListener('change', async (e) => {
+        win.querySelector('#so-fixc-share').addEventListener('click', () => { openFixShare(); });
+        win.querySelector('#so-fixc-mech').addEventListener('change', async (e) => {
             if (!e.target.checked && !getSettings().customFixWarned) {
                 const ok = await uiConfirm('关掉后，状态栏 / 变量块也会一起交给模板，模板输出会原样替换整条回复。原文仍留在 swipe 0。确定？');
                 if (!ok) { e.target.checked = true; return; }
@@ -1480,34 +1485,34 @@ function bindControls() {
         });
         bindFix('#so-fixc-keep', 'fixC_keepTags');
         bindFix('#so-fixc-drop', 'fixC_dropTags');
-        for (const id of ['#so-fixc-keep', '#so-fixc-drop']) sharedState.win.querySelector(id).addEventListener('input', () => { renderFixConfigWarnings(); updateFixVerdict(); });
-        sharedState.win.querySelector('#so-fixc-preset').addEventListener('change', (e) => { getSettings().fixC_usePreset = e.target.checked; save(); });
+        for (const id of ['#so-fixc-keep', '#so-fixc-drop']) win.querySelector(id).addEventListener('input', () => { renderFixConfigWarnings(); updateFixVerdict(); });
+        win.querySelector('#so-fixc-preset').addEventListener('change', (e) => { getSettings().fixC_usePreset = e.target.checked; save(); });
         bindFix('#so-fixc-minchars', 'fixAutoMinChars', (v) => clampFixAutoMinChars(v));
     }
     bind('#so-regex', 'applyRegex');
     bind('#so-wi', 'worldInfoMode');
     if (ENABLE_WI_EJS_RENDER) bind('#so-wi-ejs', 'wiRenderEjs');   // 世界书 EJS 渲染（行仅在开关开时渲染）
     bind('#so-sendtemp', 'sendTemperature');
-    sharedState.win.querySelector('#so-wi').addEventListener('change', updateWiHint);
+    win.querySelector('#so-wi').addEventListener('change', updateWiHint);
     bind('#so-persona', 'personaId');
     if (ENABLE_CUSTOM_PERSONAS) {   // 关着时编辑器元素根本不渲染，这里同门跳过
-        sharedState.win.querySelector('#so-persona-edit')?.addEventListener('click', openPersonaEditor);
-        sharedState.win.querySelector('#so-pe-sel')?.addEventListener('change', loadPeFields);
-        sharedState.win.querySelector('#so-pe-save')?.addEventListener('click', savePersonaFromEditor);
-        sharedState.win.querySelector('#so-pe-del')?.addEventListener('click', deletePersonaFromEditor);
-        sharedState.win.querySelector('#so-pe-flesh')?.addEventListener('click', fleshPersonaFromEditor);
-        sharedState.win.querySelector('#so-pe-undo')?.addEventListener('click', () => {
+        win.querySelector('#so-persona-edit')?.addEventListener('click', openPersonaEditor);
+        win.querySelector('#so-pe-sel')?.addEventListener('change', loadPeFields);
+        win.querySelector('#so-pe-save')?.addEventListener('click', savePersonaFromEditor);
+        win.querySelector('#so-pe-del')?.addEventListener('click', deletePersonaFromEditor);
+        win.querySelector('#so-pe-flesh')?.addEventListener('click', fleshPersonaFromEditor);
+        win.querySelector('#so-pe-undo')?.addEventListener('click', () => {
             const e = peEls();
-            if (!sharedState.peFleshUndo) return;
-            e.voice.value = sharedState.peFleshUndo.voice;
-            e.example.value = sharedState.peFleshUndo.example;
-            sharedState.peFleshUndo = null;
+            if (!peFleshUndo) return;
+            e.voice.value = peFleshUndo.voice;
+            e.example.value = peFleshUndo.example;
+            setPeFleshUndo(null);
             e.undo.style.display = 'none';
         });
     }
-    sharedState.win.querySelector('#so-sysprompt-preset').addEventListener('change', (e) => onPresetSelected(e.target.value));
-    sharedState.win.querySelector('#so-sysprompt-preset-refresh').addEventListener('click', populateSysPromptPresets);
-    sharedState.win.querySelector('#so-sysprompt-preset-recurate').addEventListener('click', () => {
+    win.querySelector('#so-sysprompt-preset').addEventListener('change', (e) => onPresetSelected(e.target.value));
+    win.querySelector('#so-sysprompt-preset-refresh').addEventListener('click', populateSysPromptPresets);
+    win.querySelector('#so-sysprompt-preset-recurate').addEventListener('click', () => {
         const s = getSettings();
         const cur = s.sysPromptPresetName;
         if (!cur) return;
@@ -1522,17 +1527,17 @@ function bindControls() {
         // 主聊天注入类：停手片刻后重登记一次，正在进行的引导立刻换上新文字。
         if (/^inject\./.test(id)) {
             clearTimeout(promptInjectTimer);
-            promptInjectTimer = setTimeout(() => { applyPlanInjection(); if (sharedState.win) renderPlanBar(); }, 600);
+            promptInjectTimer = setTimeout(() => { applyPlanInjection(); if (win) renderPlanBar(); }, 600);
         }
     };
-    sharedState.win.querySelector('#so-sysprompt').addEventListener('input', (e) => {
-        promptSet(sharedState.promptEditId, e.target.value);
+    win.querySelector('#so-sysprompt').addEventListener('input', (e) => {
+        promptSet(promptEditId, e.target.value);
         save();
         applyPromptEditorUiState();   // 实时刷新「内置 / 已自定义」与缺项提示
-        afterPromptEdit(sharedState.promptEditId);
+        afterPromptEdit(promptEditId);
     });
-    sharedState.win.querySelector('#so-sysprompt-reset').addEventListener('click', async () => {
-        const d = promptDef(sharedState.promptEditId);
+    win.querySelector('#so-sysprompt-reset').addEventListener('click', async () => {
+        const d = promptDef(promptEditId);
         if (!d) return;
         if (!(await uiConfirm(`确定把「${d.group} · ${d.label}」重置为内置默认吗？当前的修改会丢失。`))) return;
         promptReset(d.id);
@@ -1543,12 +1548,12 @@ function bindControls() {
     });
 
     // send
-    sharedState.sendBtn.addEventListener('click', onSend);
-    sharedState.win.querySelector('#so-model-fetch').addEventListener('click', onFetchModels);
-    sharedState.win.querySelector('#so-model-list').addEventListener('change', (e) => {
+    sendBtn.addEventListener('click', onSend);
+    win.querySelector('#so-model-fetch').addEventListener('click', onFetchModels);
+    win.querySelector('#so-model-list').addEventListener('change', (e) => {
         const val = e.target.value;
         if (!val) return;
-        const input = sharedState.win.querySelector('#so-model');
+        const input = win.querySelector('#so-model');
         input.value = val;
         s.model = val;
         updateBadge();
@@ -1556,19 +1561,19 @@ function bindControls() {
     });
     // 1.85.1：Enter 是否发送跟随酒馆「用户设置 → 按 Enter 发送」（手机默认 Enter 换行）——判据见 soEnterShouldSend。
     // 设置在【按键当时】读，用户在酒馆里改了立即生效，不必重开窗口。
-    sharedState.inputEl.addEventListener('keydown', (e) => {
+    inputEl.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter') return;
         if (soEnterShouldSend(e, soReadSendOnEnter(), soIsMobileForEnter())) {
             e.preventDefault();
             onSend();
         }
     });
-    sharedState.inputEl.addEventListener('input', autoGrowInput);                                                      // #4 输入框随内容自动增高
+    inputEl.addEventListener('input', autoGrowInput);                                                      // #4 输入框随内容自动增高
     // #1 跟随意图【只】由真·用户手势（滚轮 / 触摸）更新——程序化滚动（固定顶部 / 跟随到底）不触发 wheel / touchmove，
     // 故不会被「空占位气泡刚固定到顶时 nearBottom 恰好为真」误翻成跟随（先前用通用 scroll 监听正栽在这）。
-    const soUpdateFollow = () => { try { requestAnimationFrame(() => { sharedState.soFollowStream = nearBottom(); }); } catch (e) { sharedState.soFollowStream = nearBottom(); } };
-    sharedState.messagesEl.addEventListener('wheel', soUpdateFollow, { passive: true });        // 桌面滚轮
-    sharedState.messagesEl.addEventListener('touchmove', soUpdateFollow, { passive: true });    // 手机触摸滑动
+    const soUpdateFollow = () => { try { requestAnimationFrame(() => { setSoFollowStream(nearBottom()); }); } catch (e) { setSoFollowStream(nearBottom()); } };
+    messagesEl.addEventListener('wheel', soUpdateFollow, { passive: true });        // 桌面滚轮
+    messagesEl.addEventListener('touchmove', soUpdateFollow, { passive: true });    // 手机触摸滑动
 
     // 用户功能请求：反映持久化的自动诊断状态（重载后若 AUTO 仍开着，按钮显示红色 + AUTO）。
     updateDiagButtonVisual();
@@ -1578,97 +1583,97 @@ function bindControls() {
 
 function loadSettingsIntoForm() {
     const s = getSettings();
-    sharedState.win.querySelector('#so-mode').value = s.mode;
-    sharedState.win.querySelector('#so-endpoint').value = s.endpoint;
-    sharedState.win.querySelector('#so-apikey').value = s.apiKey;
-    sharedState.win.querySelector('#so-model').value = s.model;
-    sharedState.win.querySelector('#so-stream').checked = !!s.stream;
-    sharedState.win.querySelector('#so-direct-backend').checked = !!s.directViaBackend; // 1.17.23：经酒馆后端转发
-    sharedState.win.querySelector('#so-raw-url').checked = !!s.directRawUrl;            // 1.22.0：地址原样使用
+    win.querySelector('#so-mode').value = s.mode;
+    win.querySelector('#so-endpoint').value = s.endpoint;
+    win.querySelector('#so-apikey').value = s.apiKey;
+    win.querySelector('#so-model').value = s.model;
+    win.querySelector('#so-stream').checked = !!s.stream;
+    win.querySelector('#so-direct-backend').checked = !!s.directViaBackend; // 1.17.23：经酒馆后端转发
+    win.querySelector('#so-raw-url').checked = !!s.directRawUrl;            // 1.22.0：地址原样使用
 
-    sharedState.win.querySelector('#so-temp').value = s.temperature;
-    sharedState.win.querySelector('#so-maxtok').value = s.maxTokens;
-    sharedState.win.querySelector('#so-depth').value = s.contextDepth;
-    sharedState.win.querySelector('#so-adv-depth').value = s.advisorDepth;
+    win.querySelector('#so-temp').value = s.temperature;
+    win.querySelector('#so-maxtok').value = s.maxTokens;
+    win.querySelector('#so-depth').value = s.contextDepth;
+    win.querySelector('#so-adv-depth').value = s.advisorDepth;
     syncNodeDetailSeg();
-    sharedState.win.querySelector('#so-card').checked = !!s.includeCard;
-    sharedState.win.querySelector('#so-stat').checked = !!s.chatIncludeStat;
-    sharedState.win.querySelector('#so-world').checked = !!s.chatIncludeWorld;
-    if (ENABLE_BBS_BRIDGE) sharedState.win.querySelector('#so-bbs').checked = !!s.chatIncludeBbs;   // 柏宝书记忆桥
-    if (ENABLE_LWB_BRIDGE) sharedState.win.querySelector('#so-lwb').checked = !!s.chatIncludeLwb;   // 小白X 记忆桥
-    if (ENABLE_AUTO_DIAGNOSE) sharedState.win.querySelector('#so-diag-mvu-compat').checked = !!s.autoDiagnoseMvuCompat;   // MVU external-analysis compatibility
-    if (ENABLE_AUTO_DIAGNOSE) sharedState.win.querySelector('#so-diag-cowrite').checked = !!s.autoDiagnoseCoWrite;         // 🧩 允许与其他脚本并写 MVU（1.83.0）
+    win.querySelector('#so-card').checked = !!s.includeCard;
+    win.querySelector('#so-stat').checked = !!s.chatIncludeStat;
+    win.querySelector('#so-world').checked = !!s.chatIncludeWorld;
+    if (ENABLE_BBS_BRIDGE) win.querySelector('#so-bbs').checked = !!s.chatIncludeBbs;   // 柏宝书记忆桥
+    if (ENABLE_LWB_BRIDGE) win.querySelector('#so-lwb').checked = !!s.chatIncludeLwb;   // 小白X 记忆桥
+    if (ENABLE_AUTO_DIAGNOSE) win.querySelector('#so-diag-mvu-compat').checked = !!s.autoDiagnoseMvuCompat;   // MVU external-analysis compatibility
+    if (ENABLE_AUTO_DIAGNOSE) win.querySelector('#so-diag-cowrite').checked = !!s.autoDiagnoseCoWrite;         // 🧩 允许与其他脚本并写 MVU（1.83.0）
     if (ENABLE_AUTO_DIAGNOSE) {   // 🔁 失败自动重试（2026-08-28）
-        sharedState.win.querySelector('#so-diag-retry').checked = !!s.autoDiagnoseRetry;
+        win.querySelector('#so-diag-retry').checked = !!s.autoDiagnoseRetry;
         // 次数经 diagRetryMax（与运行时同一枚消毒器）回画：存档里的胡话 / 越界值不原样上屏。
-        sharedState.win.querySelector('#so-diag-retry-count').value = diagRetryMax(s);
-        sharedState.win.querySelector('#so-diag-retry-empty').checked = !!s.autoDiagnoseRetryOnEmpty;
-        sharedState.win.querySelector('#so-diag-retry-format').checked = !!s.autoDiagnoseRetryOnFormat;
-        sharedState.win.querySelector('#so-diag-retry-error').checked = !!s.autoDiagnoseRetryOnError;
+        win.querySelector('#so-diag-retry-count').value = diagRetryMax(s);
+        win.querySelector('#so-diag-retry-empty').checked = !!s.autoDiagnoseRetryOnEmpty;
+        win.querySelector('#so-diag-retry-format').checked = !!s.autoDiagnoseRetryOnFormat;
+        win.querySelector('#so-diag-retry-error').checked = !!s.autoDiagnoseRetryOnError;
         reflectDiagRetryVisible();
     }
-    if (ENABLE_DIAG_BODY_INJECT) sharedState.win.querySelector('#so-diag-inject').checked = !!s.diagInjectBody;   // 🩺 诊断修正写进正文（1.65.0 起住在「诊断设置」里）
+    if (ENABLE_DIAG_BODY_INJECT) win.querySelector('#so-diag-inject').checked = !!s.diagInjectBody;   // 🩺 诊断修正写进正文（1.65.0 起住在「诊断设置」里）
     reflectAutoDiagCheckbox();   // 🩺 自动诊断勾选框（1.65.0）：与 autoDiagnoseEnabled 同步，唯一写者
-    sharedState.win.querySelector('#so-hidden').checked = !!s.includeHiddenFloors;
+    win.querySelector('#so-hidden').checked = !!s.includeHiddenFloors;
     // ✨ 校正模式 Phase 4：校正控件从【本聊天】生效配置读种子（per-chat 覆盖全局）——不直读 s.fix*。
     seedFixControls();
     populateFixBundles();   // ✨ 校正 Phase 4：填充全局命名套餐下拉
-    sharedState.win.querySelector('#so-qr-toggle').checked = !!s.showQrButton;
-    sharedState.win.querySelector('#so-chatbar-toggle').checked = !!s.showChatBarButton;
-    sharedState.win.querySelector('#so-clickout-toggle').checked = !!s.clickOutsideClose;   // 1.48.0 点击窗外自动收起
-    sharedState.win.querySelector('#so-window-skin').value = s.windowSkin;   // 1.45.0 窗口配色
-    const fixSelBarBox = sharedState.win.querySelector('#so-fixsel-barbtn');   // 门控关时该行不存在
+    win.querySelector('#so-qr-toggle').checked = !!s.showQrButton;
+    win.querySelector('#so-chatbar-toggle').checked = !!s.showChatBarButton;
+    win.querySelector('#so-clickout-toggle').checked = !!s.clickOutsideClose;   // 1.48.0 点击窗外自动收起
+    win.querySelector('#so-window-skin').value = s.windowSkin;   // 1.45.0 窗口配色
+    const fixSelBarBox = win.querySelector('#so-fixsel-barbtn');   // 门控关时该行不存在
     if (fixSelBarBox) fixSelBarBox.checked = !!s.fixSelBarButton;
-    const fixSelRowBox = sharedState.win.querySelector('#so-fixsel-rowbtn');   // 同上；判 !== false = 老档缺键当「开」
+    const fixSelRowBox = win.querySelector('#so-fixsel-rowbtn');   // 同上；判 !== false = 老档缺键当「开」
     if (fixSelRowBox) fixSelRowBox.checked = getSettings().fixSelRowButton !== false;
-    sharedState.win.querySelector('#so-tools-header-toggle').checked = !!s.toolsInHeader;
-    sharedState.win.querySelector('#so-regex').checked = !!s.applyRegex;
-    sharedState.win.querySelector('#so-wi').value = wiEffectiveMode(s);
-    if (ENABLE_WI_EJS_RENDER) { const soWiEjs = sharedState.win.querySelector('#so-wi-ejs'); if (soWiEjs) soWiEjs.checked = !!s.wiRenderEjs; }   // 世界书 EJS 渲染（回填勾选态）
-    sharedState.win.querySelector('#so-sendtemp').checked = !!s.sendTemperature;
-    sharedState.win.querySelector('#so-lb-story').checked = !!s.lorebookIncludeStory;
-    sharedState.win.querySelector('#so-lb-preset').checked = !!s.lorebookUsePreset;
+    win.querySelector('#so-tools-header-toggle').checked = !!s.toolsInHeader;
+    win.querySelector('#so-regex').checked = !!s.applyRegex;
+    win.querySelector('#so-wi').value = wiEffectiveMode(s);
+    if (ENABLE_WI_EJS_RENDER) { const soWiEjs = win.querySelector('#so-wi-ejs'); if (soWiEjs) soWiEjs.checked = !!s.wiRenderEjs; }   // 世界书 EJS 渲染（回填勾选态）
+    win.querySelector('#so-sendtemp').checked = !!s.sendTemperature;
+    win.querySelector('#so-lb-story').checked = !!s.lorebookIncludeStory;
+    win.querySelector('#so-lb-preset').checked = !!s.lorebookUsePreset;
     reflectLbPreview();   // 「👁 内容预览」开关按钮初始高亮跟随保存的设置
     // 角色工坊：概要 / 状态栏勾选的初始态（bind() 只挂监听、不回填，同世界书那两项的处理）。
-    const bldSum = sharedState.win.querySelector('#so-bld-summary');
+    const bldSum = win.querySelector('#so-bld-summary');
     if (bldSum) bldSum.checked = !!s.bldIncludeSummary;
-    const bldStat = sharedState.win.querySelector('#so-bld-stat');
+    const bldStat = win.querySelector('#so-bld-stat');
     if (bldStat) bldStat.checked = !!s.bldIncludeStat;
-    const bldScanWi = sharedState.win.querySelector('#so-bld-scanwi');
+    const bldScanWi = win.querySelector('#so-bld-scanwi');
     if (bldScanWi) bldScanWi.checked = !!s.bldScanWi;
-    const bldDlgRich = sharedState.win.querySelector('#so-bld-dlgrich');
+    const bldDlgRich = win.querySelector('#so-bld-dlgrich');
     if (bldDlgRich) bldDlgRich.checked = !!s.bldDlgRich;
-    const bldPreset = sharedState.win.querySelector('#so-bld-preset');
+    const bldPreset = win.querySelector('#so-bld-preset');
     if (bldPreset) bldPreset.checked = !!s.bldUsePreset;
 
-    sharedState.win.querySelector('#so-adv-preset').checked = !!s.advisorUsePreset;
-    sharedState.win.querySelector('#so-diag-preset').checked = !!s.diagnoseUsePreset;
-    if (ENABLE_SCHEMA_DIAG) { const sr = sharedState.win.querySelector('#so-diag-schema-retry'); if (sr) sr.checked = !!s.diagSchemaRetry; }
+    win.querySelector('#so-adv-preset').checked = !!s.advisorUsePreset;
+    win.querySelector('#so-diag-preset').checked = !!s.diagnoseUsePreset;
+    if (ENABLE_SCHEMA_DIAG) { const sr = win.querySelector('#so-diag-schema-retry'); if (sr) sr.checked = !!s.diagSchemaRetry; }
     updateWiHint();
     populatePersonas();
     // 提示词编辑器：载入当前条目；设置面板停在上次打开的那一页。
     populateSysPromptPresets();
     loadPromptEditor();
-    setSettingsTab(sharedState.settingsTab);
+    setSettingsTab(settingsTab);
     applyModeVisibility();
     updateBadge();
 }
 
 // —— 自定义人格编辑器（1.39.0）——字段是工作区、不走 bind()：只有「保存」才写设置（防误落盘，
 // data-smoketest 残留地雷的构造性预防）。扩写调用用本地中止器，绝不共用主发送的 abortCtl（1.37.0 教训）。
-sharedState.peFleshAbort = null;   // 生成中 = AbortController；空闲 = null（按钮兼作 ⏹ 取消）
-sharedState.peFleshUndo = null;    // 扩写前 { voice, example } 快照（一次性，收起编辑器即弃）
+   // 生成中 = AbortController；空闲 = null（按钮兼作 ⏹ 取消）
+    // 扩写前 { voice, example } 快照（一次性，收起编辑器即弃）
 function peEls() {
     return {
-        editor: sharedState.win.querySelector('#so-persona-editor'),
-        sel: sharedState.win.querySelector('#so-pe-sel'),
-        name: sharedState.win.querySelector('#so-pe-name'),
-        voice: sharedState.win.querySelector('#so-pe-voice'),
-        example: sharedState.win.querySelector('#so-pe-example'),
-        flesh: sharedState.win.querySelector('#so-pe-flesh'),
-        undo: sharedState.win.querySelector('#so-pe-undo'),
-        save: sharedState.win.querySelector('#so-pe-save'),
-        del: sharedState.win.querySelector('#so-pe-del'),
+        editor: win.querySelector('#so-persona-editor'),
+        sel: win.querySelector('#so-pe-sel'),
+        name: win.querySelector('#so-pe-name'),
+        voice: win.querySelector('#so-pe-voice'),
+        example: win.querySelector('#so-pe-example'),
+        flesh: win.querySelector('#so-pe-flesh'),
+        undo: win.querySelector('#so-pe-undo'),
+        save: win.querySelector('#so-pe-save'),
+        del: win.querySelector('#so-pe-del'),
     };
 }
 function populatePeSel(keepId) {
@@ -1693,7 +1698,7 @@ function loadPeFields() {
     e.name.value = cur ? cur.label : '';
     e.voice.value = cur ? cur.voice : '';
     e.example.value = cur ? (cur.example || '') : '';
-    sharedState.peFleshUndo = null;
+    setPeFleshUndo(null);
     e.undo.style.display = 'none';
     e.del.style.display = cur ? '' : 'none';
 }
@@ -1701,7 +1706,7 @@ function openPersonaEditor() {
     if (!ENABLE_CUSTOM_PERSONAS) return;   // 杀开关读点（关着时元素不渲染，这里是双保险）
     const e = peEls();
     if (!e.editor) return;
-    if (e.editor.style.display !== 'none') { e.editor.style.display = 'none'; sharedState.peFleshUndo = null; return; }   // 再点铅笔 = 收起
+    if (e.editor.style.display !== 'none') { e.editor.style.display = 'none'; setPeFleshUndo(null); return; }   // 再点铅笔 = 收起
     e.editor.style.display = '';
     const s = getSettings();
     const curIsCustom = s.customPersonas.some((p) => p.id === s.personaId);
@@ -1755,13 +1760,13 @@ async function deletePersonaFromEditor() {
 }
 async function fleshPersonaFromEditor() {
     const e = peEls();
-    if (sharedState.peFleshAbort) { sharedState.peFleshAbort.abort(); return; }   // 生成中再点 = 取消
+    if (peFleshAbort) { peFleshAbort.abort(); return; }   // 生成中再点 = 取消
     const name = e.name.value.trim();
     const seedText = e.voice.value.trim();
     if (!name && !seedText) { toastr.info('先写一两句想要的感觉（名称或描述任填其一）'); return; }
-    sharedState.peFleshUndo = { voice: e.voice.value, example: e.example.value };
+    setPeFleshUndo({ voice: e.voice.value, example: e.example.value });
     const ctl = new AbortController();
-    sharedState.peFleshAbort = ctl;
+    setPeFleshAbort(ctl);
     const timer = setTimeout(() => ctl.abort(), 120000);
     const prevLabel = e.flesh.textContent;
     e.flesh.textContent = '⏹ 取消';
@@ -1773,24 +1778,24 @@ async function fleshPersonaFromEditor() {
             signal: ctl.signal,
         });
         const parsed = parsePersonaFleshReply(reply);
-        if (!parsed.voice) { toastr.warning('模型没有返回可用内容'); sharedState.peFleshUndo = null; return; }
+        if (!parsed.voice) { toastr.warning('模型没有返回可用内容'); setPeFleshUndo(null); return; }
         e.voice.value = parsed.voice;
         if (parsed.example) e.example.value = parsed.example;
         e.undo.style.display = '';
         if (parsed.fallback) toastr.info('回复格式不标准，已原样填入（可手动修剪）');
     } catch (err) {
         if (!ctl.signal.aborted) toastr.error('扩写失败：' + ((err && err.message) || err));
-        sharedState.peFleshUndo = null;
+        setPeFleshUndo(null);
     } finally {
         clearTimeout(timer);
-        sharedState.peFleshAbort = null;
+        setPeFleshAbort(null);
         e.flesh.textContent = prevLabel;
         e.save.disabled = false; e.del.disabled = false;
     }
 }
 
 function populatePersonas() {
-    const sel = sharedState.win.querySelector('#so-persona');
+    const sel = win.querySelector('#so-persona');
     if (!sel) return;
     sel.innerHTML = '';
     for (const p of PERSONAS) {

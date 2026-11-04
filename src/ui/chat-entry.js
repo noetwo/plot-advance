@@ -1,14 +1,15 @@
 import { getSettings } from '../core/settings.js';
-import { sharedState } from '../core/state.js';
+
 import { getLatestAiMessage } from '../modes/diagnose/mvu.js';
 import { FIXSEL_BAR_BTN_ID, FIXSEL_BAR_OWN_CLASS, injectChatBarButton, removeChatBarButton, soDropEntries, soEntryIsLive, soMarkEntryLive } from '../modes/diagnose/schema.js';
 import { onFixChatEntryClick } from '../modes/fix/selection.js';
 import { ENABLE_FIXSEL_CHAT_ENTRY, ENABLE_FIX_SELECT, ENABLE_REPLY_FIX } from '../prompts/builtins.js';
 import { toggleWindow } from './mode-shell.js';
+import { fixSelBarObserver, fixSelBarTimer, setFixSelBarObserver, setFixSelBarTimer, setSoQrObservedForm, setSoQrObserver, setSoQrPoll, soQrObservedForm, soQrObserver, soQrPoll } from './state.js';
 
 // 只给【我们自建】的条打标：撤按钮时据此回收，绝不误删 ST 自己的
-sharedState.fixSelBarObserver = null;
-sharedState.fixSelBarTimer = null;
+
+
 
 // 取（或建）`#qr--bar`，返回挂按钮用的 `.qr--buttons` 容器。用遍历比对 id 而非 `#qr--bar` 选择器：
 // 快速回复弹出模式会在 body 上另留一条同 id 的，document.querySelector 会挑错那一条。
@@ -74,34 +75,34 @@ function removeFixSelBarButton() {
 // 盯住 #send_form：ST 重建 `#qr--bar` 会把我们的按钮冲掉，掉了就补回。不会自激——补回后
 // getElementById 即命中，回调直接返回。
 function startFixSelBarObserver() {
-    if (sharedState.fixSelBarObserver) return;
+    if (fixSelBarObserver) return;
     const sendForm = document.getElementById('send_form');
     if (!sendForm) return;
-    sharedState.fixSelBarObserver = new MutationObserver(() => {
+    setFixSelBarObserver(new MutationObserver(() => {
         injectFixSelBarButton();   // 自带「恰好一颗就什么都不做」的常态短路 + 多了就收敛，故可无条件调
-    });
-    sharedState.fixSelBarObserver.observe(sendForm, { childList: true, subtree: true });
+    }));
+    fixSelBarObserver.observe(sendForm, { childList: true, subtree: true });
 }
 
 function stopFixSelBarObserver() {
-    if (sharedState.fixSelBarObserver) sharedState.fixSelBarObserver.disconnect();
-    sharedState.fixSelBarObserver = null;
+    if (fixSelBarObserver) fixSelBarObserver.disconnect();
+    setFixSelBarObserver(null);
 }
 
 // 按设置同步（init 时 + 设置里勾选 / 取消时调用；幂等）。#send_form 懒加载 → 轮询等它出现，
 // 封顶 40 次（~20s）后放弃，绝不常驻空转。
 export function syncFixSelBarButton() {
-    if (sharedState.fixSelBarTimer) { clearInterval(sharedState.fixSelBarTimer); sharedState.fixSelBarTimer = null; }
+    if (fixSelBarTimer) { clearInterval(fixSelBarTimer); setFixSelBarTimer(null); }
     if (!getSettings().fixSelBarButton) { stopFixSelBarObserver(); removeFixSelBarButton(); return; }
     if (injectFixSelBarButton()) { startFixSelBarObserver(); return; }
     let attempts = 0;
-    sharedState.fixSelBarTimer = setInterval(() => {
+    setFixSelBarTimer(setInterval(() => {
         if (injectFixSelBarButton() || ++attempts > 40) {
-            clearInterval(sharedState.fixSelBarTimer);
-            sharedState.fixSelBarTimer = null;
+            clearInterval(fixSelBarTimer);
+            setFixSelBarTimer(null);
             if (document.getElementById(FIXSEL_BAR_BTN_ID)) startFixSelBarObserver();
         }
-    }, 500);
+    }, 500));
 }
 
 
@@ -138,9 +139,9 @@ export function syncChatBarButton() {
 // 回复）就自建一条同款，打上 so-qr-bar 标记，撤按钮时一并回收。快捷回复在换聊天 / 改设置时会整条
 // 重建 #qr--bar、把按钮冲掉，故用 MutationObserver 盯住 #send_form 补回（同柏宝书 / JS-Slash-Runner）。
 const SO_QR_BAR_CLASS = 'so-qr-bar';
-sharedState.soQrObserver = null;
-sharedState.soQrObservedForm = null;
-sharedState.soQrPoll = null;
+
+
+
 function injectQrButton() {
     const form = document.getElementById('send_form');
     if (!form) return false;
@@ -183,31 +184,31 @@ function removeQrButton() {
 function watchQrBar() {
     const form = document.getElementById('send_form');
     if (!form || typeof MutationObserver !== 'function') return;
-    if (sharedState.soQrObserver && sharedState.soQrObservedForm === form) return;
-    if (sharedState.soQrObserver) sharedState.soQrObserver.disconnect();
-    sharedState.soQrObservedForm = form;
-    sharedState.soQrObserver = new MutationObserver(() => {
+    if (soQrObserver && soQrObservedForm === form) return;
+    if (soQrObserver) soQrObserver.disconnect();
+    setSoQrObservedForm(form);
+    setSoQrObserver(new MutationObserver(() => {
         // 我们自己插按钮也会触发一次回调——那时按钮已活着，O(1) 早返回，不会自激
         if (getSettings().showQrButton && !soEntryIsLive('so-qr-button', form)) injectQrButton();
-    });
-    sharedState.soQrObserver.observe(form, { childList: true, subtree: true });
+    }));
+    soQrObserver.observe(form, { childList: true, subtree: true });
 }
 // 按设置放 / 撤（init、设置勾选、楼层渲染与换聊天事件都会调；按钮活着时不碰 DOM）。
 export function syncQrButton() {
-    if (sharedState.soQrPoll) { clearInterval(sharedState.soQrPoll); sharedState.soQrPoll = null; }
+    if (soQrPoll) { clearInterval(soQrPoll); setSoQrPoll(null); }
     if (!getSettings().showQrButton) {
-        if (sharedState.soQrObserver) { sharedState.soQrObserver.disconnect(); sharedState.soQrObserver = null; sharedState.soQrObservedForm = null; }
+        if (soQrObserver) { soQrObserver.disconnect(); setSoQrObserver(null); setSoQrObservedForm(null); }
         removeQrButton();
         return;
     }
     if (injectQrButton()) { watchQrBar(); return; }
     // 输入区是懒加载的：每 0.5 秒等一次，最多约 20 秒；等不到就算了，之后的渲染 / 换聊天事件还会再补
     let tries = 0;
-    sharedState.soQrPoll = setInterval(() => {
+    setSoQrPoll(setInterval(() => {
         if (injectQrButton() || ++tries > 40) {
-            clearInterval(sharedState.soQrPoll);
-            sharedState.soQrPoll = null;
+            clearInterval(soQrPoll);
+            setSoQrPoll(null);
             if (document.getElementById('so-qr-button')) watchQrBar();
         }
-    }, 500);
+    }, 500));
 }

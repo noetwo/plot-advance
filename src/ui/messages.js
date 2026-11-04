@@ -1,6 +1,6 @@
 import { persistConvo } from '../core/chat-metadata.js';
 import { getSettings, soDeleteConfirmMessage, uiConfirm } from '../core/settings.js';
-import { sharedState } from '../core/state.js';
+
 import { appendConvoImportEntry, dropNoteOpts, peekNoteOpts, registerNoteOpts, renderEmptyState } from '../modes/advisor/cards.js';
 import { recordLbApplySnapshot } from '../modes/advisor/metadata.js';
 import { stripMechanismBlocks, stripReasoningTags } from '../modes/chat/context.js';
@@ -15,6 +15,8 @@ import { fixCurrentSnapshot, fixOutputTruncated, fixTargetStale } from '../modes
 import { applyLorebookOps, lbDryRunOps, lbFormatApplyLine, lbSummaryOf, lbVerdictRow, undoLorebookOps } from '../modes/lorebook/core.js';
 import { ENABLE_DIAG_BODY_INJECT } from '../prompts/builtins.js';
 import { fixNearCopyNote } from '../prompts/helpers.js';
+import { convo, convoStreamKey, isGenerating, nextCid } from '../core/runtime-state.js';
+import { messagesEl, setSoFollowStream, soBulkRenderDepth } from './state.js';
 
 /* ------------------------------------------------------------------ *
  * Rendering
@@ -53,13 +55,13 @@ export async function copyTextRobust(text) {
 }
 
 export function addMessage(role, content, entry) {
-    const empty = sharedState.messagesEl.querySelector('.so-empty');
+    const empty = messagesEl.querySelector('.so-empty');
     if (empty) empty.remove();
     // 📤 新的 AI 气泡到场 = 气泡行上的 📥📤 回来了 → 撤掉那枚兜底的空页导入入口（它只在「本房一条
     // AI 气泡都没有」时才该在，否则会孤零零卡在消息中间）。空态卡片里的那枚随 .so-empty 一起走，
     // 这里收的是直接挂在消息区上的独立那枚。
     if (role === 'assistant') {
-        for (const e of sharedState.messagesEl.querySelectorAll(':scope > .so-empty-io')) e.remove();
+        for (const e of messagesEl.querySelectorAll(':scope > .so-empty-io')) e.remove();
     }
 
     const wrap = document.createElement('div');
@@ -67,7 +69,7 @@ export function addMessage(role, content, entry) {
     // 1.85.3 入场动画只给【直播新到】的气泡：批量重画出来的历史不挂；挂了的在动画放完后摘掉，
     // 否则每次开窗（display:none → flex 会重启 CSS 动画）几百条历史一起重播淡入。
     // 判 target + 动画名：气泡里子元素动画的 animationend 也会冒泡上来。
-    if (sharedState.soBulkRenderDepth === 0) {
+    if (soBulkRenderDepth === 0) {
         wrap.classList.add('so-msg-new');
         wrap.addEventListener('animationend', function soMsgNewDone(ev) {
             if (ev.target !== wrap || (ev.animationName && ev.animationName !== 'so-msg-in')) return;
@@ -133,10 +135,10 @@ export function addMessage(role, content, entry) {
         const delBtn = wrap.querySelector('.so-del-btn');
         if (delBtn) delBtn.addEventListener('click', async () => {
             // 1.22.0 删除二次确认（原生化自二创）：真消息先主题化确认；错误气泡（不在 convo 里）直接删不打扰。
-            const i = sharedState.convo.indexOf(entry);
+            const i = convo.indexOf(entry);
             if (i !== -1) {
                 const kind = entry.role === 'user'
-                    ? ((sharedState.convo[i + 1] && sharedState.convo[i + 1].role === 'assistant') ? 'userPair' : 'user')
+                    ? ((convo[i + 1] && convo[i + 1].role === 'assistant') ? 'userPair' : 'user')
                     : 'assistant';
                 if (!(await uiConfirm(soDeleteConfirmMessage(kind)))) return;
             }
@@ -144,12 +146,12 @@ export function addMessage(role, content, entry) {
         });
     }
 
-    sharedState.messagesEl.appendChild(wrap);
+    messagesEl.appendChild(wrap);
     if (role === 'assistant' && content === '') {
-        sharedState.soFollowStream = false;                  // #1 新流式回复：固定顶部、默认不跟随，让用户从开头读
+        setSoFollowStream(false);                  // #1 新流式回复：固定顶部、默认不跟随，让用户从开头读
         scrollBubbleToTop(wrap);
     } else {
-        sharedState.soFollowStream = true;                   // 用户发言 / 有内容的消息：滚到底并恢复跟随
+        setSoFollowStream(true);                   // 用户发言 / 有内容的消息：滚到底并恢复跟随
         scrollToBottom();
     }
     return wrap;
@@ -157,30 +159,30 @@ export function addMessage(role, content, entry) {
 
 // Re-show the empty placeholder if no real messages remain.
 function maybeRenderEmpty() {
-    if (!sharedState.messagesEl.querySelector('.so-msg')) { sharedState.messagesEl.innerHTML = ''; renderEmptyState(); }
+    if (!messagesEl.querySelector('.so-msg')) { messagesEl.innerHTML = ''; renderEmptyState(); }
     // 📤 删到一条 AI 气泡都不剩 → 📥📤 跟着消失（它们只挂在 AI 气泡上）。这里【当场】补上导入入口，
     // 否则用户要切一次房 / F5 才拿得回来（loadConvoForChat 那次兜底是同一条件、同一个幂等函数）。
     // 删除是唯一能把房间删成「有消息但没有 AI 回复」的路径，所以补这一处就够。
-    if (!sharedState.convo.some((m) => m.role === 'assistant')) appendConvoImportEntry(sharedState.messagesEl);
+    if (!convo.some((m) => m.role === 'assistant')) appendConvoImportEntry(messagesEl);
 }
 
 // Delete one message. Deleting a user turn also drops its immediate assistant
 // reply so the history stays well-formed; an error bubble (never pushed to convo)
 // just drops from the DOM.
 function deleteMessage(entry) {
-    if (sharedState.isGenerating) return;
-    const i = sharedState.convo.indexOf(entry);
+    if (isGenerating) return;
+    const i = convo.indexOf(entry);
     if (i === -1) {
         if (entry && entry._el) entry._el.remove();
         maybeRenderEmpty();
         return;
     }
-    if (entry.role === 'user' && sharedState.convo[i + 1] && sharedState.convo[i + 1].role === 'assistant') {
-        const reply = sharedState.convo[i + 1];
+    if (entry.role === 'user' && convo[i + 1] && convo[i + 1].role === 'assistant') {
+        const reply = convo[i + 1];
         if (reply._el) reply._el.remove();
-        sharedState.convo.splice(i, 2);
+        convo.splice(i, 2);
     } else {
-        sharedState.convo.splice(i, 1);
+        convo.splice(i, 1);
     }
     if (entry._el) entry._el.remove();
     persistConvo();
@@ -191,19 +193,19 @@ function deleteMessage(entry) {
 // the preceding user turn. The common case (the most recent reply) leaves nothing
 // after it, so this is just "re-roll the last answer".
 async function regenerateFrom(entry) {
-    if (sharedState.isGenerating) return;
+    if (isGenerating) return;
     const el = entry._el;
-    const i = sharedState.convo.indexOf(entry);
-    if (i !== -1) sharedState.convo.splice(i);     // drop this entry and all after (error bubbles aren't in convo)
+    const i = convo.indexOf(entry);
+    if (i !== -1) convo.splice(i);     // drop this entry and all after (error bubbles aren't in convo)
     if (el) { while (el.nextSibling) el.nextSibling.remove(); el.remove(); }
     persistConvo();
-    if (!sharedState.convo.length || sharedState.convo[sharedState.convo.length - 1].role !== 'user') { maybeRenderEmpty(); return; }
+    if (!convo.length || convo[convo.length - 1].role !== 'user') { maybeRenderEmpty(); return; }
     await generateReply();
 }
 
 // Inline-edit a user message, then truncate everything after it and regenerate.
 function editUserMessage(entry) {
-    if (sharedState.isGenerating) return;
+    if (isGenerating) return;
     const el = entry._el;
     if (!el) return;
     const bubble = el.querySelector('.so-bubble');
@@ -232,11 +234,11 @@ function editUserMessage(entry) {
     cancelBtn.addEventListener('click', close);
     const commit = async () => {
         const newText = ta.value.trim();
-        const i = sharedState.convo.indexOf(entry);
+        const i = convo.indexOf(entry);
         if (!newText || i === -1) { close(); return; }
         entry.content = newText;
         contentEl.textContent = newText;
-        sharedState.convo.splice(i + 1);                                   // drop later turns
+        convo.splice(i + 1);                                   // drop later turns
         persistConvo();
         close();
         while (el.nextSibling) el.nextSibling.remove();        // drop their DOM
@@ -266,7 +268,7 @@ export function addRetryControl(assistantEl, entry) {
     bubble.appendChild(bar);
     scrollToBottom();
     btn.addEventListener('click', () => {
-        if (sharedState.isGenerating) return;
+        if (isGenerating) return;
         regenerateFrom(entry);
     });
 }
@@ -295,24 +297,24 @@ export async function diagSchemaAfterManualReply(assistantEl, finalText, aEntry,
             bar.parentNode.insertBefore(pv, bar);
         }
         if (opts && opts.previewOnly) return;
-        const prev = sharedState.convo[sharedState.convo.indexOf(aEntry) - 1];
+        const prev = convo[convo.indexOf(aEntry) - 1];
         const already = diagSchemaIsRetryTurn(prev);
         const plan = diagSchemaRetryPlan(finalText, md, getSettings(), already);
         if (!plan) return;
         // generateReply 还在收尾（isGenerating 仍为真）——等它落定再插话；用户已经接着聊了就不插。
-        await new Promise((res) => { const t = setInterval(() => { if (!sharedState.isGenerating) { clearInterval(t); res(); } }, 100); });
-        if (sharedState.convo[sharedState.convo.length - 1] !== aEntry) return;
+        await new Promise((res) => { const t = setInterval(() => { if (!isGenerating) { clearInterval(t); res(); } }, 100); });
+        if (convo[convo.length - 1] !== aEntry) return;
         // 第二张在生成时先锁住第一张的「应用」，免得两张都点、同一处 delta 算两遍（minors M7）。只锁还是「应用」态的键。
         const applyBtn = bar && bar.querySelector('.so-apply-btn');
         const lockable = !!(applyBtn && !applyBtn.disabled && /将修复应用到状态/.test(applyBtn.textContent || ''));
         if (lockable) applyBtn.disabled = true;
-        const entry = { id: ++sharedState.cidSeq, role: 'user', content: plan.message, schemaRetry: true };
-        sharedState.convo.push(entry);
+        const entry = { id: nextCid(), role: 'user', content: plan.message, schemaRetry: true };
+        convo.push(entry);
         persistConvo();
         entry._el = addMessage('user', plan.message, entry);
         try { await generateReply(); } catch (e) { /* 下面按「没有第二张」处理 */ }
         // 真有了第二张（带补丁的回复）才标「已由下一张替代」并让第一张保持锁住；没有就把第一张还原（minors M7）。
-        const last = sharedState.convo[sharedState.convo.length - 1];
+        const last = convo[convo.length - 1];
         const replaced = !!(last && last !== entry && last.role === 'assistant' && extractUpdateBlock(String(last.content || '')));
         if (replaced && bar) {
             const n = document.createElement('div');
@@ -339,8 +341,8 @@ export function addApplyControls(assistantEl, patchBlock, entry, replyText) {
     status.className = 'so-apply-status';
     // 已应用状态（1.33.2）：会话内应用过（注册表有快照）→ 撤销态重生；只剩持久标记（重载过，
     // 快照已失）→ 不出应用按钮、只留说明——旧补丁对已前进的状态重放不安全（delta 会二次叠加）。
-    const sess = entry ? ((peekNoteOpts(sharedState.convoStreamKey, entry) || {}).diagApplied || null) : null;
-    if (!sess && entry && isRecordApplied(sharedState.convoStreamKey, entry)) {
+    const sess = entry ? ((peekNoteOpts(convoStreamKey, entry) || {}).diagApplied || null) : null;
+    if (!sess && entry && isRecordApplied(convoStreamKey, entry)) {
         status.textContent = '此前已应用过此补丁，应用按钮已收起（重载后撤销不可用）。需要再修请重新诊断。';
         bar.appendChild(status);
         assistantEl.querySelector('.so-bubble').appendChild(bar);
@@ -387,7 +389,7 @@ export function addApplyControls(assistantEl, patchBlock, entry, replyText) {
                 snapshot = null;
                 applied = null;
                 // wb【有意保留】：与 addNoteUndoControls 同款对称——重新应用时把同一段放回去。
-                if (entry) { dropNoteOpts(sharedState.convoStreamKey, entry); unmarkRecordApplied(sharedState.convoStreamKey, entry); }
+                if (entry) { dropNoteOpts(convoStreamKey, entry); unmarkRecordApplied(convoStreamKey, entry); }
                 btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 将修复应用到状态';
                 // Task 7：还原也是一次 MVU 写入，落点同样是最末非系统楼——落在用户楼上时同样看不见。
                 const n = diagUserFloorNotice();
@@ -451,7 +453,7 @@ export function addApplyControls(assistantEl, patchBlock, entry, replyText) {
                         if (getLatestAiMessage().idx === wb.idx) await restoreDiagWriteBack(wb);
                     } else if (ENABLE_DIAG_BODY_INJECT && getSettings().diagInjectBody) {
                         // 靶子由诊断定稿时钉进会话注册表（generateReply）。重载后没有 → 不注入，行为与今天相同。
-                        const tgt = entry ? ((peekNoteOpts(sharedState.convoStreamKey, entry) || {}).diagTarget || null) : null;
+                        const tgt = entry ? ((peekNoteOpts(convoStreamKey, entry) || {}).diagTarget || null) : null;
                         // 【最末楼不变量】折出来的是绝对值补丁，只有落在「重新处理变量」最后重放的那个区块里
                         // 才算数。自动路天然满足（它当场就跑，钉住的就是最新那楼）；手动卡却能在侧聊里躺很久，
                         // 而 Task 5 的漂移弹窗还【明确允许】用户在新回复落地之后照样应用。此时靶子已经不是
@@ -471,8 +473,8 @@ export function addApplyControls(assistantEl, patchBlock, entry, replyText) {
                     // 已应用状态（1.33.2）：登记会话快照（换房重画以撤销态重生）+ 落持久标记（重载后只留说明）。
                     // 快照为空 = 没有可回退的靶子 → 只落标记、【不】登记会话状态，否则重画会长出一颗按下去
                     // 什么都回不去的「撤销」（undoFix(null) 会把整份状态换成 null）。同理这颗按钮就地作废。
-                    if (snapshot) registerNoteOpts(sharedState.convoStreamKey, entry, Object.assign({}, peekNoteOpts(sharedState.convoStreamKey, entry) || {}, { diagApplied: { snapshot, applied, wb } }));
-                    markRecordApplied(sharedState.convoStreamKey, entry);
+                    if (snapshot) registerNoteOpts(convoStreamKey, entry, Object.assign({}, peekNoteOpts(convoStreamKey, entry) || {}, { diagApplied: { snapshot, applied, wb } }));
+                    markRecordApplied(convoStreamKey, entry);
                 }
                 if (snapshot) btn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> 撤销';
                 else dead = true;
@@ -595,7 +597,7 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
                 if (opts.entry) {
                     // 已应用状态（1.33.2）：给注册表里的材料打 applied 旗标——换房重画以已应用态重生，
                     // 防止重挂出崭新按钮、再点写出第二条重复 swipe。
-                    const cur = peekNoteOpts(sharedState.convoStreamKey, opts.entry);
+                    const cur = peekNoteOpts(convoStreamKey, opts.entry);
                     if (cur && cur.fixApply) cur.fixApply.applied = true;
                 }
                 btn.innerHTML = '<i class="fa-solid fa-check"></i> 已应用（左滑看原文）';
@@ -630,8 +632,8 @@ export function addLorebookApplyControls(assistantEl, parsed, entry) {
     status.className = 'so-apply-status';
     // 已应用状态（1.33.2）：会话内应用过（注册表有快照+结果）→ 撤销态重生；只剩持久标记（重载过，
     // 快照已失）→ 不出应用按钮、只留说明——重放旧书快照会回滚整本书；再点应用则 create 类操作会出重复条目。
-    const sess = entry ? ((peekNoteOpts(sharedState.convoStreamKey, entry) || {}).lbApplied || null) : null;
-    if (!sess && entry && isRecordApplied(sharedState.convoStreamKey, entry)) {
+    const sess = entry ? ((peekNoteOpts(convoStreamKey, entry) || {}).lbApplied || null) : null;
+    if (!sess && entry && isRecordApplied(convoStreamKey, entry)) {
         status.textContent = '此前已应用过这批改动，应用按钮已收起（重载后撤销不可用）。需要再次应用或调整，请让我重新出一版改动。';
         bar.appendChild(status);
         bubble.appendChild(bar);
@@ -703,7 +705,7 @@ export function addLorebookApplyControls(assistantEl, parsed, entry) {
             try {
                 await undoLorebookOps(snapshots);
                 snapshots = null;
-                if (entry) { dropNoteOpts(sharedState.convoStreamKey, entry); unmarkRecordApplied(sharedState.convoStreamKey, entry); }
+                if (entry) { dropNoteOpts(convoStreamKey, entry); unmarkRecordApplied(convoStreamKey, entry); }
                 resultsEl.innerHTML = '';
                 btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 将改动应用到世界书';
                 status.textContent = `已还原。待应用：${lbSummaryOf(ops)}`;
@@ -725,8 +727,8 @@ export function addLorebookApplyControls(assistantEl, parsed, entry) {
                 snapshots = res.snapshots;
                 if (entry) {
                     // 已应用状态（1.33.2）：登记会话状态（换房重画以撤销态重生）+ 落持久标记（重载后只留说明）。
-                    registerNoteOpts(sharedState.convoStreamKey, entry, { lbApplied: { snapshots: res.snapshots, results: res.results, summary: res.summary } });
-                    markRecordApplied(sharedState.convoStreamKey, entry);
+                    registerNoteOpts(convoStreamKey, entry, { lbApplied: { snapshots: res.snapshots, results: res.results, summary: res.summary } });
+                    markRecordApplied(convoStreamKey, entry);
                 }
                 btn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> 撤销';
                 status.textContent = `已应用：${res.summary}。世界书已保存。`;

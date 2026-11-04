@@ -16,6 +16,13 @@ const source = [
     fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8'),
     ...sourceFiles(fileURLToPath(new URL('../src/', import.meta.url))).sort().map((file) => fs.readFileSync(file, 'utf8')),
 ].join('\n');
+const stateSource = sourceFiles(fileURLToPath(new URL('../src/', import.meta.url)))
+    .filter((file) => /(?:^|[\\/])(?:runtime-)?state\.js$/.test(file))
+    .map((file) => fs.readFileSync(file, 'utf8'))
+    .join('\n');
+const stateCommands = [...stateSource.matchAll(/export function (?:set|next|increment|decrement)[A-Za-z0-9_]*\([^]*?\r?\n?}/g)]
+    .map((match) => match[0].replace(/^export\s+/, ''))
+    .join('\n');
 const stRoot = process.env.SILLYTAVERN_ROOT || 'F:/SillyTavern/Luker';
 const sseSource = fs.readFileSync(path.join(stRoot, 'public/scripts/sse-stream.js'), 'utf8');
 // 运行酒馆实际的基础解析器，省去只供平滑流式 UI 使用的浏览器模块依赖。
@@ -31,8 +38,8 @@ function functions(names) {
         assert.ok(match, `找不到函数 ${name}`);
         return match[0].replace(/^export\s+/, '');
     }).join('\n');
-    // 拆分后模块级 let 统一落到 sharedState；VM 的 globalThis 就是各测试现成的依赖对象。
-    return 'const sharedState = globalThis;\n' + declarations;
+    // VM 继续显式提供每个 live binding；命令函数取新属主模块里的真实机械实现。
+    return stateCommands + '\n' + declarations;
 }
 
 function transport(response, settings = {}) {
@@ -340,6 +347,9 @@ function sendHarness(settings, options = {}) {
         ENABLE_WI_EJS_RENDER: false, assembleExternalWorld: () => '', buildMessages: () => messages,
         soLastFinishReason: 'previous', stripMechanismBlocks: (s) => s, stripReasoningTags: (s) => s,
         renderMarkdownOnly: () => null, convo: [], persistConvo: noop, addRetryControl: noop,
+        worldInfoBlock: '', diagStatData: '', diagLatestUpdate: '', advStatData: '', bldStatData: '',
+        wiBefore: '', wiAfter: '', chatStatData: '', chatWorldData: '',
+        lastPrompt: null, lastPromptMeta: null, fixExtraKeep: [], fixScope: { active: false },
         errChainMessage: (e) => e.message, explainProviderError: (s) => s,
         getBuilderState: () => builder, buildBuilderContext: async () => {}, buildForgeMessages: () => messages,
         convoStreamKey: 'room', liveForge: null, liveCondense: null,
@@ -606,6 +616,7 @@ test('缺失 chatHistory 时完整补上下文；有占位时只插入一次并�
         getLwbSummaryText: () => '小白X', buildLwbHistorySection: (s) => s,
         buildTranscriptTurns: () => [{ role: 'assistant', text: '故事记录' }],
         convoForPrompt: () => [{ role: 'user', content: '用户问题' }],
+        wiBefore: '', wiAfter: '',
     };
     vm.runInNewContext(functions(['subst', 'pushMsg', 'expandMarker', 'getCuratedSnapshot', 'buildPresetMessages']), ctx);
     const text = (s) => ({ kind: 'text', role: 'system', content: s });

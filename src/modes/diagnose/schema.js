@@ -1,7 +1,7 @@
 import { saveChatMetadata } from '../../core/chat-metadata.js';
 import { cancelPostReply, refreshLatestMvuBar, refreshMessageBar } from '../../core/post-reply.js';
 import { getCtx, getSettings, save, uiConfirm } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { getChatMetadataSafe } from '../advisor/metadata.js';
 import { appendNoteToRoom, scrollToBottom } from '../chat/history.js';
 import { diagUserFloorNotice, mvuIsVwdPair, mvuMsgOpts, mvuedPathStr } from './auto.js';
@@ -15,17 +15,20 @@ import { P } from '../../prompts/registry.js';
 import { syncChatBarButton, syncQrButton } from '../../ui/chat-entry.js';
 import { centeredWindowBox, currentView } from '../../ui/geometry.js';
 import { toggleWindow } from '../../ui/mode-shell.js';
+import { nextCid } from '../../core/runtime-state.js';
+import { setSoZodReadWarned, soZodReadWarned } from './state.js';
+import { win } from '../../ui/state.js';
 
 /* ── 🩺 1.89.0：schema 感知诊断（spec 2026-09-27-schema-aware-diagnosis-design.md）────────────────
  * mvu_zod 卡把自己的 zod 规则交给酒馆助手 registerVariableSchema(z.object({stat_data}), {type:'message'})，
  * 酒馆助手 4.9.5 只存进内部 pinia store、没有公开 getter。2026-09-27 spike 实证可读的唯一路径见下；
  * 另一条（包装 registerVariableSchema）读不到：卡脚本 iframe 建立时就把 TavernHelper 成员拷走、跨 /newchat 不重建。
  * 【红线】这是酒馆助手的内部结构、随时会变：任何一环缺失 / 抛错 → null，调用方行为与 1.88.0 逐字节相同。 */
-sharedState.soZodReadWarned = false;
+
 function soReadZodSchema(mvuData) {
     const miss = () => {
-        if (!sharedState.soZodReadWarned) {
-            sharedState.soZodReadWarned = true;
+        if (!soZodReadWarned) {
+            setSoZodReadWarned(true);
             console.warn('[Story Oracle] 🩺 这张卡挂了 mvu_zod，但没能从酒馆助手读到它的变量规则（酒馆助手版本变化？）——诊断按原样工作，不做 schema 预检。');
         }
         return null;
@@ -454,13 +457,13 @@ export async function maybeRunSaveHealth(reason) {
     try {
         const Mvu = await getMvu();
         if (!Mvu || typeof Mvu.getMvuData !== 'function') {
-            if (reason === 'button') appendNoteToRoom('diagnose', { id: ++sharedState.cidSeq, role: 'note', content: '🩺 存档检查：没有检测到 MVU 变量框架，无法检查。' });
+            if (reason === 'button') appendNoteToRoom('diagnose', { id: nextCid(), role: 'note', content: '🩺 存档检查：没有检测到 MVU 变量框架，无法检查。' });
             return null;
         }
         const data = Mvu.getMvuData(mvuMsgOpts());
         const zod = soReadZodSchema(data);
         if (!zod) {
-            if (reason === 'button') appendNoteToRoom('diagnose', { id: ++sharedState.cidSeq, role: 'note', content: '🩺 存档检查：这张卡没有可读取的变量规则（不是 mvu_zod 卡，或酒馆助手版本读不到），无需检查。' });
+            if (reason === 'button') appendNoteToRoom('diagnose', { id: nextCid(), role: 'note', content: '🩺 存档检查：这张卡没有可读取的变量规则（不是 mvu_zod 卡，或酒馆助手版本读不到），无需检查。' });
             return null;
         }
         const h = diagSaveHealth(zod, mvuStatOf(data));
@@ -473,16 +476,16 @@ export async function maybeRunSaveHealth(reason) {
             const info = (!h.ok && !d.recovered)
                 ? { health: { findings: h.findings.map((f) => Object.assign({}, f, { focus: diagFocusPathOf(f.segs, mvuStatOf(data)) })), raw: h.findings.map((f) => `${(f.segs || []).join('.')}: ${f.code} ${f.message || ''}`).join('\n') } }
                 : undefined;
-            appendNoteToRoom('diagnose', { id: ++sharedState.cidSeq, role: 'note', content }, info);
+            appendNoteToRoom('diagnose', { id: nextCid(), role: 'note', content }, info);
         }
-        if (d.toast && !(sharedState.win && sharedState.win.style.display !== 'none')) {
+        if (d.toast && !(win && win.style.display !== 'none')) {
             try { window.toastr && window.toastr.warning && window.toastr.warning(`剧情推进：这张卡的存档里有 ${h.total} 处不合规的值，变量更新会一直失败。打开诊断看详情。`, '剧情推进 · 存档检查', { timeOut: 8000 }); } catch (e) { /* ignore */ }
         }
         return h;
     } catch (e) {
         console.warn('[Story Oracle] 🩺 存档检查失败（不影响诊断）：', e);
         if (reason === 'button') {
-            try { appendNoteToRoom('diagnose', { id: ++sharedState.cidSeq, role: 'note', content: '🩺 存档检查失败：' + (e && e.message ? e.message : String(e)) }); } catch (e2) { /* ignore */ }
+            try { appendNoteToRoom('diagnose', { id: nextCid(), role: 'note', content: '🩺 存档检查失败：' + (e && e.message ? e.message : String(e)) }); } catch (e2) { /* ignore */ }
         }
         return null;
     }
@@ -1450,7 +1453,7 @@ export function notifyAutoDiagnose(result, patch, writeBack, opts) {
         const stamp = (() => { try { return new Date().toLocaleTimeString(); } catch (e) { return ''; } })();
         // ⚠ 陈旧跳过的原因走的是 result.reason（autoApplyFix 的字段），不是 result.detail（unparsed 那支
         // 才用 detail）—— 两个槽在这里合流，漏掉任一个都会把原因静默丢成兜底的「目标已失效」。
-        const entry = { id: ++sharedState.cidSeq, role: 'note', content: autoDiagNoteContent({
+        const entry = { id: nextCid(), role: 'note', content: autoDiagNoteContent({
             status, patch, stamp,
             detail: result && (result.detail != null ? result.detail : result.reason),
             raw: result && result.raw,
@@ -1836,13 +1839,13 @@ export function injectWandButton() {
 // CSS 隐藏、不会触发。
 function recenterWindow() {
     toggleWindow(true);                       // 关着 / 在屏外都先确保开着
-    if (!sharedState.win) return;
+    if (!win) return;
     const c = centeredWindowBox(currentView());   // 无 opts → 默认 380×540（reset 语义：撤销被拖坏的尺寸）
-    sharedState.win.style.left = `${c.left}px`;
-    sharedState.win.style.top = `${c.top}px`;
-    sharedState.win.style.width = `${c.width}px`;
-    sharedState.win.style.height = `${c.height}px`;
-    sharedState.win.style.right = 'auto';
+    win.style.left = `${c.left}px`;
+    win.style.top = `${c.top}px`;
+    win.style.width = `${c.width}px`;
+    win.style.height = `${c.height}px`;
+    win.style.right = 'auto';
     const s = getSettings();                  // 存档：复位持久化（后续开窗不再回到坏位置 / 坏尺寸）
     s.winLeft = c.left; s.winTop = c.top; s.winWidth = c.width; s.winHeight = c.height;
     save();

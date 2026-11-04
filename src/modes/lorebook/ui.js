@@ -1,9 +1,12 @@
 import { soCallModel } from '../../bootstrap.js';
 import { getSettings, save } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { addSystemNote } from '../advisor/cards.js';
 import { BUILDER_VARIANTS, LB_SMART_MAX_ROUNDS, bldEntriesCountText, bldSelCollapses, bookNameMatchesQuery, buildLbCatalog, buildSmartSelectMessages, builderSelectedSections, builderVariantKey, builderVisibleSections, formatLbFetchResult, formatLbSearchResult, formatLbSizeEstimate, getActiveBookNames, getAllBookNames, getWiEditApi, lbEngineFetch, lbEngineSearch, lbEntryTokenCost, lbResolveSelectPlan, lbSizeIsHuge, lbSmartNextStep, parseLbFetchBlocks, parseLbSearchBlocks, parseLbSelectBlocks, resolveLbTargetNames, sumBldSelectedTokens, sumLbSelectedTokens } from './core.js';
 import { ENABLE_LB_SMART_SELECT } from '../../prompts/builtins.js';
+import { bldEntryFilter, bldSelHydrated, setBldSelHydrated } from '../builder/state.js';
+import { lbEntryFilter, lbSelHydrated, setLbSelHydrated, setSmartSelState, smartSelState } from './state.js';
+import { win } from '../../ui/state.js';
 
 // Fill the book checklist: every known book as a checkbox (active ones marked ★).
 /* ==== 角色工坊选书 / 选条目器（Task 4）====
@@ -13,7 +16,7 @@ import { ENABLE_LB_SMART_SELECT } from '../../prompts/builtins.js';
 
 // chips：把 BUILDER_SECTIONS 渲染成一排可点亮的部分标签；点一下翻转选择、持久化、重画。
 export function renderBuilderChips() {
-    const wrap = sharedState.win?.querySelector('#so-bld-chips');
+    const wrap = win?.querySelector('#so-bld-chips');
     if (!wrap) return;
     const s = getSettings();
     const v = BUILDER_VARIANTS[builderVariantKey(s)];
@@ -49,7 +52,7 @@ export function renderBuilderChips() {
 
 // 章节图例：移动端没有 hover，「?」点开一份 label——desc 对照表（桌面也可用）。内容首次展开时才填。
 export function toggleBuilderChipsLegend() {
-    const box = sharedState.win?.querySelector('#so-bld-chips-legend');
+    const box = win?.querySelector('#so-bld-chips-legend');
     if (!box) return;
     if (box.style.display === 'none') {
         // 每次展开按当前变体重建（不同变体 chip 集不同——不能只填一次）。
@@ -79,16 +82,16 @@ export function toggleBuilderChipsLegend() {
 export async function populateBuilderBooks(announce) {
     renderBuilderChips();   // 每次进模式 / 刷新时也把 chips 对齐到当前设置
     // T12：本会话首次进入时，把 bldEntrySel 设置水合进内存镜像（书本身已由 bldBooks 持久化）。
-    if (!sharedState.bldSelHydrated) {
+    if (!bldSelHydrated) {
         const saved = getSettings().bldEntrySel;
         if (saved && typeof saved === 'object') {
             for (const [book, arr] of Object.entries(saved)) {
-                if (Array.isArray(arr)) sharedState.bldEntryFilter[book] = new Set(arr);
+                if (Array.isArray(arr)) bldEntryFilter[book] = new Set(arr);
             }
         }
-        sharedState.bldSelHydrated = true;
+        setBldSelHydrated(true);
     }
-    const listEl = sharedState.win.querySelector('#so-bld-book-list');
+    const listEl = win.querySelector('#so-bld-book-list');
     if (!listEl) return;
     const s = getSettings();
     let active = [];
@@ -120,7 +123,7 @@ export async function populateBuilderBooks(announce) {
             listEl.appendChild(row);
         }
     }
-    const bf = sharedState.win.querySelector('#so-bld-book-filter');
+    const bf = win.querySelector('#so-bld-book-filter');
     if (bf && bf.value) filterBldBooks(bf.value);
     updateBldBookSummary();
     populateBuilderEntries();
@@ -131,7 +134,7 @@ export async function populateBuilderBooks(announce) {
 // 旧文案「全部激活」会被读成「选中全部世界书」（用户误读，Prince 转达，1.19.2）——语义其实是
 // 「跟随当前激活的那些」，措辞改为 当前激活的。
 function updateBldBookSummary() {
-    const sum = sharedState.win.querySelector('#so-bld-bookpick-sum');
+    const sum = win.querySelector('#so-bld-bookpick-sum');
     if (!sum) return;
     const t = getSettings().bldBooks;
     sum.textContent = (Array.isArray(t) && t.length) ? `世界书：已选 ${t.length} 本` : '世界书：当前激活的';
@@ -141,7 +144,7 @@ function updateBldBookSummary() {
 export function onBldBookSelectionChange() {
     const s = getSettings();
     const picked = [];
-    for (const box of sharedState.win.querySelectorAll('#so-bld-book-list input[type="checkbox"]')) {
+    for (const box of win.querySelectorAll('#so-bld-book-list input[type="checkbox"]')) {
         if (box.checked) {
             const row = box.closest('.so-lb-book-opt');
             if (row && row.dataset.book) picked.push(row.dataset.book);
@@ -155,7 +158,7 @@ export function onBldBookSelectionChange() {
 
 // 角色工坊选书器的书名搜索（同 filterLbBooks，纯可见性，绝不改选择）。
 export function filterBldBooks(q) {
-    const list = sharedState.win.querySelector('#so-bld-book-list');
+    const list = win.querySelector('#so-bld-book-list');
     if (!list) return;
     let anyRow = false, anyVisible = false;
     for (const row of list.querySelectorAll('.so-lb-book-opt')) {
@@ -164,7 +167,7 @@ export function filterBldBooks(q) {
         row.style.display = show ? '' : 'none';
         if (show) anyVisible = true;
     }
-    const empty = sharedState.win.querySelector('#so-bld-book-empty');
+    const empty = win.querySelector('#so-bld-book-empty');
     if (empty) empty.hidden = !(anyRow && !anyVisible);
 }
 
@@ -173,7 +176,7 @@ export function filterBldBooks(q) {
 // 否则用户第一次撤勾就会把整本的禁用条目一并变成「显式勾上」（1.82.0）。
 function allBldEntryUidsForBook(book, enabledOnly) {
     const uids = [];
-    for (const row of sharedState.win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
         if ((row.dataset.book || '') !== (book || '')) continue;
         if (enabledOnly && row.dataset.type === 'off') continue;
         const box = row.querySelector('input[type="checkbox"]');
@@ -186,7 +189,7 @@ function allBldEntryUidsForBook(book, enabledOnly) {
 // （1.82.0；体积读数照 1.62.0 的 lbShownEntryCosts 同款把成本挂在行上，勾选时不必重读整本书）。
 function bldShownEntryRows() {
     const out = [];
-    for (const row of sharedState.win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
         const box = row.querySelector('input[type="checkbox"]');
         if (!box) continue;
         out.push({
@@ -212,17 +215,17 @@ function refreshBldEntriesSummary() {
     let selected = 0;
     let anyFiltered = false;
     for (const [book, t] of totals) {
-        if (bldSelCollapses(sharedState.bldEntryFilter[book], t.enabled)) sharedState.bldEntryFilter[book] = null;
-        const now = sharedState.bldEntryFilter[book];
+        if (bldSelCollapses(bldEntryFilter[book], t.enabled)) bldEntryFilter[book] = null;
+        const now = bldEntryFilter[book];
         total += t.total;
         if (now instanceof Set) { selected += now.size; anyFiltered = true; }
         else selected += t.enabled.length;
     }
-    const summary = sharedState.win.querySelector('#so-bld-entries-sum');
+    const summary = win.querySelector('#so-bld-entries-sum');
     if (!summary) return;
     // 体积读数（1.82.0，照搬 1.62.0 的世界书汇总行）：**求和排在上面的折叠归一之后**，否则
     // 读数与条数各说各话。拆两个 span 只为让估算那一段能单独标红；两段都走 textContent。
-    const tok = sumBldSelectedTokens(rows, sharedState.bldEntryFilter);
+    const tok = sumBldSelectedTokens(rows, bldEntryFilter);
     const countEl = document.createElement('span');
     countEl.textContent = bldEntriesCountText(total, selected, anyFiltered) + ' · ';
     const sizeEl = document.createElement('span');
@@ -246,16 +249,16 @@ function serializeEntrySel(filter) {
 
 // 把当前 bldEntryFilter 落进设置（跨重载保留选条目）。每个改动选择的地方都要调。
 function persistBldEntrySel() {
-    getSettings().bldEntrySel = serializeEntrySel(sharedState.bldEntryFilter);
+    getSettings().bldEntrySel = serializeEntrySel(bldEntryFilter);
     save();
 }
 
 function toggleBldEntry(book, uid, checked) {
-    let sel = sharedState.bldEntryFilter[book];
+    let sel = bldEntryFilter[book];
     // null（＝全部启用的）→ 材料化成【启用集】，与屏幕上的勾选态逐条一致（1.82.0）
     if (!(sel instanceof Set)) sel = new Set(allBldEntryUidsForBook(book, true));
     if (checked) sel.add(uid); else sel.delete(uid);
-    sharedState.bldEntryFilter[book] = sel;
+    bldEntryFilter[book] = sel;
     refreshBldEntriesSummary();
     persistBldEntrySel();
 }
@@ -266,14 +269,14 @@ function toggleBldEntry(book, uid, checked) {
 // 显式全集恰等于启用集，refreshBldEntriesSummary 会自然把它折回 null，行为与从前一致。
 export function setAllBldEntries(on) {
     const perBook = new Map();   // book -> Set of uids（on=false 时留空集 = 一条不发）
-    for (const row of sharedState.win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
         const box = row.querySelector('input[type="checkbox"]');
         if (box) box.checked = on;
         const b = row.dataset.book || '';
         if (!perBook.has(b)) perBook.set(b, new Set());
         if (on && box) perBook.get(b).add(Number(box.dataset.uid));
     }
-    for (const [b, sel] of perBook) sharedState.bldEntryFilter[b] = sel;
+    for (const [b, sel] of perBook) bldEntryFilter[b] = sel;
     refreshBldEntriesSummary();
     persistBldEntrySel();
 }
@@ -281,7 +284,7 @@ export function setAllBldEntries(on) {
 // 只选中某一类灯的条目：'blue'（常驻）/ 'green'（关键词触发），跨所有展示的书，不含已禁用。
 // 与 setLbEntriesByType 同构，作用于 bldEntryFilter + #so-bld-entry-list（无「仅禁用」按 Prince 指定）。
 export function setBldEntriesByType(type) {
-    const rows = [...sharedState.win.querySelectorAll('#so-bld-entry-list .so-lb-ent')];
+    const rows = [...win.querySelectorAll('#so-bld-entry-list .so-lb-ent')];
     if (!rows.length) return;
     const perBook = new Map();   // book -> Set of matching uids
     for (const row of rows) {
@@ -292,7 +295,7 @@ export function setBldEntriesByType(type) {
         if (box) box.checked = match;
         if (match) perBook.get(book).add(Number(box.dataset.uid));
     }
-    for (const [book, sel] of perBook) sharedState.bldEntryFilter[book] = sel;   // 空 Set -> 该书一条不发
+    for (const [book, sel] of perBook) bldEntryFilter[book] = sel;   // 空 Set -> 该书一条不发
     refreshBldEntriesSummary();
     persistBldEntrySel();
 }
@@ -301,7 +304,7 @@ export function setBldEntriesByType(type) {
 // 与 selectFilteredLbEntries 同构，作用于 bldEntryFilter + #so-bld-entry-list。
 export function selectFilteredBldEntries() {
     const perBook = new Map();   // book -> Set of visible uids
-    for (const row of sharedState.win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
         const book = row.dataset.book || '';
         if (!perBook.has(book)) perBook.set(book, new Set());
         const box = row.querySelector('input[type="checkbox"]');
@@ -309,22 +312,22 @@ export function selectFilteredBldEntries() {
         if (box) box.checked = visible;
         if (visible && box) perBook.get(book).add(Number(box.dataset.uid));
     }
-    for (const [book, sel] of perBook) sharedState.bldEntryFilter[book] = sel;   // 恰好可见集（refresh 把整本折成 null）
+    for (const [book, sel] of perBook) bldEntryFilter[book] = sel;   // 恰好可见集（refresh 把整本折成 null）
     refreshBldEntriesSummary();
     persistBldEntrySel();
 }
 
 // 「全选筛选」只在有搜索词时才有意义（否则等于「全选」）—— 没搜索词时禁用它。
 export function updateBldFilteredBtn() {
-    const btn = sharedState.win.querySelector('#so-bld-ent-filtered');
+    const btn = win.querySelector('#so-bld-ent-filtered');
     if (!btn) return;
-    const f = sharedState.win.querySelector('#so-bld-ent-filter');
+    const f = win.querySelector('#so-bld-ent-filter');
     btn.disabled = !(f && f.value && f.value.trim());
 }
 
 export function filterBookEntries(listSelector, q, onFiltered) {
     const needle = (q || '').trim().toLowerCase();
-    const list = sharedState.win.querySelector(listSelector);
+    const list = win.querySelector(listSelector);
     if (!list) return;
     for (const row of list.querySelectorAll('.so-lb-ent')) {
         row.style.display = (!needle || (row.dataset.hay || '').includes(needle)) ? '' : 'none';
@@ -344,7 +347,7 @@ export function filterBookEntries(listSelector, q, onFiltered) {
 // 填 / 刷条目清单：单本 -> 该书条目；多本（或选“全部激活”解析出多本）-> 每本一个书头分组。
 // 语义同 populateLorebookEntries，只是无「内容预览」行、无 .shown 盒子（原生 <details> 折叠）。
 async function populateBuilderEntries() {
-    const list = sharedState.win.querySelector('#so-bld-entry-list');
+    const list = win.querySelector('#so-bld-entry-list');
     if (!list) return;
     const s = getSettings();
     let books;
@@ -374,12 +377,12 @@ async function populateBuilderEntries() {
         // ⚠ 必须 loadOk 才剪（1.82.0 补）：读书失败 / 模块拿不到时 entries 是空数组，无条件剪会把整份
         // 选择削成【空 Set＝一条不发】。工坊的选择是持久化的（bldEntrySel）——多本书同屏时这一趟就会
         // 把坏掉那本写成 []，一次偶发读取失败便永久毁掉用户攒的选择。读不到就原样保留，下次读到再剪。
-        if (loadOk && sharedState.bldEntryFilter[name] instanceof Set) {
+        if (loadOk && bldEntryFilter[name] instanceof Set) {
             const valid = new Set(entries.map((e) => e.uid));
-            const before = sharedState.bldEntryFilter[name];
+            const before = bldEntryFilter[name];
             const kept = new Set([...before].filter((u) => valid.has(u)));
             if (kept.size !== before.size) selPruned = true;
-            sharedState.bldEntryFilter[name] = kept;
+            bldEntryFilter[name] = kept;
         }
         loaded.push({ name, entries });
     }
@@ -412,7 +415,7 @@ async function populateBuilderEntries() {
                 continue;
             }
         }
-        const sel = sharedState.bldEntryFilter[name];   // Set（显式选择）| null（= 全部启用的）
+        const sel = bldEntryFilter[name];   // Set（显式选择）| null（= 全部启用的）
         for (const e of entries) {
             // 1.82.0：null 态下禁用条目渲染成【未勾选】——勾选框显示的就是发出去的（bldPickFedEntries 同一口径）。
             const checked = sel instanceof Set ? sel.has(e.uid) : !e.disable;
@@ -434,7 +437,7 @@ async function populateBuilderEntries() {
             list.appendChild(row);
         }
     }
-    const f = sharedState.win.querySelector('#so-bld-ent-filter');
+    const f = win.querySelector('#so-bld-ent-filter');
     if (f && f.value) filterBookEntries('#so-bld-entry-list', f.value, updateBldFilteredBtn);
     updateBldFilteredBtn();
     refreshBldEntriesSummary();
@@ -442,7 +445,7 @@ async function populateBuilderEntries() {
 }
 
 export async function populateLorebookBooks(announce) {
-    const listEl = sharedState.win.querySelector('#so-lb-book-list');
+    const listEl = win.querySelector('#so-lb-book-list');
     if (!listEl) return;
     const s = getSettings();
     let active = [];
@@ -474,7 +477,7 @@ export async function populateLorebookBooks(announce) {
             listEl.appendChild(row);
         }
     }
-    const bf = sharedState.win.querySelector('#so-lb-book-filter');
+    const bf = win.querySelector('#so-lb-book-filter');
     if (bf && bf.value) filterLbBooks(bf.value);
     updateLbBookSummary();
     updateLbHint();
@@ -484,7 +487,7 @@ export async function populateLorebookBooks(announce) {
 
 // Summary text on the picker's <summary>: "全部激活的世界书" or "已选 N 本".
 function updateLbBookSummary() {
-    const sum = sharedState.win.querySelector('#so-lb-bookpick-sum');
+    const sum = win.querySelector('#so-lb-bookpick-sum');
     if (!sum) return;
     const t = getSettings().lorebookTargets;
     sum.textContent = (Array.isArray(t) && t.length) ? `已选 ${t.length} 本世界书` : '全部激活的世界书';
@@ -494,7 +497,7 @@ function updateLbBookSummary() {
 export function onLbBookSelectionChange() {
     const s = getSettings();
     const picked = [];
-    for (const box of sharedState.win.querySelectorAll('#so-lb-book-list input[type="checkbox"]')) {
+    for (const box of win.querySelectorAll('#so-lb-book-list input[type="checkbox"]')) {
         if (box.checked) {
             const row = box.closest('.so-lb-book-opt');
             if (row && row.dataset.book) picked.push(row.dataset.book);
@@ -508,7 +511,7 @@ export function onLbBookSelectionChange() {
 }
 
 function updateLbHint() {
-    const hint = sharedState.win.querySelector('#so-lb-hint');
+    const hint = win.querySelector('#so-lb-hint');
     if (!hint) return;
     const t = getSettings().lorebookTargets;
     hint.textContent = (Array.isArray(t) && t.length)
@@ -519,7 +522,7 @@ function updateLbHint() {
 // 世界书选书器的书名搜索（纯可见性筛选，绝不改选择 / 设置）：按书名子串隐藏 / 显示复选行；
 // 有书但全被筛掉时亮出「没有匹配」提示。是条目搜索 filterBookEntries 的书本版孪生。
 export function filterLbBooks(q) {
-    const list = sharedState.win.querySelector('#so-lb-book-list');
+    const list = win.querySelector('#so-lb-book-list');
     if (!list) return;
     let anyRow = false, anyVisible = false;
     for (const row of list.querySelectorAll('.so-lb-book-opt')) {
@@ -528,7 +531,7 @@ export function filterLbBooks(q) {
         row.style.display = show ? '' : 'none';
         if (show) anyVisible = true;
     }
-    const empty = sharedState.win.querySelector('#so-lb-book-empty');
+    const empty = win.querySelector('#so-lb-book-empty');
     if (empty) empty.hidden = !(anyRow && !anyVisible);
 }
 
@@ -540,7 +543,7 @@ export function filterLbBooks(q) {
 // All entry uids of one book, from its rendered rows (regardless of checked state).
 function allLbEntryUidsForBook(book) {
     const uids = [];
-    for (const row of sharedState.win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
         if ((row.dataset.book || '') !== (book || '')) continue;
         const box = row.querySelector('input[type="checkbox"]');
         if (box) uids.push(Number(box.dataset.uid));
@@ -552,7 +555,7 @@ function allLbEntryUidsForBook(book) {
 // data-tok 上（见 populateLorebookEntries），这里只做搬运——判断逻辑全在那个纯函数里。
 function lbShownEntryCosts() {
     const out = [];
-    for (const row of sharedState.win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
         const box = row.querySelector('input[type="checkbox"]');
         if (!box) continue;
         out.push({ book: row.dataset.book || '', uid: Number(box.dataset.uid), tok: Number(row.dataset.tok) || 0 });
@@ -563,7 +566,7 @@ function lbShownEntryCosts() {
 // Every book currently rendered in the picker -> its entry-row count.
 function lbShownBookTotals() {
     const totals = new Map();
-    for (const row of sharedState.win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
         const b = row.dataset.book || '';
         totals.set(b, (totals.get(b) || 0) + 1);
     }
@@ -573,7 +576,7 @@ function lbShownBookTotals() {
 // 把当前 lbEntryFilter 落进设置。挂在 refreshLbEntriesSummary 末尾＝所有改选路径的唯一咽喉，
 // 且落的是【归一之后】的状态（全选已塌回 null＝不落键，于是日后新增的条目会自动被包含进来）。
 function persistLbEntrySel() {
-    getSettings().lbEntrySel = serializeEntrySel(sharedState.lbEntryFilter);
+    getSettings().lbEntrySel = serializeEntrySel(lbEntryFilter);
     save();
 }
 
@@ -586,9 +589,9 @@ function refreshLbEntriesSummary() {
     let selected = 0;
     let anyFiltered = false;
     for (const [book, t] of totals) {
-        const sel = sharedState.lbEntryFilter[book];
-        if (sel instanceof Set && t > 0 && sel.size >= t) sharedState.lbEntryFilter[book] = null;
-        const now = sharedState.lbEntryFilter[book];
+        const sel = lbEntryFilter[book];
+        if (sel instanceof Set && t > 0 && sel.size >= t) lbEntryFilter[book] = null;
+        const now = lbEntryFilter[book];
         total += t;
         if (now instanceof Set) { selected += now.size; anyFiltered = true; }
         else selected += t;
@@ -596,11 +599,11 @@ function refreshLbEntriesSummary() {
     // 落盘放在【算完归一之后、DOM 早退之前】：五条改选路径全经这里，且 summary 元素不在时
     // （渲染时序）也照样要存，否则那一次改动会悄悄丢掉。
     persistLbEntrySel();
-    const summary = sharedState.win.querySelector('#so-lb-entries-summary');
+    const summary = win.querySelector('#so-lb-entries-summary');
     if (!summary) return;
     // 体积读数（1.62.0）：**求和排在上面的归一之后**（Set 覆盖全部 → 塌回 null），否则
     // 读数与条数会各说各话。拆两个 span 是为了只让估算那一段能标红；两段都走 textContent。
-    const tok = sumLbSelectedTokens(lbShownEntryCosts(), sharedState.lbEntryFilter);
+    const tok = sumLbSelectedTokens(lbShownEntryCosts(), lbEntryFilter);
     const countEl = document.createElement('span');
     countEl.textContent = (anyFiltered ? `条目：已选 ${selected} / ${total}` : `条目：全部（${total}）`) + ' · ';
     const sizeEl = document.createElement('span');
@@ -612,29 +615,29 @@ function refreshLbEntriesSummary() {
 }
 
 function toggleLbEntry(book, uid, checked) {
-    let sel = sharedState.lbEntryFilter[book];
+    let sel = lbEntryFilter[book];
     if (!(sel instanceof Set)) sel = new Set(allLbEntryUidsForBook(book)); // was "all" -> materialize
     if (checked) sel.add(uid); else sel.delete(uid);
-    sharedState.lbEntryFilter[book] = sel;
+    lbEntryFilter[book] = sel;
     refreshLbEntriesSummary();
 }
 
 // 全选 / 全不选 across every book shown (each book is its own filter entry).
 export function setAllLbEntries(on) {
     const books = new Set();
-    for (const row of sharedState.win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
         const box = row.querySelector('input[type="checkbox"]');
         if (box) box.checked = on;
         books.add(row.dataset.book || '');
     }
-    for (const b of books) sharedState.lbEntryFilter[b] = on ? null : new Set();   // all | none, per book
+    for (const b of books) lbEntryFilter[b] = on ? null : new Set();   // all | none, per book
     refreshLbEntriesSummary();
 }
 
 // Select exactly the entries of one lamp type: 'blue' (常驻), 'green' (关键词触发),
 // or 'off' (已禁用), across every book shown. None include disabled except 'off'.
 export function setLbEntriesByType(type) {
-    const rows = [...sharedState.win.querySelectorAll('#so-lb-entries-list .so-lb-ent')];
+    const rows = [...win.querySelectorAll('#so-lb-entries-list .so-lb-ent')];
     if (!rows.length) return;
     const perBook = new Map();   // book -> Set of matching uids
     for (const row of rows) {
@@ -645,7 +648,7 @@ export function setLbEntriesByType(type) {
         if (box) box.checked = match;
         if (match) perBook.get(book).add(Number(box.dataset.uid));
     }
-    for (const [book, sel] of perBook) sharedState.lbEntryFilter[book] = sel;   // empty Set -> sends none of that book
+    for (const [book, sel] of perBook) lbEntryFilter[book] = sel;   // empty Set -> sends none of that book
     refreshLbEntriesSummary();
 }
 
@@ -653,7 +656,7 @@ export function setLbEntriesByType(type) {
 // 被筛掉（隐藏）的条目一律不选 —— 于是结果恰好等于你眼前筛出来的这些。无筛选时＝全选。
 export function selectFilteredLbEntries() {
     const perBook = new Map();   // book -> Set of visible uids
-    for (const row of sharedState.win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
         const book = row.dataset.book || '';
         if (!perBook.has(book)) perBook.set(book, new Set());
         const box = row.querySelector('input[type="checkbox"]');
@@ -661,15 +664,15 @@ export function selectFilteredLbEntries() {
         if (box) box.checked = visible;
         if (visible && box) perBook.get(book).add(Number(box.dataset.uid));
     }
-    for (const [book, sel] of perBook) sharedState.lbEntryFilter[book] = sel;   // exactly the visible set (refresh collapses full→null)
+    for (const [book, sel] of perBook) lbEntryFilter[book] = sel;   // exactly the visible set (refresh collapses full→null)
     refreshLbEntriesSummary();
 }
 
 // 「全选筛选」只在有筛选词时才有意义（否则就等于「全选」）—— 没筛选时禁用它。
 export function updateLbFilteredBtn() {
-    const btn = sharedState.win.querySelector('#so-lb-filtered');
+    const btn = win.querySelector('#so-lb-filtered');
     if (!btn) return;
-    const f = sharedState.win.querySelector('#so-lb-entries-filter');
+    const f = win.querySelector('#so-lb-entries-filter');
     btn.disabled = !(f && f.value && f.value.trim());
 }
 
@@ -686,8 +689,8 @@ export function entryPreviewText(content, cap = 200) {
 // 并同步顶部开关按钮的 .active 高亮。在渲染条目、点开关、初始化绑定时各调一次。
 export function reflectLbPreview() {
     const on = !!getSettings().lbShowEntryPreview;
-    const list = sharedState.win.querySelector('#so-lb-entries-list');
-    const btn = sharedState.win.querySelector('#so-lb-preview-toggle');
+    const list = win.querySelector('#so-lb-entries-list');
+    const btn = win.querySelector('#so-lb-preview-toggle');
     if (list) list.classList.toggle('so-lb-show-preview', on);
     if (btn) btn.classList.toggle('active', on);
 }
@@ -706,20 +709,20 @@ export function toggleLbPreview() {
 // mode); the shortcut buttons + filter then span all of them. Hidden entirely when
 // there's nothing to show (no target picked AND no active book).
 async function populateLorebookEntries() {
-    const box = sharedState.win.querySelector('#so-lb-entries');
-    const list = sharedState.win.querySelector('#so-lb-entries-list');
+    const box = win.querySelector('#so-lb-entries');
+    const list = win.querySelector('#so-lb-entries-list');
     if (!box || !list) return;
     const s = getSettings();
     // 1.40.1：本会话首次渲染时，把 lbEntrySel 设置水合进内存镜像（书本身已由 lorebookTargets 持久化）。
     // 只做一次——之后内存是唯一真相，否则用户「全选」塌成 null 后会被存档里的旧 Set 顶回来。
-    if (!sharedState.lbSelHydrated) {
+    if (!lbSelHydrated) {
         const saved = s.lbEntrySel;
         if (saved && typeof saved === 'object') {
             for (const [book, arr] of Object.entries(saved)) {
-                if (Array.isArray(arr)) sharedState.lbEntryFilter[book] = new Set(arr);
+                if (Array.isArray(arr)) lbEntryFilter[book] = new Set(arr);
             }
         }
-        sharedState.lbSelHydrated = true;
+        setLbSelHydrated(true);
     }
     let books;
     try {
@@ -749,9 +752,9 @@ async function populateLorebookEntries() {
         // ⚠ 必须 loadOk 才剪：读书失败 / API 拿不到时 entries 是空数组，无条件剪会把整份选择
         // 削成【空 Set＝一条不发】。选择改为持久化后（lbEntrySel），这一下会被写进设置永久生效——
         // 一次偶发的读取失败就能悄悄毁掉用户攒的选择。读不到书时【原样保留】选择，下次读到再剪。
-        if (loadOk && sharedState.lbEntryFilter[name] instanceof Set) {
+        if (loadOk && lbEntryFilter[name] instanceof Set) {
             const valid = new Set(entries.map((e) => e.uid));
-            sharedState.lbEntryFilter[name] = new Set([...sharedState.lbEntryFilter[name]].filter((u) => valid.has(u)));
+            lbEntryFilter[name] = new Set([...lbEntryFilter[name]].filter((u) => valid.has(u)));
         }
         loaded.push({ name, entries });
     }
@@ -784,7 +787,7 @@ async function populateLorebookEntries() {
                 continue;
             }
         }
-        const sel = sharedState.lbEntryFilter[name];   // Set | null (= all)
+        const sel = lbEntryFilter[name];   // Set | null (= all)
         for (const e of entries) {
             const checked = !(sel instanceof Set) || sel.has(e.uid);
             const title = (e.comment && e.comment.trim()) ? e.comment.trim() : '（无标题）';
@@ -811,7 +814,7 @@ async function populateLorebookEntries() {
             list.appendChild(row);
         }
     }
-    const f = sharedState.win.querySelector('#so-lb-entries-filter');
+    const f = win.querySelector('#so-lb-entries-filter');
     if (f && f.value) filterBookEntries('#so-lb-entries-list', f.value, updateLbFilteredBtn);
     refreshLbEntriesSummary();
     updateLbFilteredBtn();
@@ -823,7 +826,7 @@ async function populateLorebookEntries() {
  * （soCallModel 非流式，至多 2 个额外来回，窗口里显式提示每一轮）、预检卡、应用（快照 → 经现有 toggle 机制落选
  * 择态）、一键还原。全程独立于侧聊：不进 convo、不碰〔世界书快照〕。 */
 
-sharedState.smartSelState = null;   // { books, selMap, abort, restore, searched:[], searchHits:number }
+   // { books, selMap, abort, restore, searched:[], searchHits:number }
 
 // 载入本次范围内的书（与选择器同款：resolveLbTargetNames(s.lorebookTargets, all, active)）→ [{name, entries:[raw]}]。
 async function loadSmartSelectBooks() {
@@ -850,13 +853,13 @@ async function loadSmartSelectBooks() {
 // 当前选择态映射（{书名: Set|null}）——直接读内存镜像 lbEntryFilter（缺键 = 全勾）。
 function currentLbSelMap(books) {
     const map = {};
-    for (const b of books) map[b.name] = (sharedState.lbEntryFilter[b.name] !== undefined) ? sharedState.lbEntryFilter[b.name] : null;
+    for (const b of books) map[b.name] = (lbEntryFilter[b.name] !== undefined) ? lbEntryFilter[b.name] : null;
     return map;
 }
 
 // 懒建 overlay + 一次性 wiring（复用 #so-fixsel 的 inset:0 骨架 + .so-warn-x 逃生 + 点遮罩关闭）。
 function buildSmartSelCard() {
-    let el = sharedState.win.querySelector('#so-smartsel');
+    let el = win.querySelector('#so-smartsel');
     if (el) return el;
     el = document.createElement('div');
     el.id = 'so-smartsel';
@@ -867,7 +870,7 @@ function buildSmartSelCard() {
         '<div id="so-smartsel-body"></div>' +
         '<div id="so-smartsel-btns"></div>' +
         '</div>';
-    sharedState.win.appendChild(el);
+    win.appendChild(el);
     const close = () => closeSmartSelect();
     el.addEventListener('click', (e) => { if (e.target === el) close(); });   // 点遮罩关闭
     el.querySelector('.so-warn-x').addEventListener('click', close);
@@ -875,9 +878,9 @@ function buildSmartSelCard() {
 }
 
 function closeSmartSelect() {
-    const el = sharedState.win.querySelector('#so-smartsel');
+    const el = win.querySelector('#so-smartsel');
     if (!el) return;
-    if (sharedState.smartSelState && sharedState.smartSelState.abort) { try { sharedState.smartSelState.abort.abort(); } catch (e) { /* ignore */ } }
+    if (smartSelState && smartSelState.abort) { try { smartSelState.abort.abort(); } catch (e) { /* ignore */ } }
     el.classList.remove('open');
 }
 
@@ -885,12 +888,12 @@ function closeSmartSelect() {
 export async function openSmartSelect() {
     if (!ENABLE_LB_SMART_SELECT) return;
     const el = buildSmartSelCard();
-    sharedState.smartSelState = { books: [], selMap: {}, abort: null, restore: null, searched: [], searchHits: 0 };
+    setSmartSelState({ books: [], selMap: {}, abort: null, restore: null, searched: [], searchHits: 0 });
     el.classList.add('open');
     renderSmartSelInput('读取世界书条目中…', true);
     const books = await loadSmartSelectBooks();
-    sharedState.smartSelState.books = books;
-    sharedState.smartSelState.selMap = currentLbSelMap(books);
+    smartSelState.books = books;
+    smartSelState.selMap = currentLbSelMap(books);
     if (!books.length) {
         renderSmartSelInput('（当前范围内没有可读取的世界书条目——请先在上方勾选某本书。）', true);
         return;
@@ -900,8 +903,8 @@ export async function openSmartSelect() {
 }
 
 // —— 各状态渲染（重画 body + footer）——
-function smartSelBody() { return sharedState.win.querySelector('#so-smartsel-body'); }
-function smartSelBtns() { return sharedState.win.querySelector('#so-smartsel-btns'); }
+function smartSelBody() { return win.querySelector('#so-smartsel-body'); }
+function smartSelBtns() { return win.querySelector('#so-smartsel-btns'); }
 
 function renderSmartSelInput(hintText, disabled) {
     const body = smartSelBody(); const btns = smartSelBtns();
@@ -935,7 +938,7 @@ function renderSmartSelProgress(reset) {
 }
 function smartSelLog(text) {
     renderSmartSelProgress(false);
-    const log = sharedState.win.querySelector('#so-smartsel-log');
+    const log = win.querySelector('#so-smartsel-log');
     if (!log) return;
     const line = document.createElement('div');
     line.className = 'so-smartsel-logline';
@@ -984,13 +987,13 @@ function smartSelLiveClear() {
 
 // 回合编排：调用①（指令 + 目录）→ 有 Select 出预检；只请求则引擎应答后续发；上界 2；round=cap+1 仍不收敛则停。
 async function runSmartSelect(userCommand) {
-    if (!ENABLE_LB_SMART_SELECT || !sharedState.smartSelState || !sharedState.smartSelState.books.length) return;
+    if (!ENABLE_LB_SMART_SELECT || !smartSelState || !smartSelState.books.length) return;
     const s = getSettings();
     const ctl = new AbortController();
-    sharedState.smartSelState.abort = ctl;
+    smartSelState.abort = ctl;
     const timer = setTimeout(() => ctl.abort(), 120000);
-    const books = sharedState.smartSelState.books;
-    const catalog = buildLbCatalog(books, sharedState.smartSelState.selMap);
+    const books = smartSelState.books;
+    const catalog = buildLbCatalog(books, smartSelState.selMap);
     const scopeNames = books.map((b) => b.name);
     let priorResults = '';
     renderSmartSelProgress(true);
@@ -1022,8 +1025,8 @@ async function runSmartSelect(userCommand) {
                 for (const sr of parsed.searches) for (const k of sr.keywords) if (!kws.includes(k)) kws.push(k);
                 const scope = parsed.searches.map((x) => x.scope).find((x) => x && x.length) || null;
                 const res = lbEngineSearch(books, kws, { scope });
-                sharedState.smartSelState.searched = [...new Set([...sharedState.smartSelState.searched, ...res.keywords])];
-                sharedState.smartSelState.searchHits += res.matchedCount;
+                smartSelState.searched = [...new Set([...smartSelState.searched, ...res.keywords])];
+                smartSelState.searchHits += res.matchedCount;
                 smartSelLog('　→ 搜索「' + res.keywords.join(' / ') + '」：命中 ' + res.matchedCount + ' 条');
                 chunks.push(formatLbSearchResult(res));
             }
@@ -1039,7 +1042,7 @@ async function runSmartSelect(userCommand) {
         renderSmartSelStop('error', (err && err.message) || String(err));
     } finally {
         clearTimeout(timer);
-        sharedState.smartSelState.abort = null;
+        smartSelState.abort = null;
     }
 }
 
@@ -1066,14 +1069,14 @@ function renderSmartSelStop(reason, detail) {
 function renderSmartSelPreview(selects, ignoredRequests) {
     const body = smartSelBody(); const btns = smartSelBtns();
     if (!body || !btns) return;
-    const plan = lbResolveSelectPlan(selects, sharedState.smartSelState.books, currentLbSelMap(sharedState.smartSelState.books));
-    sharedState.smartSelState.plan = plan;
+    const plan = lbResolveSelectPlan(selects, smartSelState.books, currentLbSelMap(smartSelState.books));
+    smartSelState.plan = plan;
     body.innerHTML = '';
     // 透明行：AI 搜了什么
-    if (sharedState.smartSelState.searched.length) {
+    if (smartSelState.searched.length) {
         const t = document.createElement('div');
         t.className = 'so-smartsel-searched';
-        t.textContent = '模型搜了：' + sharedState.smartSelState.searched.join(' / ') + '，命中 ' + sharedState.smartSelState.searchHits + ' 条';
+        t.textContent = '模型搜了：' + smartSelState.searched.join(' / ') + '，命中 ' + smartSelState.searchHits + ' 条';
         body.appendChild(t);
     }
     // 摘要
@@ -1130,14 +1133,14 @@ function renderSmartSelPreview(selects, ignoredRequests) {
 // 克隆当前选择态（Set 深拷、null 原样）——快照 / 还原用。
 function cloneLbEntryFilter() {
     const out = {};
-    for (const [k, v] of Object.entries(sharedState.lbEntryFilter)) out[k] = (v && typeof v.forEach === 'function') ? new Set(v) : v;
+    for (const [k, v] of Object.entries(lbEntryFilter)) out[k] = (v && typeof v.forEach === 'function') ? new Set(v) : v;
     return out;
 }
 
 // 应用：先整份快照当前选择态（书集合 + 全部 lbEntrySel）→ 经现有 toggle 机制写入选择器（复用「整本勾满 = 发整本」
 // 与持久化规则）→ 出 [还原]（本次会话内一次性撤销）。
 async function applySmartSelectPlan() {
-    const plan = sharedState.smartSelState && sharedState.smartSelState.plan;
+    const plan = smartSelState && smartSelState.plan;
     if (!plan) return;
     const s = getSettings();
     // 快照：书集合 + 内存选择态 + 已落盘的 lbEntrySel
@@ -1151,16 +1154,16 @@ async function applySmartSelectPlan() {
     // 逐书把选择驱到目标态：设 DOM 复选框 + 内存 Set（仅动计划里的书；其余原样）。
     const desired = new Map();
     for (const pb of plan.perBook) desired.set(pb.book, new Set(pb.finalUids));
-    for (const row of sharedState.win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-lb-entries-list .so-lb-ent')) {
         const book = row.dataset.book || '';
         if (!desired.has(book)) continue;
         const box = row.querySelector('input[type="checkbox"]');
         if (!box) continue;
         box.checked = desired.get(book).has(Number(box.dataset.uid));
     }
-    for (const [book, set] of desired) sharedState.lbEntryFilter[book] = set;   // 满 Set 会被 refresh 塌回 null = 发整本
+    for (const [book, set] of desired) lbEntryFilter[book] = set;   // 满 Set 会被 refresh 塌回 null = 发整本
     refreshLbEntriesSummary();   // 唯一咽喉：归一（满→null）+ 落盘（persistLbEntrySel → save）
-    sharedState.smartSelState.restore = snap;
+    smartSelState.restore = snap;
     renderSmartSelDone(plan);
 }
 
@@ -1179,16 +1182,16 @@ function renderSmartSelDone(plan) {
 
 // 还原：把选择态整份复位（书集合 + lbEntryFilter + lbEntrySel），重渲选择器。
 async function restoreSmartSelectSnapshot() {
-    const snap = sharedState.smartSelState && sharedState.smartSelState.restore;
+    const snap = smartSelState && smartSelState.restore;
     if (!snap) return;
     const s = getSettings();
     s.lorebookTargets = snap.lorebookTargets;
-    for (const k of Object.keys(sharedState.lbEntryFilter)) delete sharedState.lbEntryFilter[k];
-    for (const [k, v] of Object.entries(snap.filter)) sharedState.lbEntryFilter[k] = (v && typeof v.forEach === 'function') ? new Set(v) : v;
+    for (const k of Object.keys(lbEntryFilter)) delete lbEntryFilter[k];
+    for (const [k, v] of Object.entries(snap.filter)) lbEntryFilter[k] = (v && typeof v.forEach === 'function') ? new Set(v) : v;
     s.lbEntrySel = JSON.parse(JSON.stringify(snap.lbEntrySel || {}));
     save();
     await populateLorebookEntries();   // 从复位后的内存态重画复选框 + summary
-    sharedState.smartSelState.restore = null;
+    smartSelState.restore = null;
     const body = smartSelBody(); const btns = smartSelBtns();
     if (body) { body.innerHTML = '<div class="so-smartsel-ok"></div>'; body.querySelector('.so-smartsel-ok').textContent = '已还原到应用前的选择态。'; }
     if (btns) { btns.innerHTML = '<button type="button" class="so-smartsel-btn" id="so-smartsel-done2">关闭</button>'; btns.querySelector('#so-smartsel-done2').addEventListener('click', () => closeSmartSelect()); }

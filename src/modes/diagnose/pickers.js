@@ -1,12 +1,14 @@
 import { deserializeEntrySel, getDiagWiMeta, getWiCustomMeta, persistDiagSel, serializeDiagSel, setDiagWiMeta, setWiCustomMeta, wiCustomChatId } from '../../core/chat-metadata.js';
 import { getSettings } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { addSystemNote } from '../advisor/cards.js';
 import { refreshDiagPickerUI } from '../fix/ui.js';
 import { bookNameMatchesQuery, formatLbSizeEstimate, getActiveBookNames, getActiveScanUids, getAllBookNames, getWiEditApi, lbSizeIsHuge, resolveLbTargetNames, wiCustomEntryCost } from '../lorebook/core.js';
 import { filterBookEntries } from '../lorebook/ui.js';
 import { ENABLE_WI_CUSTOM_PICK } from '../../prompts/builtins.js';
 import { isMvuRuleEntry } from '../../st/adapters.js';
+import { diagEntrySel, nextWiCustomRenderSeq, setDiagEntrySel, wiCustomRenderSeq } from './state.js';
+import { win } from '../../ui/state.js';
 
 /* ---- 诊断模式「精选世界书条目」选条目器（用户功能请求；ENABLE_DIAG_WI_PICKER）----
  * 复用世界书选条目器的视觉（.so-lb-* 类），但语义不同：
@@ -110,7 +112,7 @@ export async function ensureWiCustomSeeded(names, chatId, extraScanText, stillCu
 
 // 填充诊断选条目器的书下拉（与 populateLorebookBooks 同构，但目标存元数据而非设置）。
 export async function populateDiagWiBooks(announce) {
-    const sel = sharedState.win.querySelector('#so-diag-book');
+    const sel = win.querySelector('#so-diag-book');
     if (!sel) return;
     let active = [];
     let all = [];
@@ -131,7 +133,7 @@ export async function populateDiagWiBooks(announce) {
     if (meta.target && all.includes(meta.target)) {
         sel.value = meta.target;
     } else {
-        if (meta.target) setDiagWiMeta({ use: meta.use, hybrid: meta.hybrid, target: '', sel: serializeDiagSel(sharedState.diagEntrySel) });
+        if (meta.target) setDiagWiMeta({ use: meta.use, hybrid: meta.hybrid, target: '', sel: serializeDiagSel(diagEntrySel) });
         sel.value = '';
     }
     updateDiagHint();
@@ -140,7 +142,7 @@ export async function populateDiagWiBooks(announce) {
 }
 
 export function updateDiagHint() {
-    const hint = sharedState.win.querySelector('#so-diag-hint');
+    const hint = win.querySelector('#so-diag-hint');
     if (!hint) return;
     const meta = getDiagWiMeta();
     hint.textContent = meta.target
@@ -150,24 +152,24 @@ export function updateDiagHint() {
 
 // 当前显示的全部行里有多少被勾选 -> 更新条目摘要（直接数复选框，与显式 Set 模型一致）。
 function refreshDiagEntriesSummary() {
-    const rows = [...sharedState.win.querySelectorAll('#so-diag-entries-list .so-lb-ent')];
+    const rows = [...win.querySelectorAll('#so-diag-entries-list .so-lb-ent')];
     const total = rows.length;
     let selected = 0;
     for (const row of rows) {
         const box = row.querySelector('input[type="checkbox"]');
         if (box && box.checked) selected++;
     }
-    const summary = sharedState.win.querySelector('#so-diag-entries-summary');
+    const summary = win.querySelector('#so-diag-entries-summary');
     if (!summary) return;
     summary.textContent = (total && selected >= total) ? `条目：全部（${total}）` : `条目：已选 ${selected} / ${total}`;
 }
 
 // 勾 / 取消单条：显式 Set，缺省从空集合起（绝不「从全选物化」——精选模型默认不选）。
 function toggleDiagEntry(book, uid, checked) {
-    let sel = sharedState.diagEntrySel[book];
+    let sel = diagEntrySel[book];
     if (!(sel instanceof Set)) sel = new Set();
     if (checked) sel.add(Number(uid)); else sel.delete(Number(uid));
-    sharedState.diagEntrySel[book] = sel;
+    diagEntrySel[book] = sel;
     refreshDiagEntriesSummary();
     persistDiagSel();
 }
@@ -175,21 +177,21 @@ function toggleDiagEntry(book, uid, checked) {
 // 全选 / 全不选（仅作用于当前显示的书）。on -> 该书所有显示行的 uid；off -> 空集合。
 export function setAllDiagEntries(on) {
     const perBook = new Map();
-    for (const row of sharedState.win.querySelectorAll('#so-diag-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-diag-entries-list .so-lb-ent')) {
         const book = row.dataset.book || '';
         if (!perBook.has(book)) perBook.set(book, new Set());
         const box = row.querySelector('input[type="checkbox"]');
         if (box) box.checked = on;
         if (on && box) perBook.get(book).add(Number(box.dataset.uid));
     }
-    for (const [book, set] of perBook) sharedState.diagEntrySel[book] = set;
+    for (const [book, set] of perBook) diagEntrySel[book] = set;
     refreshDiagEntriesSummary();
     persistDiagSel();
 }
 
 // 按灯型选：'blue'（常驻）/ 'green'（关键词）/ 'off'（已禁用），跨当前显示的每本书。
 export function setDiagEntriesByType(type) {
-    const rows = [...sharedState.win.querySelectorAll('#so-diag-entries-list .so-lb-ent')];
+    const rows = [...win.querySelectorAll('#so-diag-entries-list .so-lb-ent')];
     if (!rows.length) return;
     const perBook = new Map();
     for (const row of rows) {
@@ -200,7 +202,7 @@ export function setDiagEntriesByType(type) {
         if (box) box.checked = match;
         if (match && box) perBook.get(book).add(Number(box.dataset.uid));
     }
-    for (const [book, set] of perBook) sharedState.diagEntrySel[book] = set;
+    for (const [book, set] of perBook) diagEntrySel[book] = set;
     refreshDiagEntriesSummary();
     persistDiagSel();
 }
@@ -208,7 +210,7 @@ export function setDiagEntriesByType(type) {
 // 「全选筛选」：把选择设为当前筛选后仍可见的那些（每本书各自计算）。
 export function selectFilteredDiagEntries() {
     const perBook = new Map();
-    for (const row of sharedState.win.querySelectorAll('#so-diag-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-diag-entries-list .so-lb-ent')) {
         const book = row.dataset.book || '';
         if (!perBook.has(book)) perBook.set(book, new Set());
         const box = row.querySelector('input[type="checkbox"]');
@@ -216,22 +218,22 @@ export function selectFilteredDiagEntries() {
         if (box) box.checked = visible;
         if (visible && box) perBook.get(book).add(Number(box.dataset.uid));
     }
-    for (const [book, set] of perBook) sharedState.diagEntrySel[book] = set;
+    for (const [book, set] of perBook) diagEntrySel[book] = set;
     refreshDiagEntriesSummary();
     persistDiagSel();
 }
 
 export function updateDiagFilteredBtn() {
-    const btn = sharedState.win.querySelector('#so-diag-filtered');
+    const btn = win.querySelector('#so-diag-filtered');
     if (!btn) return;
-    const f = sharedState.win.querySelector('#so-diag-entries-filter');
+    const f = win.querySelector('#so-diag-entries-filter');
     btn.disabled = !(f && f.value && f.value.trim());
 }
 
 // 渲染条目清单：勾选态来自 diagEntrySel（显式 Set；未选即未勾）。单本目标 -> 仅该书；否则按激活书分组。
 export async function populateDiagWiEntries() {
-    const box = sharedState.win.querySelector('#so-diag-entries');
-    const list = sharedState.win.querySelector('#so-diag-entries-list');
+    const box = win.querySelector('#so-diag-entries');
+    const list = win.querySelector('#so-diag-entries-list');
     if (!box || !list) return;
     const target = getDiagWiMeta().target;
     let books;
@@ -254,9 +256,9 @@ export async function populateDiagWiEntries() {
             }
         } catch (e) { /* leave empty */ }
         // 清理失效 uid（条目可能已变）。
-        if (sharedState.diagEntrySel[name] instanceof Set) {
+        if (diagEntrySel[name] instanceof Set) {
             const valid = new Set(entries.map((e) => Number(e.uid)));
-            sharedState.diagEntrySel[name] = new Set([...sharedState.diagEntrySel[name]].filter((u) => valid.has(Number(u))));
+            diagEntrySel[name] = new Set([...diagEntrySel[name]].filter((u) => valid.has(Number(u))));
         }
         loaded.push({ name, entries });
     }
@@ -289,7 +291,7 @@ export async function populateDiagWiEntries() {
                 continue;
             }
         }
-        const set = sharedState.diagEntrySel[name];   // Set（精选模型：未选即未勾，无 null=全选惯例）
+        const set = diagEntrySel[name];   // Set（精选模型：未选即未勾，无 null=全选惯例）
         for (const e of entries) {
             const checked = (set instanceof Set) && set.has(Number(e.uid));
             const title = (e.comment && e.comment.trim()) ? e.comment.trim() : '（无标题）';
@@ -307,7 +309,7 @@ export async function populateDiagWiEntries() {
             list.appendChild(row);
         }
     }
-    const f = sharedState.win.querySelector('#so-diag-entries-filter');
+    const f = win.querySelector('#so-diag-entries-filter');
     if (f && f.value) filterBookEntries('#so-diag-entries-list', f.value, updateDiagFilteredBtn);
     refreshDiagEntriesSummary();
     updateDiagFilteredBtn();
@@ -315,14 +317,14 @@ export async function populateDiagWiEntries() {
 
 // L2 混合开关 + 选条目区只在 L1 开启后显示。
 export function reflectDiagPickerVisible(on) {
-    const bar = sharedState.win && sharedState.win.querySelector('#so-diag-bar');
+    const bar = win && win.querySelector('#so-diag-bar');
     if (bar) bar.classList.toggle('so-diag-usesel-on', !!on);
 }
 
 // 🔁 重试子选项（次数 + 三枚分类）只在主开关开启后显示——照抄上面 reflectDiagPickerVisible
 // 的 class 切换法（CSS 里 #so-diag-bar.so-diag-retry-on #so-diag-retry-opts 才 display:flex）。
 export function reflectDiagRetryVisible() {
-    const bar = sharedState.win && sharedState.win.querySelector('#so-diag-bar');
+    const bar = win && win.querySelector('#so-diag-bar');
     if (bar) bar.classList.toggle('so-diag-retry-on', !!getSettings().autoDiagnoseRetry);
 }
 
@@ -330,11 +332,11 @@ export function reflectDiagRetryVisible() {
 export async function onDiagUseSelToggle(on) {
     const meta = getDiagWiMeta();
     if (on && !Object.keys(meta.sel || {}).length) {
-        try { sharedState.diagEntrySel = await computeDiagSnapshot(); } catch (e) { sharedState.diagEntrySel = {}; }
+        try { setDiagEntrySel(await computeDiagSnapshot()); } catch (e) { setDiagEntrySel({}); }
     } else {
-        sharedState.diagEntrySel = deserializeEntrySel(meta.sel);
+        setDiagEntrySel(deserializeEntrySel(meta.sel));
     }
-    setDiagWiMeta({ use: on, hybrid: meta.hybrid, target: meta.target, sel: serializeDiagSel(sharedState.diagEntrySel) });
+    setDiagWiMeta({ use: on, hybrid: meta.hybrid, target: meta.target, sel: serializeDiagSel(diagEntrySel) });
     reflectDiagPickerVisible(on);
     if (on) await populateDiagWiBooks();
     addSystemNote(on
@@ -345,7 +347,7 @@ export async function onDiagUseSelToggle(on) {
 // L2（混合模式）切换：只改 hybrid 标志（影响喂料，不改选条目视图）。
 export function onDiagHybridToggle(on) {
     const meta = getDiagWiMeta();
-    setDiagWiMeta({ use: meta.use, hybrid: on, target: meta.target, sel: serializeDiagSel(sharedState.diagEntrySel) });
+    setDiagWiMeta({ use: meta.use, hybrid: on, target: meta.target, sel: serializeDiagSel(diagEntrySel) });
     addSystemNote(on
         ? '已开启混合模式：除了你精选的条目，诊断还会带上主聊天此刻触发的绿灯条目。'
         : '已关闭混合模式：只喂你精选的条目。');
@@ -353,7 +355,7 @@ export function onDiagHybridToggle(on) {
 
 // 把本聊天保存的诊断选择载入内存 + 刷新选条目器 UI（在 onChatChanged 调用，随聊天切换）。
 export function loadDiagSelForChat() {
-    sharedState.diagEntrySel = deserializeEntrySel(getDiagWiMeta().sel);
+    setDiagEntrySel(deserializeEntrySel(getDiagWiMeta().sel));
     refreshDiagPickerUI();
 }
 
@@ -361,10 +363,10 @@ export function loadDiagSelForChat() {
 /* ---- 🌐 世界书范围「自定义」选书 / 选条目器（1.81.0，ENABLE_WI_CUSTOM_PICK）----
  * 视觉复用 .so-lb-*；状态只有 metadata（无镜像）。每个含 await 的函数起手取 chatId + 递增序号，await 后核对：
  * 不符 = 聊天已切走或有更新一趟 → 既不画 DOM 也不写 metadata。选书变化只改 meta.books；代码绝不改写它（已删的书只是解析不到）。 */
-sharedState.wiCustomRenderSeq = 0;
+
 
 function updateWiCustomHint(state) {
-    const hint = sharedState.win && sharedState.win.querySelector('#so-wic-hint');
+    const hint = win && win.querySelector('#so-wic-hint');
     if (!hint) return;
     hint.textContent = state === 'nochat' ? '当前没有打开聊天，无法记忆选择'
         : state === 'iofail' ? '世界书读取失败，选择未改动'
@@ -372,27 +374,27 @@ function updateWiCustomHint(state) {
 }
 
 function updateWiCustomBookSummary(meta) {
-    const sum = sharedState.win && sharedState.win.querySelector('#so-wic-bookpick-sum');
+    const sum = win && win.querySelector('#so-wic-bookpick-sum');
     if (!sum) return;
     const n = meta && Array.isArray(meta.books) ? meta.books.length : 0;
     sum.textContent = n ? `已选 ${n} 本世界书` : '全部激活的世界书';
 }
 
 function wiCustomHideEntries() {
-    const box = sharedState.win && sharedState.win.querySelector('#so-wic-entries');
+    const box = win && win.querySelector('#so-wic-entries');
     if (box) box.classList.remove('shown');
 }
 
 // 填清单（含 ★ 激活标记、勾选态、混合勾选框回填），再填条目。枚举失败：保留上次清单、只亮提示、不改 meta。
 export async function populateWiCustomBooks(announce) {
-    const listEl = sharedState.win && sharedState.win.querySelector('#so-wic-book-list');
+    const listEl = win && win.querySelector('#so-wic-book-list');
     if (!listEl) return;
     const chatId = wiCustomChatId();
-    const seq = ++sharedState.wiCustomRenderSeq;
+    const seq = nextWiCustomRenderSeq();
     listEl.dataset.chat = '';   // 重画期间旧行不许写（onWiCustomBookChange 核对此戳）
     const meta = getWiCustomMeta();
     if (!meta) { listEl.innerHTML = ''; updateWiCustomBookSummary(null); updateWiCustomHint('nochat'); wiCustomHideEntries(); return; }
-    const hyb = sharedState.win.querySelector('#so-wic-hybrid');
+    const hyb = win.querySelector('#so-wic-hybrid');
     if (hyb) hyb.checked = meta.hybrid;
     let active = [];
     let all = [];
@@ -401,7 +403,7 @@ export async function populateWiCustomBooks(announce) {
         if (!(await getWiEditApi())) ok = false;   // 模块缺席：getActiveBookNames / getAllBookNames 只会静默回空，不能当「没有书」
         else [active, all] = await Promise.all([getActiveBookNames(), getAllBookNames()]);
     } catch (e) { ok = false; }
-    if (seq !== sharedState.wiCustomRenderSeq || chatId !== wiCustomChatId()) return;
+    if (seq !== wiCustomRenderSeq || chatId !== wiCustomChatId()) return;
     if (!ok) { updateWiCustomHint('iofail'); return; }
     const chosen = new Set(meta.books);
     const activeSet = new Set(active);
@@ -420,7 +422,7 @@ export async function populateWiCustomBooks(announce) {
         }
     }
     listEl.dataset.chat = String(chatId);
-    const bf = sharedState.win.querySelector('#so-wic-book-filter');
+    const bf = win.querySelector('#so-wic-book-filter');
     if (bf && bf.value) filterWiCustomBooks(bf.value);
     updateWiCustomBookSummary(meta);
     updateWiCustomHint('ok');
@@ -432,10 +434,10 @@ export async function populateWiCustomBooks(announce) {
 function onWiCustomBookChange() {
     const meta = getWiCustomMeta();
     if (!meta) return;
-    const listEl = sharedState.win.querySelector('#so-wic-book-list');
+    const listEl = win.querySelector('#so-wic-book-list');
     if (!listEl || listEl.dataset.chat !== String(wiCustomChatId())) return;   // 清单还是别的聊天的 / 正在重画：旧行不许写
     const picked = [];
-    for (const box of sharedState.win.querySelectorAll('#so-wic-book-list input[type="checkbox"]')) {
+    for (const box of win.querySelectorAll('#so-wic-book-list input[type="checkbox"]')) {
         if (box.checked) {
             const row = box.closest('.so-lb-book-opt');
             if (row && row.dataset.book) picked.push(row.dataset.book);
@@ -448,7 +450,7 @@ function onWiCustomBookChange() {
 
 // 全选只勾【可见】行（筛选后别把整库勾进来）；全不选 = [] = 跟随激活。
 export function setAllWiCustomBooks(on) {
-    for (const row of sharedState.win.querySelectorAll('#so-wic-book-list .so-lb-book-opt')) {
+    for (const row of win.querySelectorAll('#so-wic-book-list .so-lb-book-opt')) {
         const box = row.querySelector('input[type="checkbox"]');
         if (!box) continue;
         if (on) { if (row.style.display !== 'none') box.checked = true; }
@@ -459,7 +461,7 @@ export function setAllWiCustomBooks(on) {
 
 // 书名筛选：纯显隐，绝不改选择。
 export function filterWiCustomBooks(q) {
-    const list = sharedState.win.querySelector('#so-wic-book-list');
+    const list = win.querySelector('#so-wic-book-list');
     if (!list) return;
     let anyRow = false;
     let anyVisible = false;
@@ -469,17 +471,17 @@ export function filterWiCustomBooks(q) {
         row.style.display = show ? '' : 'none';
         if (show) anyVisible = true;
     }
-    const empty = sharedState.win.querySelector('#so-wic-book-empty');
+    const empty = win.querySelector('#so-wic-book-empty');
     if (empty) empty.hidden = !(anyRow && !anyVisible);
 }
 
 // 渲染条目清单：解析范围 → 播种无键的书 → 逐本读（读失败 = 该书行区显示「读取失败」、其键不动）→ 行带 data-book/uid/type/hay/tok。
 async function populateWiCustomEntries() {
-    const box = sharedState.win && sharedState.win.querySelector('#so-wic-entries');
-    const list = sharedState.win && sharedState.win.querySelector('#so-wic-entries-list');
+    const box = win && win.querySelector('#so-wic-entries');
+    const list = win && win.querySelector('#so-wic-entries-list');
     if (!box || !list) return;
     const chatId = wiCustomChatId();
-    const seq = ++sharedState.wiCustomRenderSeq;
+    const seq = nextWiCustomRenderSeq();
     list.dataset.chat = '';   // 重画期间勾选不许写（persistWiCustomSel 核对此戳）
     let meta = getWiCustomMeta();
     if (!meta) { box.classList.remove('shown'); return; }
@@ -488,12 +490,12 @@ async function populateWiCustomEntries() {
         const [allNames, activeNames] = await Promise.all([getAllBookNames(), getActiveBookNames()]);
         names = resolveLbTargetNames(meta.books, allNames, activeNames);
     } catch (e) { names = []; }
-    if (seq !== sharedState.wiCustomRenderSeq || chatId !== wiCustomChatId()) return;
+    if (seq !== wiCustomRenderSeq || chatId !== wiCustomChatId()) return;
     if (!names.length) { box.classList.remove('shown'); list.innerHTML = ''; refreshWiCustomSummary(); return; }
     box.classList.add('shown');
     list.innerHTML = '<div class="so-lb-ent-empty">读取条目中…</div>';
-    meta = (await ensureWiCustomSeeded(names, chatId, undefined, () => seq === sharedState.wiCustomRenderSeq)) || meta;
-    if (seq !== sharedState.wiCustomRenderSeq || chatId !== wiCustomChatId()) return;
+    meta = (await ensureWiCustomSeeded(names, chatId, undefined, () => seq === wiCustomRenderSeq)) || meta;
+    if (seq !== wiCustomRenderSeq || chatId !== wiCustomChatId()) return;
     const mod = await getWiEditApi();
     const loaded = [];   // [{ name, entries | null }]（null = 读失败）
     for (const name of names) {
@@ -508,7 +510,7 @@ async function populateWiCustomEntries() {
         } catch (e) { entries = null; }
         loaded.push({ name, entries });
     }
-    if (seq !== sharedState.wiCustomRenderSeq || chatId !== wiCustomChatId()) return;
+    if (seq !== wiCustomRenderSeq || chatId !== wiCustomChatId()) return;
     // 成功读到的书：把已不存在的 uid 从选择里剪掉——ST 新建条目会复用最小空闲 uid，不剪就会把没勾过的新条目发出去（astra F3）；
     // 读失败的书不动；成功但空的书留显式 []。
     {
@@ -521,7 +523,7 @@ async function populateWiCustomEntries() {
             const next = cur.map(Number).filter((u) => valid.has(u));
             if (next.length !== cur.length) { pruned[name] = next; changed = true; }
         }
-        if (changed && seq === sharedState.wiCustomRenderSeq && chatId === wiCustomChatId()) {
+        if (changed && seq === wiCustomRenderSeq && chatId === wiCustomChatId()) {
             setWiCustomMeta({ books: meta.books, hybrid: meta.hybrid, sel: pruned });
             meta = getWiCustomMeta() || meta;
         }
@@ -570,7 +572,7 @@ async function populateWiCustomEntries() {
             list.appendChild(row);
         }
     }
-    const f = sharedState.win.querySelector('#so-wic-entries-filter');
+    const f = win.querySelector('#so-wic-entries-filter');
     if (f && f.value) filterBookEntries('#so-wic-entries-list', f.value, updateWiCustomFilteredBtn);
     refreshWiCustomSummary();
     updateWiCustomFilteredBtn();
@@ -579,7 +581,7 @@ async function populateWiCustomEntries() {
 // 已渲染的行 → { 书名: Set<uid> }（只含【显示中】的书；未显示的书键在持久化时原样保留）。
 function wiCustomSelFromRows() {
     const out = Object.create(null);
-    for (const row of sharedState.win.querySelectorAll('#so-wic-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-wic-entries-list .so-lb-ent')) {
         const book = row.dataset.book || '';
         const box = row.querySelector('input[type="checkbox"]');
         if (!box) continue;
@@ -601,9 +603,9 @@ function persistWiCustomSel(chatId) {
 
 // 摘要：已选 n / N · 约 X token（只按勾选行的正文成本求和；超 10 万标红）。
 function refreshWiCustomSummary() {
-    const summary = sharedState.win && sharedState.win.querySelector('#so-wic-entries-summary');
+    const summary = win && win.querySelector('#so-wic-entries-summary');
     if (!summary) return;
-    const rows = [...sharedState.win.querySelectorAll('#so-wic-entries-list .so-lb-ent')];
+    const rows = [...win.querySelectorAll('#so-wic-entries-list .so-lb-ent')];
     let selected = 0;
     let tok = 0;
     for (const row of rows) {
@@ -622,7 +624,7 @@ function refreshWiCustomSummary() {
 
 // 渲染时钉在清单上的聊天 id（改选路径用它做归属钉，不重新读——读到的可能已是别的聊天）。
 function wiCustomListChatId() {
-    const list = sharedState.win && sharedState.win.querySelector('#so-wic-entries-list');
+    const list = win && win.querySelector('#so-wic-entries-list');
     return list && list.dataset.chat ? list.dataset.chat : null;
 }
 
@@ -632,7 +634,7 @@ function toggleWiCustomEntry() {
 }
 
 export function setAllWiCustomEntries(on) {
-    for (const row of sharedState.win.querySelectorAll('#so-wic-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-wic-entries-list .so-lb-ent')) {
         const box = row.querySelector('input[type="checkbox"]');
         if (box) box.checked = on;
     }
@@ -641,7 +643,7 @@ export function setAllWiCustomEntries(on) {
 
 // 按灯型：'blue' / 'green' / 'off'——替换当前显示各书的选择。
 export function setWiCustomEntriesByType(type) {
-    for (const row of sharedState.win.querySelectorAll('#so-wic-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-wic-entries-list .so-lb-ent')) {
         const box = row.querySelector('input[type="checkbox"]');
         if (box) box.checked = row.dataset.type === type;
     }
@@ -650,7 +652,7 @@ export function setWiCustomEntriesByType(type) {
 
 // 全选筛选：选择 = 当前筛选后仍可见的行（被筛掉的一律不选）。
 export function selectFilteredWiCustomEntries() {
-    for (const row of sharedState.win.querySelectorAll('#so-wic-entries-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#so-wic-entries-list .so-lb-ent')) {
         const box = row.querySelector('input[type="checkbox"]');
         if (box) box.checked = row.style.display !== 'none';
     }
@@ -658,15 +660,15 @@ export function selectFilteredWiCustomEntries() {
 }
 
 export function updateWiCustomFilteredBtn() {
-    const btn = sharedState.win.querySelector('#so-wic-filtered');
+    const btn = win.querySelector('#so-wic-filtered');
     if (!btn) return;
-    const f = sharedState.win.querySelector('#so-wic-entries-filter');
+    const f = win.querySelector('#so-wic-entries-filter');
     btn.disabled = !(f && f.value && f.value.trim());
 }
 
 // 切聊天 / 开设置面板：下拉是「自定义」就按【当前聊天】重画（清单自己读 metadata）。
 export function refreshWiCustomUI() {
-    if (!sharedState.win || !ENABLE_WI_CUSTOM_PICK) return;
-    const sel = sharedState.win.querySelector('#so-wi');
+    if (!win || !ENABLE_WI_CUSTOM_PICK) return;
+    const sel = win.querySelector('#so-wi');
     if (sel && sel.value === 'custom') populateWiCustomBooks(false);
 }

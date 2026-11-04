@@ -1,24 +1,25 @@
 import { getCtx } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { REASONING_TAGS } from '../chat/context.js';
 import { mvuMsgOpts } from './auto.js';
 import { MVU_BLOCK_DIALECTS } from '../../prompts/builtins.js';
 import { detectMvuBlockDialect, mvuBlockRegex, mvuDialectInnerOk } from '../../prompts/helpers.js';
+import { mvuApi, setMvuApi } from '../../st/runtime-state.js';
 
 /* ------------------------------------------------------------------ *
  * MVU（MagVarUpdate）集成 —— 普通聊天 / 参谋附带当前变量状态（stat_data）用，只读。
  * ------------------------------------------------------------------ */
 export async function getMvu() {
-    if (sharedState.mvuApi) return sharedState.mvuApi;
-    if (window.Mvu) { sharedState.mvuApi = window.Mvu; return sharedState.mvuApi; }
+    if (mvuApi) return mvuApi;
+    if (window.Mvu) { setMvuApi(window.Mvu); return mvuApi; }
     const th = window.TavernHelper;
     if (th && typeof th.waitGlobalInitialized === 'function') {
         try {
-            sharedState.mvuApi = await Promise.race([
+            setMvuApi(await Promise.race([
                 th.waitGlobalInitialized('Mvu'),
                 new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
-            ]);
-            if (sharedState.mvuApi) return sharedState.mvuApi;
+            ]));
+            if (mvuApi) return mvuApi;
         } catch (e) { /* fall through */ }
     }
     return window.Mvu || null;

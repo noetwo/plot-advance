@@ -1,6 +1,6 @@
 import { deserializeEntrySel, getDiagWiMeta, getSummary } from '../../core/chat-metadata.js';
 import { getCtx, getSettings } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { builderDraftRefBlock, getBuilderState } from '../advisor/metadata.js';
 import { buildBbsHistorySection, buildCardSection, buildLwbHistorySection, buildSummarySection, buildTranscript, getBbsHistoryText, getLwbSummaryText, renderMarkdownOnly } from '../chat/context.js';
 import { activeUidsFromScan, mergeHybridUids } from '../fix/templates.js';
@@ -13,6 +13,8 @@ import { foldExtraScanText, getWiScanBudget, isMvuRuleEntry, loadWorldInfoModule
 import { locateTagOpen } from '../../ui/messages.js';
 import { escapeHtml } from '../../ui/mode-shell.js';
 import { presetCurationActive } from '../../ui/settings.js';
+import { bldBookNames, bldContextText, bldEntryFilter, bldScanWiText, bldStatData, setBldBookNames, setBldContextText, setBldScanWiText } from '../builder/state.js';
+import { lbBookNames, lbContextText, lbEntryFilter, setLbBookNames, setLbContextText } from './state.js';
 
 /* ------------------------------------------------------------------ *
  * 诊断模式「精选世界书条目」喂料（用户功能请求；总开关 ENABLE_DIAG_WI_PICKER）。
@@ -421,21 +423,21 @@ export function wiCustomEntryCost(e) {
  * the books fresh — so this is purely a read for context.
  */
 export async function buildLorebookContext() {
-    sharedState.lbContextText = '';
-    sharedState.lbBookNames = [];
+    setLbContextText('');
+    setLbBookNames([]);
     const s = getSettings();
     const mod = await getWiEditApi();
     if (!mod) {
-        sharedState.lbContextText = '（无法访问世界书模块 —— 当前 ST 版本可能不支持。）';
+        setLbContextText('（无法访问世界书模块 —— 当前 ST 版本可能不支持。）');
         return;
     }
 
     const [allNames, activeNames] = await Promise.all([getAllBookNames(), getActiveBookNames()]);
     const names = resolveLbTargetNames(s.lorebookTargets, allNames, activeNames);
     if (!names.length) {
-        sharedState.lbContextText = (Array.isArray(s.lorebookTargets) && s.lorebookTargets.length)
+        setLbContextText((Array.isArray(s.lorebookTargets) && s.lorebookTargets.length)
             ? '（选中的世界书都找不到了。请在上方重新勾选，或点刷新。）'
-            : '（当前没有激活任何世界书。可在上方勾选某一本来编辑。）';
+            : '（当前没有激活任何世界书。可在上方勾选某一本来编辑。）');
         return;
     }
 
@@ -445,7 +447,7 @@ export async function buildLorebookContext() {
         let data;
         try { data = await mod.loadWorldInfo(name); } catch (e) { continue; }
         if (!data || !data.entries) continue;
-        sharedState.lbBookNames.push(name);
+        lbBookNames.push(name);
         let entries = Object.values(data.entries)
             .sort((a, b) => (Number(a.displayIndex ?? a.uid) - Number(b.displayIndex ?? b.uid)));
         const total = entries.length;
@@ -453,7 +455,7 @@ export async function buildLorebookContext() {
         // filter is keyed by book name either way. A Set (even empty) means "send
         // exactly these"; null/absent means "send all". Apply still re-reads the
         // whole book, so editing any uid keeps working.
-        const sel = sharedState.lbEntryFilter[name];
+        const sel = lbEntryFilter[name];
         const filtered = (sel instanceof Set);
         if (filtered) entries = entries.filter((e) => sel.has(e.uid));
         const body = entries.length
@@ -465,7 +467,7 @@ export async function buildLorebookContext() {
         blocks.push(`${head}\n${body}`);
     }
 
-    sharedState.lbContextText = blocks.join('\n\n') || '（未能读取到任何世界书条目。）';
+    setLbContextText(blocks.join('\n\n') || '（未能读取到任何世界书条目。）');
     // Show entry content VERBATIM — do NOT substituteParams it. The lore manager EDITS
     // these books, and macros ({{user}}/{{char}} …) are stored literally. The old
     // behavior expanded them "for readability", so the model anchored on the persona /
@@ -473,7 +475,7 @@ export async function buildLorebookContext() {
     // apply (lbFuzzyReplace matches the literal content loadWorldInfo returns), and it
     // risked baking the name into the book. Instead, keep it literal and prepend a small
     // legend giving the macro values, so chat stays readable without touching content.
-    if (sharedState.lbContextText.indexOf('{{') !== -1) {
+    if (lbContextText.indexOf('{{') !== -1) {
         const pairs = [];
         try {
             const u = ctx.substituteParams('{{user}}');
@@ -482,19 +484,19 @@ export async function buildLorebookContext() {
             if (c && c !== '{{char}}') pairs.push(`{{char}} = 「${c}」`);
         } catch (e) { /* no ctx — skip the name mapping, keep the literal-macro note */ }
         const names = pairs.length ? `当前 ${pairs.join('、')}。` : '';
-        sharedState.lbContextText = P('lb.macroLegend', { names }, s) + '\n\n' + sharedState.lbContextText;
+        setLbContextText(P('lb.macroLegend', { names }, s) + '\n\n' + lbContextText);
     }
 }
 
 // 角色工坊上下文：勾选的世界书条目【原样】投喂 + 宏说明（与世界书模式同规则，不 substituteParams——
 // 补丁锚点要对上字面 {{user}}/{{char}}）。自成一份、不动 buildLorebookContext；选书走 s.bldBooks、选条目走 bldEntryFilter。
 export async function buildBuilderContext() {
-    sharedState.bldContextText = '';
-    sharedState.bldScanWiText = '';
-    sharedState.bldBookNames = [];
+    setBldContextText('');
+    setBldScanWiText('');
+    setBldBookNames([]);
     const s = getSettings();
     const mod = await getWiEditApi();
-    if (!mod) { sharedState.bldContextText = '（无法访问世界书模块。）'; return; }
+    if (!mod) { setBldContextText('（无法访问世界书模块。）'); return; }
     const [allNames, activeNames] = await Promise.all([getAllBookNames(), getActiveBookNames()]);
     const names = resolveLbTargetNames(s.bldBooks, allNames, activeNames);
     const blocks = [];
@@ -502,23 +504,23 @@ export async function buildBuilderContext() {
         let data;
         try { data = await mod.loadWorldInfo(name); } catch (e) { continue; }
         if (!data || !data.entries) continue;
-        sharedState.bldBookNames.push(name);
+        bldBookNames.push(name);
         let entries = Object.values(data.entries)
             .sort((a, b) => (Number(a.displayIndex ?? a.uid) - Number(b.displayIndex ?? b.uid)));
         const total = entries.length;
         // 1.82.0：唯一的选择规则（缺键 / null = 全部【启用】的；显式 Set = 恰好这些，禁用也发）。
         // 抬头的「共 M 条」仍报全书条数——收窄了多少一眼可见。
-        entries = bldPickFedEntries(entries, sharedState.bldEntryFilter[name]);
+        entries = bldPickFedEntries(entries, bldEntryFilter[name]);
         if (!entries.length) continue;
         blocks.push(`=== 世界书：${name}（已选 ${entries.length} / 共 ${total} 条）===\n` + entries.map(lbFormatEntry).join('\n\n'));
     }
-    sharedState.bldContextText = blocks.join('\n\n');
-    sharedState.bldScanWiText = await buildBldScanWiText(s);   // opt-in（bldScanWi 关时空串）
+    setBldContextText(blocks.join('\n\n'));
+    setBldScanWiText(await buildBldScanWiText(s));   // opt-in（bldScanWi 关时空串）
     // 宏未替换说明：两块（选条目 + 关键词命中）合并判定，注在第一块非空块头上（原样投喂共同的说明）。
-    if ((sharedState.bldContextText + sharedState.bldScanWiText).indexOf('{{') !== -1) {
+    if ((bldContextText + bldScanWiText).indexOf('{{') !== -1) {
         const macroNote = P('bld.macroNote', null, s) + '\n\n';
-        if (sharedState.bldContextText) sharedState.bldContextText = macroNote + sharedState.bldContextText;
-        else sharedState.bldScanWiText = macroNote + sharedState.bldScanWiText;
+        if (bldContextText) setBldContextText(macroNote + bldContextText);
+        else setBldScanWiText(macroNote + bldScanWiText);
     }
 }
 
@@ -536,8 +538,8 @@ async function buildBldScanWiText(s) {
         for (const name of Object.keys(active)) {
             let data; try { data = await mod.loadWorldInfo(name); } catch (e) { continue; }
             if (!data || !data.entries) continue;
-            const fedWholeBook = sharedState.bldBookNames.includes(name) && !(sharedState.bldEntryFilter[name] instanceof Set);
-            const sel = sharedState.bldBookNames.includes(name) ? sharedState.bldEntryFilter[name] : null;
+            const fedWholeBook = bldBookNames.includes(name) && !(bldEntryFilter[name] instanceof Set);
+            const sel = bldBookNames.includes(name) ? bldEntryFilter[name] : null;
             const entries = Object.values(data.entries)
                 .filter((e) => e && active[name].has(Number(e.uid)) && !e.disable && typeof e.content === 'string' && e.content.trim())
                 .filter((e) => !(fedWholeBook || (sel instanceof Set && sel.has(e.uid))))          // 已在 bldContextText 里 → 剔除
@@ -570,9 +572,9 @@ export function buildBuilderPrompt(ctx, s) {
     // 访谈阶段（无草稿）此块为空 = filter(Boolean) 滤掉，行为不变。
     parts.push(builderDraftRefBlock(getBuilderState()?.draft));
     parts.push(buildCardSection(ctx));
-    if (sharedState.bldContextText) parts.push(P('bld.wi', { wi: sharedState.bldContextText }, s));
-    if (sharedState.bldScanWiText) parts.push(P('bld.scanWi', { wi: sharedState.bldScanWiText }, s));
-    if (sharedState.bldStatData) parts.push(P('bld.stat', { stat: sharedState.bldStatData }, s));
+    if (bldContextText) parts.push(P('bld.wi', { wi: bldContextText }, s));
+    if (bldScanWiText) parts.push(P('bld.scanWi', { wi: bldScanWiText }, s));
+    if (bldStatData) parts.push(P('bld.stat', { stat: bldStatData }, s));
     if (s.bldIncludeSummary) {
         const sum = buildSummarySection(getSummary());
         if (sum) parts.push(sum);
@@ -600,9 +602,9 @@ export function buildForgeMessages(ctx, s, brief) {
     parts.push(builderSectionsLine(s));
     if (s.bldDlgRich) parts.push(P('bld.dlgRich', null, s));
     parts.push(buildCardSection(ctx));
-    if (sharedState.bldContextText) parts.push(P('bld.forgeWi', { wi: sharedState.bldContextText }, s));
-    if (sharedState.bldScanWiText) parts.push(P('bld.forgeScanWi', { wi: sharedState.bldScanWiText }, s));
-    if (sharedState.bldStatData) parts.push(P('bld.stat', { stat: sharedState.bldStatData }, s));
+    if (bldContextText) parts.push(P('bld.forgeWi', { wi: bldContextText }, s));
+    if (bldScanWiText) parts.push(P('bld.forgeScanWi', { wi: bldScanWiText }, s));
+    if (bldStatData) parts.push(P('bld.stat', { stat: bldStatData }, s));
     if (s.bldIncludeSummary) {
         const sum = buildSummarySection(getSummary());
         if (sum) parts.push(sum);
@@ -796,53 +798,6 @@ const LB_SMART_SEARCH_EXCERPT_CAP = 3;    // 每条目最多几段摘录
 const LB_SMART_CATALOG_SLICE = 120;       // 目录里「正文起始」切片字数
 const LB_SMART_EXCERPT_PAD = 20;          // 搜索摘录：命中词两侧各取多少字
 
-// 喂给模型的指令提示词。中文、家规口吻；【绝不含反引号】（本身是模板字符串，内嵌反引号 = SyntaxError），
-// 内联字面一律用「」。三块文法与引擎解析器（parseLbSearch/Fetch/SelectBlocks）逐字对齐。
-export const LB_SMART_SELECT_PROMPT = [
-    '你是《剧情推进》世界书选择器里的「智能选条」助手。用户会用自然语言下一条勾选指令（例如「把讲战争线的绿灯条目全勾上」',
-    '「取消所有涉及感情戏的」「勾上包含某某设定的那几本书」）。你的唯一职责：产出一份【勾选计划】，指明每本书要勾选 / 取消勾选',
-    '哪些条目。',
-    '',
-    '【硬边界】你只能【改动勾选状态】，绝不编辑、新增、删除任何条目内容。「删掉讲 X 的条目」这类指令不在你职责内——请在计划外',
-    '用一句话告诉用户「这是内容编辑，请到世界书聊天模式正常提改动」，不要试图用勾选去实现它。',
-    '',
-    '【你拿到的目录】下方〔条目目录〕按书分组，每条一行，含：uid、当前勾选态（✔已勾 / ✖未勾）、灯色（🔵蓝灯·常驻 /',
-    '🟢绿灯 / ⚫已禁用）、组、标题、关键词、正文首约 120 字。表头「已勾 X / 共 N 条」告诉你这本书当前的精选状态。',
-    '「取消勾选所有…」类指令要靠这里的✔/✖来判断动谁。',
-    '',
-    '【两个免费原语——不确定时先用，别硬猜】目录只给正文开头，若判断某条「到底讲不讲某事」需要看更多，你可以先发下面的块',
-    '（一次回复可发多个；发了就【本轮先不出勾选计划】，引擎会把结果回给你，你下一轮再定）：',
-    '',
-    '· 机械扫描正文（免费、瞬时）：',
-    '<LorebookSearch>',
-    'keywords: 战争, 联赛, 兽潮',
-    'scope: 雨宫家, 学园',
-    '</LorebookSearch>',
-    'keywords 是逗号分隔的【字面子串】（大小写 / 全半角不敏感；【不接受正则】——普通词就够）。scope 可选、限定在哪些书里搜，',
-    '缺省 = 全部范围内的书。引擎回你「哪些条目命中了、每条几段带上下文的摘录」。',
-    '',
-    '· 取整条原文（当摘录仍拿不准时，点名要几条全文）：',
-    '<LorebookFetch>',
-    'uid: 12, 13',
-    'book: 雨宫家',
-    '</LorebookFetch>',
-    'uid 逗号分隔（必填）；book 可选（缺省时引擎按持有该 uid 的书自己找）。引擎回你这几条的【逐字原文】。',
-    '',
-    '【最终动作——勾选计划】想清楚后，用下面的块给出计划（一本书一块，可多块）：',
-    '<LorebookSelect>',
-    'book: 雨宫家',
-    'select: 12, 17, 24',
-    'deselect: 5, 8',
-    'reason-12: 正文直述战争线主将',
-    'reason-5: 纯感情戏支线',
-    '</LorebookSelect>',
-    'select / deselect 至少给一个，值是 uid 列表；要整本勾满 / 整本取消用「select: 全部」/「deselect: 全部」。',
-    'reason-<uid> 可选，一行简短理由（会显示在给用户的预检卡上，帮用户判断你选得对不对）。只用目录里真实存在的 uid。',
-    '',
-    '【收敛纪律】能一轮出计划就别绕：目录通常已经够判断。至多 2 个额外来回（Search / Fetch）——一旦你发出 <LorebookSelect>',
-    '就是终局，引擎不再问你。若同一条回复里既有 <LorebookSelect> 又有 Search/Fetch，后者会被忽略。',
-    '直接输出上述块，不要包在代码围栏里，块外可以用一两句中文说明你的判断。',
-].join('\n');
 
 // 灯色判定（禁用优先于常驻；无键即绿灯）。纯 → 单测。
 function lbEntryLamp(e) {
@@ -1282,11 +1237,6 @@ function builderSectionsLine(s) {
     return P('bld.sections', { list: labels.join('、') });
 }
 
-// 访谈师「外貌素材·必问」（2026-07-08；验证收据 tests/unit/_bld-tuning/polish4/interview/）：
-// 只在勾了外貌特征时由代码注入这行——GM 不跑提示词内的条件自判（未勾场景实测照问不误），
-// 物理门控是唯一可靠闸；BUILDER_INTERVIEW_PROMPT 本体字节不动。已知接受项：GM ~1/4 把警告里
-// 的「老茧」回收成建议例子——只影响访谈措辞，卡面的真围栏在锻造 look 块。
-export const BUILDER_LOOK_MUSTASK = '【外貌素材·必问】已有材料（用户描述、世界书、对话记录、角色卡）里还没有「一眼认得出TA」的外貌素材时，必须问过一次外貌特征才可以交付 CharBrief；问时顺带提醒用户：不给真素材，AI 写外貌爱给谁都安上伤疤、老茧这类通用件，TA 的日子留在身上的痕迹（常年做的活、常待的地方、打理自己的习惯）才认得出TA。不必第一轮就问、也别为它挤掉更要紧的缺口；用户答不上来或让你随意，就不再追问，在 desc 里记一句「外貌交给锻造从TA的经历推导」。';
 
 function builderLookAskLine(s) {
     if (builderVariantKey(s) !== 'card') return '';   // 外貌必问是 card 访谈的专属注入；persona 变体有自己的外貌话术
@@ -1929,7 +1879,7 @@ export async function applyLorebookOps(ops, opts) {
     const mod = await getWiEditApi();
     if (!mod) throw new Error('世界书模块不可用');
 
-    const scope = Array.isArray(sharedState.lbBookNames) ? sharedState.lbBookNames.slice() : [];
+    const scope = Array.isArray(lbBookNames) ? lbBookNames.slice() : [];
     const booksMap = {};        // 工作副本（会被就地修改）
     const pristine = {};        // 撤销快照（改动前深克隆）
     for (const name of scope) {
@@ -2008,7 +1958,7 @@ export async function undoLorebookOps(snapshots) {
 export async function lbDryRunOps(ops) {
     const mod = await getWiEditApi();
     if (!mod) return null;
-    const scope = Array.isArray(sharedState.lbBookNames) ? sharedState.lbBookNames.slice() : [];
+    const scope = Array.isArray(lbBookNames) ? lbBookNames.slice() : [];
     const booksMap = {};
     for (const name of scope) {
         try { const d = await mod.loadWorldInfo(name); if (d && d.entries) booksMap[name] = d; } catch (e) { /* 读不到的书跳过 */ }

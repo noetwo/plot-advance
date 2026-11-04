@@ -1,6 +1,8 @@
 import { getCtx, getSettings, save } from '../core/settings.js';
-import { sharedState } from '../core/state.js';
+
 import { updateBadge } from '../ui/settings.js';
+import { setSoLastFinishReason } from './state.js';
+import { win } from '../ui/state.js';
 
 /* ---- transports (all OpenAI Chat Completions shaped) ---- */
 function normalizeUrl(u, raw) {
@@ -119,11 +121,11 @@ function extraParamsOverride(extra) {
 // 高度被窗口封顶、正文内部滚动——短视口手机不锁死）。
 export function openExtraParams() {
     const s = getSettings();
-    let modal = sharedState.win.querySelector('#so-extraparams');
+    let modal = win.querySelector('#so-extraparams');
     if (!modal) {
         modal = document.createElement('div');
         modal.id = 'so-extraparams';
-        sharedState.win.appendChild(modal);
+        win.appendChild(modal);
     }
     modal.innerHTML = `
         <div id="so-xp-card">
@@ -183,7 +185,7 @@ export function openExtraParams() {
 
 // 设置行的一句状态读数：让「设了没设」在不打开弹窗时也看得见（静默设置是地雷）。
 export function updateExtraParamsHint() {
-    const hint = sharedState.win?.querySelector?.('#so-extraparams-hint');
+    const hint = win?.querySelector?.('#so-extraparams-hint');
     if (!hint) return;
     const s = getSettings();
     const parts = [];
@@ -311,9 +313,9 @@ async function fetchModelsViaBackend(endpoint, apiKey, raw, signal) {
 
 export async function onFetchModels() {
     const s = getSettings();
-    const hint = sharedState.win.querySelector('#so-model-hint');
-    const sel = sharedState.win.querySelector('#so-model-list');
-    const btn = sharedState.win.querySelector('#so-model-fetch');
+    const hint = win.querySelector('#so-model-hint');
+    const sel = win.querySelector('#so-model-list');
+    const btn = win.querySelector('#so-model-fetch');
 
     if (!s.endpoint) { hint.textContent = '请先填写端点 URL。'; hint.classList.add('so-hint-error'); return; }
 
@@ -599,7 +601,7 @@ export async function callDirect(url, apiKey, body, signal) {
         throw new Error(`HTTP ${res.status} ${res.statusText} ${t.slice(0, 300)}`);
     }
     const data = unwrapCompletion(await res.json());
-    sharedState.soLastFinishReason = data?.choices?.[0]?.finish_reason || '';   // FIX 4：留给空回复判据（cause D）
+    setSoLastFinishReason(data?.choices?.[0]?.finish_reason || '');   // FIX 4：留给空回复判据（cause D）
     return data?.choices?.[0]?.message?.content ?? '';
 }
 
@@ -668,7 +670,7 @@ export async function streamDirect(url, apiKey, body, signal, onDelta) {
                 : [data];
             for (const payload of payloads) {
                 const cl = classifySseData(payload);
-                if (cl.finishReason) sharedState.soLastFinishReason = cl.finishReason;   // FIX 4：留给空回复判据
+                if (cl.finishReason) setSoLastFinishReason(cl.finishReason);   // FIX 4：留给空回复判据
                 if (cl.error && !streamErr) streamErr = cl.error;            // FIX 3：记下首个中途 error，攒完当前内容后统一裁决
                 if (cl.done) { doneSeen = true; break; }
                 if (cl.skip) continue;

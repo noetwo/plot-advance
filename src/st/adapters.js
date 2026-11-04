@@ -1,10 +1,13 @@
 import { deserializeEntrySel, getWiCustomMeta, wiCustomChatId } from '../core/chat-metadata.js';
 import { getCtx, getSettings } from '../core/settings.js';
-import { sharedState } from '../core/state.js';
+
 import { ensureWiCustomSeeded, wiCustomGreens } from '../modes/diagnose/pickers.js';
 import { mergeHybridUids } from '../modes/fix/templates.js';
 import { collectWiCustomEntries, getActiveBookNames, getActiveScanUids, getAllBookNames, getCharChatBookNames, getWiEditApi, resolveLbTargetNames } from '../modes/lorebook/core.js';
 import { ENABLE_WI_CUSTOM_PICK, ENABLE_WI_EJS_RENDER } from '../prompts/builtins.js';
+import { convo } from '../core/runtime-state.js';
+import { personasModule, regexEngine, scriptCore, setPersonasModule, setRegexEngine, setScriptCore, setWorldInfoModule, worldInfoModule } from './runtime-state.js';
+import { importHostModule } from './host.js';
 
 /**
  * Lazily import SillyTavern's regex engine from its served path. The absolute
@@ -12,40 +15,40 @@ import { ENABLE_WI_CUSTOM_PICK, ENABLE_WI_EJS_RENDER } from '../prompts/builtins
  * in the data dir or in third-party. Returns the module, or false if unavailable.
  */
 export async function loadRegexEngine() {
-    if (sharedState.regexEngine !== null) return sharedState.regexEngine;
+    if (regexEngine !== null) return regexEngine;
     try {
-        const mod = await import('/scripts/extensions/regex/engine.js');
-        sharedState.regexEngine = (mod && mod.getRegexedString && mod.regex_placement) ? mod : false;
-        if (!sharedState.regexEngine) console.warn('[Story Oracle] regex engine loaded but missing exports; sending raw text.');
+        const mod = await importHostModule('/scripts/extensions/regex/engine.js');
+        setRegexEngine((mod && mod.getRegexedString && mod.regex_placement) ? mod : false);
+        if (!regexEngine) console.warn('[Story Oracle] regex engine loaded but missing exports; sending raw text.');
     } catch (e) {
         console.warn('[Story Oracle] Could not load regex engine; sending raw messages.', e);
-        sharedState.regexEngine = false;
+        setRegexEngine(false);
     }
-    return sharedState.regexEngine;
+    return regexEngine;
 }
 
 export async function loadWorldInfoModule() {
-    if (sharedState.worldInfoModule !== null) return sharedState.worldInfoModule;
+    if (worldInfoModule !== null) return worldInfoModule;
     try {
-        const mod = await import('/scripts/world-info.js');
-        sharedState.worldInfoModule = (mod && mod.getSortedEntries) ? mod : false;
+        const mod = await importHostModule('/scripts/world-info.js');
+        setWorldInfoModule((mod && mod.getSortedEntries) ? mod : false);
     } catch (e) {
         console.warn('[Story Oracle] Could not load world-info module.', e);
-        sharedState.worldInfoModule = false;
+        setWorldInfoModule(false);
     }
-    return sharedState.worldInfoModule;
+    return worldInfoModule;
 }
 
-sharedState.scriptCore = null; // '/script.js' module, lazily imported (false = unavailable)
+ // '/script.js' module, lazily imported (false = unavailable)
 async function loadScriptCore() {
-    if (sharedState.scriptCore !== null) return sharedState.scriptCore;
+    if (scriptCore !== null) return scriptCore;
     try {
-        sharedState.scriptCore = await import('/script.js');
+        setScriptCore(await importHostModule('/script.js'));
     } catch (e) {
         console.warn('[Story Oracle] Could not load /script.js for context size.', e);
-        sharedState.scriptCore = false;
+        setScriptCore(false);
     }
-    return sharedState.scriptCore;
+    return scriptCore;
 }
 
 /* ------------------------------------------------------------------ *
@@ -58,11 +61,11 @@ async function loadScriptCore() {
  * getContext() 已暴露 powerUserSettings / saveSettingsDebounced / eventSource /
  * eventTypes / getRequestHeaders（本版全部齐备，无需回退 /script.js）。
  * ------------------------------------------------------------------ */
-sharedState.personasModule = null;   // '/scripts/personas.js'，惰性 import（null=未试，object=已装，null 表示失败会重试）
+   // '/scripts/personas.js'，惰性 import（null=未试，object=已装，null 表示失败会重试）
 async function loadPersonasModule() {
-    if (sharedState.personasModule) return sharedState.personasModule;
-    try { sharedState.personasModule = await import('/scripts/personas.js'); } catch (e) { sharedState.personasModule = null; }
-    return sharedState.personasModule;
+    if (personasModule) return personasModule;
+    try { setPersonasModule(await importHostModule('/scripts/personas.js')); } catch (e) { setPersonasModule(null); }
+    return personasModule;
 }
 
 // 改写当前激活 Persona 的描述。两处都要写：descriptor 是持久层，扁平字段是 UI/生成用的缓存。
@@ -203,7 +206,7 @@ async function getWiScanDepth() {
 }
 // 当前侧聊房间的折叠文本（convo 永远指向当前模式的房间流——1.28.0 每模式分房后依然成立）。
 export async function sideChatScanBlob() {
-    return sideChatScanText(sharedState.convo, await getWiScanDepth());
+    return sideChatScanText(convo, await getWiScanDepth());
 }
 // 把额外扫描文本折进最近一格（深度无关地一定被扫到、不挤占 world_info_depth 窗口）。'st'/'char' 扫描共用。
 export function foldExtraScanText(chatForWI, extraScanText) {

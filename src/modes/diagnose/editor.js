@@ -1,7 +1,7 @@
 import { saveChatMetadata } from '../../core/chat-metadata.js';
 import { awaitMvuIdle, postReplyShouldStop, refreshLatestMvuBar } from '../../core/post-reply.js';
 import { getSettings } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { MVUED_LIST_META_KEY, MVUED_META_KEY, MVUED_TRAINER_META_KEY, getChatMetadataSafe } from '../advisor/metadata.js';
 import { appendNoteToRoom } from '../chat/history.js';
 import { chatIdentityKey } from '../chat/send.js';
@@ -15,46 +15,50 @@ import { P } from '../../prompts/registry.js';
 import { buildWorldInfo, collectMvuUpdateRules, wiContextMode } from '../../st/adapters.js';
 import { callDirect, callProfile, resolveEndpointUrl } from '../../transport/direct.js';
 import { enhanceIconBtnNode } from '../../ui/window.js';
+import { lastPrompt, nextCid, setLastPrompt, setLastPromptMeta } from '../../core/runtime-state.js';
+import { mvuedActiveTab, mvuedApplying, mvuedDirty, mvuedKindOverrides, mvuedOpenChatKey, mvuedOpenData, mvuedRefreshTimer, mvuedScanCtl, mvuedScanning, mvuedSchemaCache, setMvuedActiveTab, setMvuedApplying, setMvuedDirty, setMvuedKindOverrides, setMvuedOpenChatKey, setMvuedOpenData, setMvuedRefreshTimer, setMvuedScanCtl, setMvuedScanning, setMvuedSchemaCache, setTrainerLastRun, setTrainerRulesForRender, trainerLastRun, trainerRulesForRender } from './state.js';
+import { mvuApi } from '../../st/runtime-state.js';
+import { win } from '../../ui/state.js';
 
 /* ── 🎛 变量编辑器 UI ─────────────────────────────────────────────────
  * 会话内瞬态：脏表 / 打开快照 / 当前页签都【不落盘】（同全屏阅读的做法——UI 状态不进设置）。
  * 打开时抓一份 MvuData 拷贝只用于【显示】；真正写入时（mvuedApply）重读 fresh 数据再落 applyMvuedEdits。 */
-sharedState.mvuedDirty = new Map();
-sharedState.mvuedOpenData = null;      // 打开时的 MvuData 拷贝（仅供展示；应用时重读 fresh）
-sharedState.mvuedSchemaCache = null;   // 本聊天的扫描 schema（打开时从 metadata 读）
-sharedState.mvuedActiveTab = 0;        // 当前页签下标（开窗归零）
-sharedState.mvuedKindOverrides = null; // 🩺 1.89.0：从存档检查跳来时，把那一格按卡片要求的类型渲染（{pathStr: kind}；开卡时定、关卡清空）
+
+      // 打开时的 MvuData 拷贝（仅供展示；应用时重读 fresh）
+   // 本聊天的扫描 schema（打开时从 metadata 读）
+        // 当前页签下标（开窗归零）
+ // 🩺 1.89.0：从存档检查跳来时，把那一格按卡片要求的类型渲染（{pathStr: kind}；开卡时定、关卡清空）
 // 「应用」在途标志（防连点写两次）。updateMvuedFoot 是「应用」键 disabled 的唯一写入口，故它也读这里——
 // 否则用户在写入过程中随手改个值，updateMvuedFoot 会把刚禁用的按钮又点亮。
-sharedState.mvuedApplying = false;
+
 // 「🔍 分析取值规则」在途标志。刻意【不】复用 mvuedApplying：两件事互不相干（扫描只读规则、应用只写变量），
 // 共用一个标志会让任一方在途时把对方的按钮也锁死，而扫描一趟最长 120 秒 —— 用户会以为「应用」坏了。
 // updateMvuedScanBtn 是扫描键 disabled + 文案的唯一写入口（在途时该键翻成「⏹ 中断扫描」，见那里）。
-sharedState.mvuedScanning = false;
+
 // 在途扫描的中断器把手（空闲时恒 null）。必须是【模块级】而非 runMvuedScan 里的局部 const：两个圈外的
 // 中断来源都得够得着它——① 用户按扫描键上的「⏹ 中断扫描」（spec §6 的可中断承诺）；② 切聊天时
 // onChatChanged——那一趟的结果已经注定要在危险点三被丢弃，让它继续跑就是白烧钱，且扫描键会
 // 在【新聊天】里僵成在途态最长 120 秒。
-sharedState.mvuedScanCtl = null;
+
 // 开卡那一刻的聊天身份键（同 mvuedApply / runMvuedScan 用的 chatIdentityKey）。只服务于「跟随现实」的刷新：
 // onChatChanged 已经会 closeMvuEditor，正常情况下切聊天时这张卡早没了；但刷新走的是一颗 300ms 的防抖
 // 定时器，它完全可能在「切聊天」与「新聊天里又开了一张卡」之间落地。带上身份钉 = 那颗迟到的定时器
 // 绝无可能把【新聊天】的数据当成刷新结果摆进任何一张卡。开卡时写、关卡时清。
-sharedState.mvuedOpenChatKey = null;
+
 // 「跟随现实」的防抖把手（空闲恒 null）。必须是模块级：关卡时要掐掉（closeMvuEditor），
 // 而事件监听器是在 init 里一次性挂的、够不着任何局部变量。
-sharedState.mvuedRefreshTimer = null;
+
 // 修改器上一回合的执行结果（会话内存，不落盘、不进侧聊）。唯一消费者 = 🎛 页的读数行。
 // 形状：{ changes:[{label,from,to,kind}], skipped:string[], stamp:string, chatKey:string } | null
 // chatKey = 执行那一刻钉住的聊天身份（runTrainer 的入参、来自 chatIdentityKey()）。切聊天后这个变量
 // 依然留着【上一个】聊天的读数（它本身不随聊天切换清空）——挂上 chatKey 是让 Task 9 的渲染器能
 // 判断「这条读数是不是当前聊天的」，不把旧聊天的改动误显示成这一个聊天的「上一回合」。
-sharedState.trainerLastRun = null;
+
 // 🎛 修改器：本次重画用的规则快照。renderMvuedBody 开头刷一次，叶子渲染只读它——
 // 否则每个叶子都要读一遍 chat metadata + 规范化一遍（几百个叶子 × 每次重画）。
-sharedState.trainerRulesForRender = [];
 
-function collectMvuedEdits() { return Array.from(sharedState.mvuedDirty.values()); }
+
+function collectMvuedEdits() { return Array.from(mvuedDirty.values()); }
 
 // 🗑 待删标记的开关（1.88.0；对传入的脏表就地操作，可单测）。返回 true = 已标记待删，false = 已取消。
 // 标记 = 同路径的一条 {path, remove:true}，【不】立即写 MVU —— 与值编辑一样等「应用」、计入「已改 N 项」、
@@ -122,7 +126,7 @@ function mvuedSetListOverride(path, on) {
         else delete md[MVUED_LIST_META_KEY];
         saveChatMetadata();
     }
-    sharedState.mvuedDirty.delete(key);
+    mvuedDirty.delete(key);
     renderMvuedBody();
 }
 
@@ -292,7 +296,7 @@ function mvuedMarkTyped(leaf, raw) {
 }
 
 export async function openMvuEditor(opts) {
-    if (!ENABLE_MVU_EDITOR || !sharedState.win) return;
+    if (!ENABLE_MVU_EDITOR || !win) return;
     const Mvu = await getMvu();
     if (!Mvu || typeof Mvu.getMvuData !== 'function') {
         try { window.toastr && window.toastr.info && window.toastr.info('未检测到 MVU —— 本聊天没有可编辑的变量。', '剧情推进 · 变量编辑器'); } catch (e) { /* ignore */ }
@@ -300,13 +304,13 @@ export async function openMvuEditor(opts) {
     }
     let data = null;
     try { data = Mvu.getMvuData(mvuMsgOpts()); } catch (e) { /* 下面按空处理 */ }
-    try { sharedState.mvuedOpenData = data ? JSON.parse(JSON.stringify(data)) : null; } catch (e) { sharedState.mvuedOpenData = null; }
-    sharedState.mvuedDirty = new Map();
-    sharedState.mvuedActiveTab = 0;
-    sharedState.mvuedOpenChatKey = chatIdentityKey();   // 「跟随现实」刷新的身份钉（见 mvuedMaybeRefresh 的守卫②）
-    sharedState.mvuedSchemaCache = mvuedReadSchemaCache();
-    sharedState.mvuedKindOverrides = (ENABLE_SCHEMA_DIAG && opts && Array.isArray(opts.focusPath) && opts.focusKind)
-        ? { [mvuedPathStr(opts.focusPath)]: opts.focusKind } : null;
+    try { setMvuedOpenData(data ? JSON.parse(JSON.stringify(data)) : null); } catch (e) { setMvuedOpenData(null); }
+    setMvuedDirty(new Map());
+    setMvuedActiveTab(0);
+    setMvuedOpenChatKey(chatIdentityKey());   // 「跟随现实」刷新的身份钉（见 mvuedMaybeRefresh 的守卫②）
+    setMvuedSchemaCache(mvuedReadSchemaCache());
+    setMvuedKindOverrides((ENABLE_SCHEMA_DIAG && opts && Array.isArray(opts.focusPath) && opts.focusKind)
+        ? { [mvuedPathStr(opts.focusPath)]: opts.focusKind } : null);
 
     // getMvu 是 async（可能等 TavernHelper 初始化）→ 连点两下按钮会走进两次 append。
     // 建卡前先把旧卡摘掉：永远只有一张 #so-mvued-card。
@@ -334,20 +338,20 @@ export async function openMvuEditor(opts) {
                 <button type="button" class="so-apply-btn" id="so-mvued-apply" disabled>应用</button>
             </div>
         </div>`;
-    sharedState.win.appendChild(overlay);
+    win.appendChild(overlay);
     // 逃生两件套（叠层地雷）：✕、点背景关。Esc 【不】接管 —— 全屏那套的 Esc 消费者名单是有意收窄的，不动它。
     overlay.addEventListener('click', (ev) => { if (ev.target === overlay) closeMvuEditor(); });
     overlay.querySelector('#so-mvued-close').addEventListener('click', closeMvuEditor);
     // ✕ 是动态建出来的 .so-iconbtn → 补语义（role/tabindex/aria-label），否则键盘用户聚焦不到它 =
     // 关不掉这张卡（win 上的委托 keydown 只对可聚焦节点有意义）。整体的 enhanceIconButtonA11y 不能在这里调。
     enhanceIconBtnNode(overlay.querySelector('#so-mvued-close'));
-    overlay.querySelector('#so-mvued-revert').addEventListener('click', () => { sharedState.mvuedDirty.clear(); renderMvuedBody(); });
+    overlay.querySelector('#so-mvued-revert').addEventListener('click', () => { mvuedDirty.clear(); renderMvuedBody(); });
     overlay.querySelector('#so-mvued-apply').addEventListener('click', () => { mvuedApply(); });
     // 一键两态（spec §6 的「可中断」）：空闲 = 发起扫描，在途 = 中断这一趟。文案由 updateMvuedScanBtn 同步，
     // 这里只按当下的 mvuedScanning 分道。连点无害：cancelMvuedScan 只发中断（把手已 null 时直接返回、绝不
     // 自己复位状态机），runMvuedScan 自己也有 mvuedScanning 闸门挡住重入。
     overlay.querySelector('#so-mvued-scan').addEventListener('click', () => {
-        if (sharedState.mvuedScanning) cancelMvuedScan();
+        if (mvuedScanning) cancelMvuedScan();
         else runMvuedScan();
     });
     renderMvuedBody();
@@ -358,9 +362,9 @@ export async function openMvuEditor(opts) {
     const focus = opts && Array.isArray(opts.focusPath) ? opts.focusPath : null;
     if (ENABLE_SCHEMA_DIAG && focus) {
         try {
-            const stat = sharedState.mvuedOpenData && (sharedState.mvuedOpenData.stat_data || sharedState.mvuedOpenData);
-            const idx = mvuedTabIndexForPath(buildMvuedModel(stat, sharedState.mvuedSchemaCache, mvuedReadListOverrides()), focus);
-            if (idx >= 0) { sharedState.mvuedActiveTab = idx; renderMvuedBody(); }
+            const stat = mvuedOpenData && (mvuedOpenData.stat_data || mvuedOpenData);
+            const idx = mvuedTabIndexForPath(buildMvuedModel(stat, mvuedSchemaCache, mvuedReadListOverrides()), focus);
+            if (idx >= 0) { setMvuedActiveTab(idx); renderMvuedBody(); }
             for (let n = focus.length; n > 0; n--) {
                 const want = mvuedPathStr(focus.slice(0, n));
                 const el = [...overlay.querySelectorAll('[data-path]')].find((x) => x.dataset.path === want);
@@ -379,14 +383,14 @@ export async function openMvuEditor(opts) {
 export function closeMvuEditor() {
     const el = document.getElementById('so-mvued-card');
     if (el) el.remove();
-    sharedState.mvuedKindOverrides = null;
-    sharedState.mvuedDirty = new Map();
-    sharedState.mvuedOpenData = null;
-    sharedState.mvuedSchemaCache = null;
-    sharedState.mvuedOpenChatKey = null;
+    setMvuedKindOverrides(null);
+    setMvuedDirty(new Map());
+    setMvuedOpenData(null);
+    setMvuedSchemaCache(null);
+    setMvuedOpenChatKey(null);
     // 在途的「跟随现实」防抖也一起掐：卡都没了，那次刷新已无事可做（mvuedMaybeRefresh 自己也会空转，
     // 掐掉只是不留悬着的定时器）。与 cancelMvuedScan 的取舍不同——扫描的结果仍属于本聊天、值得跑完。
-    if (sharedState.mvuedRefreshTimer) { clearTimeout(sharedState.mvuedRefreshTimer); sharedState.mvuedRefreshTimer = null; }
+    if (mvuedRefreshTimer) { clearTimeout(mvuedRefreshTimer); setMvuedRefreshTimer(null); }
 }
 
 /* ── 打开中的编辑器「跟随现实」（1.59.0）────────────────────────────────
@@ -414,7 +418,7 @@ export function mvuedMaybeRefresh(reason) {
     if (!ENABLE_MVU_EDITOR) return;
     const card = document.getElementById('so-mvued-card');
     if (!card) return;
-    if (sharedState.mvuedOpenChatKey !== null && chatIdentityKey() !== sharedState.mvuedOpenChatKey) return;
+    if (mvuedOpenChatKey !== null && chatIdentityKey() !== mvuedOpenChatKey) return;
     // ── 用户正在动手 → 这一拍不重画，改成【推迟】（重排一次防抖，等他停手）──────────────
     // renderMvuedBody 是整棵树重建（`#so-mvued-body` 先 innerHTML='' 再逐节点 append），所以在两种时刻
     // 重画就是直接毁掉用户手上的活：
@@ -438,7 +442,7 @@ export function mvuedMaybeRefresh(reason) {
         mvuedScheduleRefresh(reason);
         return;
     }
-    const Mvu = sharedState.mvuApi || window.Mvu;
+    const Mvu = mvuApi || window.Mvu;
     if (!Mvu || typeof Mvu.getMvuData !== 'function') return;
     let fresh = null;
     try { fresh = Mvu.getMvuData(mvuMsgOpts()); } catch (e) { return; }
@@ -455,13 +459,13 @@ export function mvuedMaybeRefresh(reason) {
     // 写入路径（mvuedApply）永远自己重读 fresh，落不到任何写上。
     const rendered = (d) => (d ? (d.stat_data || d) : null);
     let same = false;
-    try { same = JSON.stringify(rendered(copy)) === JSON.stringify(rendered(sharedState.mvuedOpenData)); } catch (e) { same = false; }
+    try { same = JSON.stringify(rendered(copy)) === JSON.stringify(rendered(mvuedOpenData)); } catch (e) { same = false; }
     if (same) return;
-    sharedState.mvuedOpenData = copy;
+    setMvuedOpenData(copy);
     renderMvuedBody();
     // 有脏项时才出声：用户手上有没提交的改动，值在脚下换了，这件事必须让他知道（否则「我明明改的是
     // 80」会变成一桩灵异事件）。没脏项时静默——那种情况下刷新就是「显示终于对了」，说一句反而是噪音。
-    if (sharedState.mvuedDirty.size > 0) {
+    if (mvuedDirty.size > 0) {
         const status = card.querySelector('#so-mvued-status');
         if (status) {
             status.classList.remove('so-hint-error');
@@ -477,11 +481,11 @@ export function mvuedMaybeRefresh(reason) {
 export function mvuedScheduleRefresh(reason) {
     if (!ENABLE_MVU_EDITOR) return;
     if (!document.getElementById('so-mvued-card')) return;
-    if (sharedState.mvuedRefreshTimer) clearTimeout(sharedState.mvuedRefreshTimer);
-    sharedState.mvuedRefreshTimer = setTimeout(() => {
-        sharedState.mvuedRefreshTimer = null;
+    if (mvuedRefreshTimer) clearTimeout(mvuedRefreshTimer);
+    setMvuedRefreshTimer(setTimeout(() => {
+        setMvuedRefreshTimer(null);
         try { mvuedMaybeRefresh(reason); } catch (e) { console.warn('[Story Oracle] 🎛 变量编辑器刷新失败：', e); }
-    }, 300);
+    }, 300));
 }
 
 // 掐掉在途的「🔍 分析取值规则」扫描。两个调用者：扫描键在途时的「⏹ 中断扫描」（用户主动，spec §6）与
@@ -493,8 +497,8 @@ export function mvuedScheduleRefresh(reason) {
 // 抢着在这里置 false，会让用户在旧那趟的 reject 落地【之前】发起新一趟扫描，随后旧 finally 把新一趟的
 // 标志清掉、按钮中途点亮 → 同一时刻两个在途请求。中断的 reject 是同一轮微任务就排上的，等它复位足够快。
 export function cancelMvuedScan() {
-    if (!sharedState.mvuedScanCtl) return;
-    try { sharedState.mvuedScanCtl.abort(); } catch (e) { /* ignore */ }
+    if (!mvuedScanCtl) return;
+    try { mvuedScanCtl.abort(); } catch (e) { /* ignore */ }
 }
 
 /* 🎛 变量编辑器 / 修改器 共用的 MVU 写入序列（1.63.0 抽出）。
@@ -579,7 +583,7 @@ export async function runTrainer(chatKey, compatSession) {
     const { edits, skipped, changes } = trainerComputeEdits(stat, rules);
     if (!edits.length) {
         // 有规则但这一回合无事可做：读数如实记「无改动」，不写、不刷。
-        sharedState.trainerLastRun = { changes: [], skipped, stamp: trainerStamp(), chatKey };
+        setTrainerLastRun({ changes: [], skipped, stamp: trainerStamp(), chatKey });
         renderTrainerReadout();
         return;
     }
@@ -592,7 +596,7 @@ export async function runTrainer(chatKey, compatSession) {
         // 这一轮照常跑了，而不是刚刚失败。修改器本就是静默功能（不发 toast、不留侧聊记录），这条读数
         // 行是用户唯一能看见的痕迹，它说谎比什么都不说更糟。
         const reasonLabel = { nomvu: '未检测到 MVU', chatswitched: '聊天已切换', gone: '字段已不存在' }[w.reason] || w.reason;
-        sharedState.trainerLastRun = { changes: [], skipped, failed: reasonLabel, stamp: trainerStamp(), chatKey };
+        setTrainerLastRun({ changes: [], skipped, failed: reasonLabel, stamp: trainerStamp(), chatKey });
         renderTrainerReadout();
         return;
     }
@@ -608,7 +612,7 @@ export async function runTrainer(chatKey, compatSession) {
     // 是同一瞬间，而这条读数行会在用户很久以后打开 🎛 页时重画 —— 那时的最末楼早就不是当时写入的那一楼
     // 了（随手发一句话就变），到那时再算等于凭空断言一件从没发生过的事。读数说的是「上一回合」，
     // 落点也就该是上一回合那个落点。只有【真写了东西】的这一支记它（上面两支都没写）。
-    sharedState.trainerLastRun = { changes, skipped, stamp: trainerStamp(), chatKey, notice: diagUserFloorNotice() };
+    setTrainerLastRun({ changes, skipped, stamp: trainerStamp(), chatKey, notice: diagUserFloorNotice() });
     try { refreshLatestMvuBar(); } catch (e) {
         console.warn('[Story Oracle] 🎛 修改器：变量已写入，但状态栏刷新失败。', e);
     }
@@ -630,11 +634,11 @@ function renderTrainerReadout() {
     // chatKey 门：trainerLastRun 是模块级变量，切聊天后依然留着【上一个】聊天的读数（它本身不随切聊天
     // 清空，见该变量声明处的注释）。这里必须核对身份，否则用户在当前聊天打开 🎛 页会把另一个聊天的
     // 改动看成这一个聊天的「上一回合」——比什么都不显示更糟，因为它看起来完全成立。
-    if (!sharedState.trainerLastRun || sharedState.trainerLastRun.chatKey !== chatIdentityKey()) {
+    if (!trainerLastRun || trainerLastRun.chatKey !== chatIdentityKey()) {
         el.textContent = '（本次打开后还没有新回复经过修改器。）';
         return;
     }
-    const { changes, skipped, stamp, failed, notice } = sharedState.trainerLastRun;
+    const { changes, skipped, stamp, failed, notice } = trainerLastRun;
     // failed：写入前置校验没过（未检测到 MVU / 聊天已切换 / 字段已不存在）——与下面「无需改动」/
     // 「改了 N 项」是三种互斥的读数，必须先分岔，不能落进 changes.length 的判断（那会把「没跑成」
     // 误显示成「跑了但没什么可改」，用户没法分辨规则是不是还活着）。
@@ -664,7 +668,7 @@ function renderTrainerReadout() {
 // 记录里的「改了 N 项」用 diffMvuStat 的【真实差异】而非 applyMvuedEdits 的 applied 计数：脏表不会因为
 // 用户把值改回原样而消项，那种空操作应用得掉但不算改动，两个数字有意各说各话（状态行说写入、记录说改动）。
 async function mvuedApply() {
-    if (!ENABLE_MVU_EDITOR || sharedState.mvuedApplying) return;
+    if (!ENABLE_MVU_EDITOR || mvuedApplying) return;
     const card = document.getElementById('so-mvued-card');
     const status = card && card.querySelector('#so-mvued-status');
     const fail = (msg) => { if (status) { status.textContent = msg; status.classList.add('so-hint-error'); } };
@@ -678,7 +682,7 @@ async function mvuedApply() {
     const chatKey = chatIdentityKey();
     // 上锁必须在【第一个 await 之前】：getMvu 是 async（可能在等 TavernHelper 初始化），连点两下会双双
     // 穿过这里、各写一遍 —— 同 openMvuEditor 那处双击坑，只是这一处的代价是写两次状态、留两条记录。
-    sharedState.mvuedApplying = true;
+    setMvuedApplying(true);
     updateMvuedFoot();
     try {
         const w = await writeMvuedEdits(edits, chatKey);
@@ -772,8 +776,8 @@ async function mvuedApply() {
         // 卡在这期间被关掉（✕ / 点背景；换聊天在危险点二就返回了，到不了这里）→ 只落记录，不复活会话状态。
         try {
             if (document.getElementById('so-mvued-card')) {
-                sharedState.mvuedDirty = new Map();
-                sharedState.mvuedOpenData = JSON.parse(JSON.stringify(w.applied));
+                setMvuedDirty(new Map());
+                setMvuedOpenData(JSON.parse(JSON.stringify(w.applied)));
                 renderMvuedBody();
             }
         } catch (e) {
@@ -785,7 +789,7 @@ async function mvuedApply() {
         // 记录没落下【不是】写入失败 —— 只是这次没有撤销入口，状态行如实追述，绝不覆盖 head。
         // 有意不加 so-hint-error：整行标红会把「已应用 N 项改动」也一起说成错，那是假的。
         try {
-            const entry = { id: ++sharedState.cidSeq, role: 'note', content: mvuedNoteContent({ ops, skipped, stamp }) };
+            const entry = { id: nextCid(), role: 'note', content: mvuedNoteContent({ ops, skipped, stamp }) };
             // trainerFreeze 随 snapshot/applied 一起挂在这条记录上（Finding 2）：撤销 / 重新应用按钮
             // （addMvuedUndoControls）读它来把重新武装过的冻结目标也换回相应方向的值，否则冻结规则会在
             // 撤销之后的下一回合把用户刚撤销掉的编辑悄悄拉回来。
@@ -802,7 +806,7 @@ async function mvuedApply() {
         // 只可能是【写入之前】的失败（分水岭之后每件事都自带 try）—— 这时一个字节都没写进 MVU。
         fail('应用失败：' + (e && e.message ? e.message : e));
     } finally {
-        sharedState.mvuedApplying = false;
+        setMvuedApplying(false);
         updateMvuedFoot();
     }
 }
@@ -822,7 +826,7 @@ async function mvuedApply() {
 // postReplyAbortCtl，那是「校正 / 自动诊断」共用的模块级中断器，借用它会让用户点一下「中断自动诊断」
 // 把扫描也掐了（反之亦然）；但它也不能是纯局部的 —— 切聊天必须够得着（见 mvuedScanCtl / cancelMvuedScan）。
 async function runMvuedScan() {
-    if (!ENABLE_MVU_EDITOR || sharedState.mvuedScanning) return;
+    if (!ENABLE_MVU_EDITOR || mvuedScanning) return;
     const card = document.getElementById('so-mvued-card');
     const status = card && card.querySelector('#so-mvued-status');
     // 只往【发起这趟扫描的那张卡】写状态：卡被关掉 / 换聊天摘掉后 isConnected 为 false，直接哑掉。
@@ -837,13 +841,13 @@ async function runMvuedScan() {
     if (s.mode === 'profile' && !s.profileId) { say('先在设置里选择连接配置文件。', true); return; }
     // 上锁在第一个 await 之前（getMvuStatData → getMvu 是 async，连点两下会双双穿过去、各发一次付费调用）。
     const chatKey = chatIdentityKey();
-    sharedState.mvuedScanning = true;
+    setMvuedScanning(true);
     // 中断器在【第一个 await 之前】就挂上模块级把手。从这一刻起扫描键就是「⏹ 中断扫描」，用户随时可能按下去，
     // 而前置那几步也会耗时（getMvu 首次最长等 5 秒 TavernHelper、取世界书要跑扫描/读书文件）——把手若只覆盖
     // 请求段，那几秒里按「中断」会毫无反应。中断落在前置段是安全的：已 aborted 的 signal 交给 fetch 会当场
     // reject（请求根本发不出去 = 不烧钱），下面两个危险点还各补一次判定，让它更早、更确定地落地。
     const ctl = new AbortController();
-    sharedState.mvuedScanCtl = ctl;
+    setMvuedScanCtl(ctl);
     updateMvuedScanBtn();
     let timedOut = false;
     let selfAborted = false;   // 「这一趟是我们自己掐的」——超时 / 用户按中断 / 切聊天。与 HTTP 失败彻底分家，见下面的 catch。
@@ -876,13 +880,13 @@ async function runMvuedScan() {
             { role: 'user', content: P('mvued.scanAsk', null, s) },
         ];
         // 调试提示词查看器快照（同自动诊断：无头调用也必须能在「调试提示词」面板里看到发了什么）。
-        sharedState.lastPrompt = messages.map((m) => ({ role: m.role, content: m.content }));
-        sharedState.lastPromptMeta = {
+        setLastPrompt(messages.map((m) => ({ role: m.role, content: m.content })));
+        setLastPromptMeta({
             mode: '变量编辑器扫描',
             target: s.mode === 'direct' ? (s.model || '直连') : '配置文件',
-            chars: sharedState.lastPrompt.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
+            chars: lastPrompt.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
             time: new Date().toLocaleTimeString(),
-        };
+        });
         const timer = setTimeout(() => { timedOut = true; try { ctl.abort(); } catch (e) { /* ignore */ } }, 120000);
         let text = '';
         try {
@@ -907,7 +911,7 @@ async function runMvuedScan() {
             // 错误文本猜。ctl.signal.aborted 是权威判据（我们自己的中断器），HTTP 错误正文里恰好带 "abort"
             // 字样也绝不会被误判成中断（那正是原来那条 /abort/i 正则的风险）。
             selfAborted = ctl.signal.aborted;
-            sharedState.mvuedScanCtl = null;
+            setMvuedScanCtl(null);
         }
         // 危险点三（最重的一处，暴露最长 120 秒）：切走了就【什么都不落】—— schema 是按聊天缓存的，
         // 写进新聊天的 metadata 是落盘伤害，且下次开编辑器就按它渲染，用户无从知道选项是哪来的。
@@ -933,7 +937,7 @@ async function runMvuedScan() {
             };
             saveChatMetadata();
         }
-        sharedState.mvuedSchemaCache = schema;
+        setMvuedSchemaCache(schema);
         // 卡可能在这期间被 ✕ 关掉（换聊天已在危险点三挡住）：缓存照写不误，重画则只在卡还在时做。
         if (document.getElementById('so-mvued-card')) renderMvuedBody();
         const n = Object.keys(schema.fields).length;
@@ -953,8 +957,8 @@ async function runMvuedScan() {
         // 状态机的唯一复位口（cancelMvuedScan 有意不碰这两样）：无论成功 / 失败 / 中断 / 提前 return，
         // 在途标志与按钮都回到空闲（按钮由此从「⏹ 中断扫描」翻回「分析 / 重新扫描」），把手一并清空——
         // 它现在从函数一开头就挂着，这一句是它归零的唯一保证，否则空闲期按中断会去 abort 上一趟的死把手。
-        sharedState.mvuedScanning = false;
-        sharedState.mvuedScanCtl = null;
+        setMvuedScanning(false);
+        setMvuedScanCtl(null);
         updateMvuedScanBtn();
     }
 }
@@ -972,14 +976,14 @@ function updateMvuedScanBtn() {
     const b = document.getElementById('so-mvued-scan');
     if (!b) return;
     const hint = document.getElementById('so-mvued-scan-hint');
-    if (hint) hint.style.display = (!sharedState.mvuedScanning && !sharedState.mvuedSchemaCache) ? '' : 'none';
+    if (hint) hint.style.display = (!mvuedScanning && !mvuedSchemaCache) ? '' : 'none';
     b.disabled = false;
-    if (sharedState.mvuedScanning) {
+    if (mvuedScanning) {
         b.textContent = '⏹ 中断扫描';
         b.title = '中断这一次分析（不会写入任何缓存，随后可重新扫描）';
         return;
     }
-    b.textContent = sharedState.mvuedSchemaCache ? '🔍 重新扫描取值规则' : '🔍 分析取值规则';
+    b.textContent = mvuedSchemaCache ? '🔍 重新扫描取值规则' : '🔍 分析取值规则';
     b.title = 'AI 读一遍卡的规则后：该选的变下拉菜单、有范围的数字加滑杆——只问一次，本聊天记住';
 }
 
@@ -1026,9 +1030,9 @@ function mvuedTabIndexForPath(model, segs) {
 function renderMvuedBody() {
     const card = document.getElementById('so-mvued-card');
     if (!card) return;
-    const stat = sharedState.mvuedOpenData && (sharedState.mvuedOpenData.stat_data || sharedState.mvuedOpenData);
-    const model = buildMvuedModel(stat, sharedState.mvuedSchemaCache, mvuedReadListOverrides());
-    sharedState.trainerRulesForRender = ENABLE_MVU_TRAINER ? trainerReadRules() : [];
+    const stat = mvuedOpenData && (mvuedOpenData.stat_data || mvuedOpenData);
+    const model = buildMvuedModel(stat, mvuedSchemaCache, mvuedReadListOverrides());
+    setTrainerRulesForRender(ENABLE_MVU_TRAINER ? trainerReadRules() : []);
     const q = (card.querySelector('#so-mvued-search').value || '').trim().toLowerCase();
     const tabsEl = card.querySelector('#so-mvued-tabs');
     const bodyEl = card.querySelector('#so-mvued-body');
@@ -1040,17 +1044,17 @@ function renderMvuedBody() {
     }
     // 搜索时自动跳到第一个有命中的页（否则用户在 A 页搜 B 页的字段会看到一片空白，以为搜不到）。
     // 合成页（= model.tabs.length）是合法下标，别把它当越界踢回首页。
-    if (sharedState.mvuedActiveTab > model.tabs.length || (!ENABLE_MVU_TRAINER && sharedState.mvuedActiveTab >= model.tabs.length)) sharedState.mvuedActiveTab = 0;
-    if (q && sharedState.mvuedActiveTab < model.tabs.length && !mvuedTabHits(model.tabs[sharedState.mvuedActiveTab].nodes, q)) {
+    if (mvuedActiveTab > model.tabs.length || (!ENABLE_MVU_TRAINER && mvuedActiveTab >= model.tabs.length)) setMvuedActiveTab(0);
+    if (q && mvuedActiveTab < model.tabs.length && !mvuedTabHits(model.tabs[mvuedActiveTab].nodes, q)) {
         const hit = model.tabs.findIndex(t => mvuedTabHits(t.nodes, q) > 0);
-        if (hit >= 0) sharedState.mvuedActiveTab = hit;
+        if (hit >= 0) setMvuedActiveTab(hit);
     }
     model.tabs.forEach((t, i) => {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'so-mvued-tab' + (i === sharedState.mvuedActiveTab ? ' so-mvued-tab-on' : '');
+        b.className = 'so-mvued-tab' + (i === mvuedActiveTab ? ' so-mvued-tab-on' : '');
         b.textContent = t.label + (q ? `（${mvuedTabHits(t.nodes, q)}）` : '');
-        b.addEventListener('click', () => { sharedState.mvuedActiveTab = i; renderMvuedBody(); });
+        b.addEventListener('click', () => { setMvuedActiveTab(i); renderMvuedBody(); });
         tabsEl.appendChild(b);
     });
     // 数据页之后追加合成页「🎛 修改器」（ENABLE_MVU_TRAINER）。它不来自 buildMvuedModel，
@@ -1059,14 +1063,14 @@ function renderMvuedBody() {
     if (ENABLE_MVU_TRAINER) {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'so-mvued-tab' + (sharedState.mvuedActiveTab === trainerTabIdx ? ' so-mvued-tab-on' : '');
-        const n = sharedState.trainerRulesForRender.length;
+        b.className = 'so-mvued-tab' + (mvuedActiveTab === trainerTabIdx ? ' so-mvued-tab-on' : '');
+        const n = trainerRulesForRender.length;
         b.textContent = '🎛 修改器' + (n ? `（${n}）` : '');
-        b.addEventListener('click', () => { sharedState.mvuedActiveTab = trainerTabIdx; renderMvuedBody(); });
+        b.addEventListener('click', () => { setMvuedActiveTab(trainerTabIdx); renderMvuedBody(); });
         tabsEl.appendChild(b);
     }
-    if (sharedState.mvuedActiveTab === trainerTabIdx) { renderTrainerTab(bodyEl); updateMvuedFoot(); return; }
-    for (const nd of model.tabs[sharedState.mvuedActiveTab].nodes) bodyEl.appendChild(renderMvuedNode(nd, q));
+    if (mvuedActiveTab === trainerTabIdx) { renderTrainerTab(bodyEl); updateMvuedFoot(); return; }
+    for (const nd of model.tabs[mvuedActiveTab].nodes) bodyEl.appendChild(renderMvuedNode(nd, q));
     updateMvuedFoot();
 }
 
@@ -1074,7 +1078,7 @@ function renderMvuedBody() {
  * 这一页是「为什么我的金钱一直涨」的唯一答案所在地——字段行上的标记只告诉你某个字段有规则，
  * 跨页签找规则是找不动的。 */
 function renderTrainerTab(bodyEl) {
-    const rules = sharedState.trainerRulesForRender;
+    const rules = trainerRulesForRender;
     if (!rules.length) {
         const empty = document.createElement('div');
         empty.className = 'so-hint';
@@ -1084,7 +1088,7 @@ function renderTrainerTab(bodyEl) {
     }
     // 失效判定（spec §3.9）：路径在当前状态里已不存在 → 规则【保留】但置灰并标注。
     // 不自动删除：字段可能只是暂时不在这一分支的状态里，替用户做主删掉规则是不可逆的。
-    const stat = sharedState.mvuedOpenData && (sharedState.mvuedOpenData.stat_data || sharedState.mvuedOpenData);
+    const stat = mvuedOpenData && (mvuedOpenData.stat_data || mvuedOpenData);
     const pathAlive = (path) => {
         let cur = stat;
         for (const seg of path) {
@@ -1171,16 +1175,16 @@ function renderTrainerAddForm(rules) {
 function updateMvuedFoot() {
     const card = document.getElementById('so-mvued-card');
     if (!card) return;
-    const n = sharedState.mvuedDirty.size;
+    const n = mvuedDirty.size;
     card.querySelector('#so-mvued-count').textContent = n ? `已改 ${n} 项` : '';
     const apply = card.querySelector('#so-mvued-apply');
-    apply.disabled = !n || sharedState.mvuedApplying;   // 在途写入期间恒禁用（改值触发的重画不得把它点亮）
+    apply.disabled = !n || mvuedApplying;   // 在途写入期间恒禁用（改值触发的重画不得把它点亮）
     apply.textContent = n ? `应用 (${n})` : '应用';
 }
 
 function mvuedMarkDirty(leaf, value) {
     const key = mvuedPathStr(leaf.path);
-    sharedState.mvuedDirty.set(key, { path: leaf.path, value, vwd: !!leaf.vwd });
+    mvuedDirty.set(key, { path: leaf.path, value, vwd: !!leaf.vwd });
     updateMvuedFoot();
 }
 
@@ -1191,7 +1195,7 @@ function mvuedCanRemove(nd) {
     return !!nd && Array.isArray(nd.path) && (nd.path.length > 1 || nd.type === 'leaf');
 }
 function mvuedMarkedRemove(nd) {
-    const d = sharedState.mvuedDirty.get(mvuedPathStr(nd.path));
+    const d = mvuedDirty.get(mvuedPathStr(nd.path));
     return !!(d && d.remove);
 }
 // 🗑 / ↩ 钮。挂进 <summary> 时必须吃掉默认动作，否则点一下还顺带折叠 / 展开整组。
@@ -1205,7 +1209,7 @@ function mvuedRemoveBtn(nd) {
     b.addEventListener('click', (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        mvuedToggleRemove(sharedState.mvuedDirty, nd.path);
+        mvuedToggleRemove(mvuedDirty, nd.path);
         renderMvuedBody();
     });
     return b;
@@ -1239,12 +1243,12 @@ function renderMvuedNode(nd, q) {
 }
 
 function renderMvuedLeaf(nd, q) {
-    nd = mvuedEffectiveLeaf(nd, sharedState.mvuedKindOverrides);   // 🩺 1.89.0：无覆盖 → 原对象，逐字节同旧
+    nd = mvuedEffectiveLeaf(nd, mvuedKindOverrides);   // 🩺 1.89.0：无覆盖 → 原对象，逐字节同旧
     const row = document.createElement('div');
     row.className = 'so-mvued-leaf';
     if (ENABLE_SCHEMA_DIAG) row.dataset.path = mvuedPathStr(nd.path);   // 🩺 1.89.0：跳到这一格的锚（旗关不加属性）
     if (q && !mvuedSelfHit(nd, q)) row.classList.add('so-mvued-miss');
-    const dirty = sharedState.mvuedDirty.get(mvuedPathStr(nd.path));
+    const dirty = mvuedDirty.get(mvuedPathStr(nd.path));
     const cur = dirty ? dirty.value : nd.value;
     if (dirty) row.classList.add('so-mvued-dirty');
     const lab = document.createElement('span');
@@ -1281,7 +1285,7 @@ function renderMvuedLeaf(nd, q) {
         pen.type = 'button'; pen.className = 'so-lb-mini'; pen.textContent = '✎';
         pen.title = '自由输入（扫描结果可能不全）';
         pen.addEventListener('click', () => {
-            const d = sharedState.mvuedDirty.get(mvuedPathStr(nd.path));   // 已在下拉里改过 → 带着改后的值切文本框，别退回渲染时的旧值
+            const d = mvuedDirty.get(mvuedPathStr(nd.path));   // 已在下拉里改过 → 带着改后的值切文本框，别退回渲染时的旧值
             sel.replaceWith(mvuedTextInput(nd, d ? d.value : cur, redirty));
             pen.remove();
         });
@@ -1353,7 +1357,7 @@ function renderMvuedLeaf(nd, q) {
     // readonly 叶子不挂 —— 它们连手动都改不了，给个冻结钮只会误导。
     if (ENABLE_MVU_TRAINER && nd.kind !== 'readonly') {
         const myKey = mvuedPathStr(nd.path);
-        const rules = sharedState.trainerRulesForRender.filter(r => mvuedPathStr(r.path) === myKey);
+        const rules = trainerRulesForRender.filter(r => mvuedPathStr(r.path) === myKey);
         const frozen = rules.some(r => r.kind === 'freeze');
         const lock = document.createElement('button');
         lock.type = 'button';
@@ -1367,7 +1371,7 @@ function renderMvuedLeaf(nd, q) {
             if (frozen) trainerRemoveRule(nd.path, 'freeze');
             // 冻结目标 = 用户【眼前】的值：脏表里有就用脏值（他正要改成那个数），否则用现值。
             else {
-                const d = sharedState.mvuedDirty.get(mvuedPathStr(nd.path));
+                const d = mvuedDirty.get(mvuedPathStr(nd.path));
                 trainerSetRule(nd.path, 'freeze', { value: d ? d.value : cur });
             }
             renderMvuedBody();
@@ -1482,7 +1486,7 @@ function openMvuedBigEdit(input, label, desc) {
 // 列表：任何 ➖ / ＋ / 项内编辑都折成一条【整列表替换】edit（Task 3 契约）。
 // 当前列表值 = 脏表里的整列表（若有），否则模型里的现值（VWD 项还原成 pair 保描述）。
 function mvuedListValue(nd) {
-    const dirty = sharedState.mvuedDirty.get(mvuedPathStr(nd.path));
+    const dirty = mvuedDirty.get(mvuedPathStr(nd.path));
     if (dirty) return JSON.parse(JSON.stringify(dirty.value));
     return nd.items.map(it => it.vwd ? [it.value, it.desc] : (it.type === 'leaf' ? it.value : mvuedNodeValue(it)));
 }
@@ -1518,7 +1522,7 @@ function renderMvuedList(nd, q) {
     if (ENABLE_SCHEMA_DIAG) box.dataset.path = mvuedPathStr(nd.path);   // 🩺 1.89.0：跳到这一格的锚（旗关不加属性）
     if (q && !mvuedSelfHit(nd, q)) box.classList.add('so-mvued-miss');
     const listKey = mvuedPathStr(nd.path);
-    if (sharedState.mvuedDirty.has(listKey)) box.classList.add('so-mvued-dirty');
+    if (mvuedDirty.has(listKey)) box.classList.add('so-mvued-dirty');
     const head = document.createElement('div');
     head.className = 'so-mvued-label';
     head.textContent = nd.label;

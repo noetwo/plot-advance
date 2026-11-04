@@ -1,6 +1,6 @@
 import { getDiagWiMeta } from '../../core/chat-metadata.js';
 import { getCtx, getSettings } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { getLatestAiMessage, splitContentScope } from '../diagnose/mvu.js';
 import { populateDiagWiBooks, reflectDiagPickerVisible } from '../diagnose/pickers.js';
 import { clampFixAutoMinChars, detectInnerBlocks, detectScopeTag, fixConfigWarnings, fixCustomRawTable, fixCustomVerdictText, fixGuardSummary, fixKeepNameSet, fixScanBlocks, fixScopeVerdict, fixSegmentReply, fixTableCounts, resolveFixPieces } from './algorithms.js';
@@ -9,6 +9,9 @@ import { confirmPieceBare, confirmPieceWrapped } from './selection.js';
 import { findFixTemplate, fixUsePresetFor, getEffectiveFixCfg, getFixCfg, normalizeFixTemplates, resolveFixCustomCfg, resolveFixModeCfg, setFixCfg } from './templates.js';
 import { ENABLE_DIAG_WI_PICKER, ENABLE_FIX_CUSTOM_TASK, ENABLE_FIX_PIECEWISE, FIX_SAMPLE_TEMPLATES } from '../../prompts/builtins.js';
 import { updateFixButtonVisual } from '../../ui/mode-shell.js';
+import { diagnoseMode, lastPrompt, lastPromptMeta } from '../../core/runtime-state.js';
+import { fixTplDirty, fixTplDirtyFor, setFixTplDirtyFor } from './state.js';
+import { win } from '../../ui/state.js';
 
 /* ------------------------------------------------------------------ *
  * ✨ 校正模式 Phase 4：把校正控件（#so-fix-bar 里的目标 / 约束 / 上下文开关 / 自动）
@@ -16,15 +19,15 @@ import { updateFixButtonVisual } from '../../ui/mode-shell.js';
  * ------------------------------------------------------------------ */
 // 校正设置面板：按 fixSettingsView 显示手动 / 自动那一套（纯视图切换，不改任何行为）。窗口未建好时静默跳过。
 export function applyFixModeView() {
-    if (!sharedState.win) return;
+    if (!win) return;
     // 📋 三态（1.77.0）：manual / auto / custom。旗关时 'custom' 回落 manual——旧档存过 custom 也不会卡在一个没渲染的视图上。
     const raw = getSettings().fixSettingsView;
     const view = (raw === 'auto') ? 'auto' : ((ENABLE_FIX_CUSTOM_TASK && raw === 'custom') ? 'custom' : 'manual');
-    const sel = sharedState.win.querySelector('#so-fix-mode-select');
+    const sel = win.querySelector('#so-fix-mode-select');
     if (sel) sel.value = view;
-    const man = sharedState.win.querySelector('#so-fix-manual');
-    const auto = sharedState.win.querySelector('#so-fix-auto-wrap');
-    const custom = sharedState.win.querySelector('#so-fix-custom-wrap');
+    const man = win.querySelector('#so-fix-manual');
+    const auto = win.querySelector('#so-fix-auto-wrap');
+    const custom = win.querySelector('#so-fix-custom-wrap');
     if (man) man.style.display = (view === 'manual') ? '' : 'none';
     if (auto) auto.style.display = (view === 'auto') ? '' : 'none';
     if (custom) custom.style.display = (view === 'custom') ? '' : 'none';
@@ -35,9 +38,9 @@ export function applyFixModeView() {
 // ✨ 校正提示词选择器：「精校侧重」行仅在版本 === 'thorough'（精校）时显示，轻校时隐藏（镜像作用域 / 排除区的条件显隐）。
 // 读【本聊天】生效配置为准（非 DOM select 值），故 seed 顺序无关。窗口未建好时静默跳过。
 export function applyFixFlavorView() {
-    if (!sharedState.win) return;
+    if (!win) return;
     const cfg = getEffectiveFixCfg(getSettings(), getFixCfg());
-    const row = sharedState.win.querySelector('#so-fix-prompt-flavor-row');
+    const row = win.querySelector('#so-fix-prompt-flavor-row');
     if (row) row.style.display = (cfg.fixA_promptVersion === 'thorough') ? '' : 'none';
 }
 
@@ -46,8 +49,8 @@ export function applyFixFlavorView() {
 // updateFixVerdict 的全部刷新点走（新回复 / 开窗 / 切聊天 / 配置输入）。绝不自动写 fixA_keepTags
 // ——点芯片是用户的知情动作（设计 §2.2：静默写入会毁掉手填意图区分 + 经套餐泄漏到别的卡）。
 function renderFixGuardReceipts() {
-    if (!sharedState.win) return;
-    const box = sharedState.win.querySelector('#so-fix-receipts');
+    if (!win) return;
+    const box = win.querySelector('#so-fix-receipts');
     if (!box) return;
     box.innerHTML = '';
     if (!ENABLE_FIX_PIECEWISE) { box.hidden = true; return; }
@@ -83,7 +86,7 @@ function renderFixGuardReceipts() {
         if (it.name) {
             chip.title = '点一下固定进保留区：之后每条回复都强制保留（含行内出现）';
             chip.addEventListener('click', () => {
-                const keepEl = sharedState.win.querySelector('#so-fix-keep');
+                const keepEl = win.querySelector('#so-fix-keep');
                 const merged = mergeKeepTags(keepEl ? keepEl.value : (a.keepTags || ''), [{ name: it.name, bracket: !!it.bracket }]);
                 if (keepEl) keepEl.value = merged;
                 setFixCfg({ fixA_keepTags: merged });
@@ -105,8 +108,8 @@ function renderFixGuardReceipts() {
 // 全部片段（修「绿判定只数第一块」）；待确认状态带内联「确认」按钮（confirmPieceBare）。数字 / 标签名
 // （扫描器字符集无 HTML 元字符）→ 拼 DOM 安全。开关关 → 沿用 1.17.x 原判定逻辑（字节不变，在函数尾部）。
 export function updateFixVerdict() {
-    if (!sharedState.win) return;
-    const el = sharedState.win.querySelector('#so-fix-verdict');
+    if (!win) return;
+    const el = win.querySelector('#so-fix-verdict');
     if (!el) return;
     try { renderFixGuardReceipts(); } catch (e) { /* 收据渲染失败无碍判定行（防御：分段函数吃到诡异回复时） */ }
     const cfg = getEffectiveFixCfg(getSettings(), getFixCfg());
@@ -233,11 +236,11 @@ export function updateFixVerdict() {
 // 输入变化时调用；无警告清空隐藏。采纳 = 把建议形式【追加】到对应区（旧错项留着无害——同名同分隔符命中
 // 后警告自然消失），不猜删用户原文。
 export function renderFixConfigWarnings() {
-    if (!sharedState.win) return;
-    const box = sharedState.win.querySelector('#so-fix-warnings');
+    if (!win) return;
+    const box = win.querySelector('#so-fix-warnings');
     if (!box) return;
     // 📋 自定义面板有自己的两区 → 自己的警告盒；按字段前缀分流，两边不串（自定义面板的警告出现在自动面板里没人看得懂）。
-    const boxC = sharedState.win.querySelector('#so-fixc-warnings');
+    const boxC = win.querySelector('#so-fixc-warnings');
     const cfg = getEffectiveFixCfg(getSettings(), getFixCfg());
     const latest = getLatestAiMessage();
     const warnings = fixConfigWarnings(cfg, latest.idx >= 0 ? latest.text : null);
@@ -260,7 +263,7 @@ export function renderFixConfigWarnings() {
                 btn.textContent = '改成 ' + w.suggest;
                 btn.addEventListener('click', () => {
                     const sel = FIELD_INPUT[w.field] || '#so-fix-keep';
-                    const el2 = sharedState.win.querySelector(sel);
+                    const el2 = win.querySelector(sel);
                     if (!el2) return;
                     el2.value = el2.value + ((el2.value && !el2.value.endsWith('\n')) ? '\n' : '') + w.suggest;
                     setFixCfg({ [w.field]: el2.value });
@@ -280,8 +283,8 @@ export function renderFixConfigWarnings() {
 // ✨ Phase 6（C）——扫描按钮：对最近几条 AI 回复跑 detectScopeTag + detectInnerBlocks，出「采纳标签 / 加入保留区」建议。
 // 标签名受 scanTopLevelBlocks 字符集约束（[A-Za-z0-9_一-龥-]，无 HTML 元字符）→ 直插 innerHTML 无注入风险。
 export function scanFixScope() {
-    if (!sharedState.win) return;
-    const panel = sharedState.win.querySelector('#so-fix-scan-panel');
+    if (!win) return;
+    const panel = win.querySelector('#so-fix-scan-panel');
     if (!panel) return;
     panel.hidden = false;
     const chat = getCtx().chat;
@@ -298,14 +301,14 @@ export function scanFixScope() {
                 + '<div class="so-hint">→ 点「确认散文正文」：之后每条回复只校正散文，own-line 结构块（状态栏 / 选项 / 注记…）原样保留。</div>'
                 + '<button type="button" id="so-scan-bare" class="so-fix-run-btn">确认散文正文（结构块原样保留）</button> '
                 + '<button type="button" id="so-scan-clear" class="so-fix-run-btn">改成整条校正</button>';
-            const bb = sharedState.win.querySelector('#so-scan-bare');
+            const bb = win.querySelector('#so-scan-bare');
             if (bb) bb.addEventListener('click', () => { confirmPieceBare(); panel.hidden = true; });
         } else {
             panel.innerHTML = '<div class="so-scan-row">这几条回复的正文是【裸的】——没有包裹标签。</div>'
                 + '<div class="so-hint">→ 把上面的「只校正此标签内」<strong>留空</strong>即可，会校正整条回复（简单卡的正常情况）。</div>'
                 + '<button type="button" id="so-scan-clear" class="so-fix-run-btn">留空作用域</button>';
         }
-        const cb = sharedState.win.querySelector('#so-scan-clear');
+        const cb = win.querySelector('#so-scan-clear');
         if (cb) cb.addEventListener('click', () => applyScopeFromScan(''));
         return;
     }
@@ -331,11 +334,11 @@ export function scanFixScope() {
     }
     panel.innerHTML = html;
     panel.querySelectorAll('[data-scan-adopt]').forEach((b) => b.addEventListener('click', () => applyScopeFromScan(b.getAttribute('data-scan-adopt'))));
-    const keepBtn = sharedState.win.querySelector('#so-scan-keep');
+    const keepBtn = win.querySelector('#so-scan-keep');
     if (keepBtn) keepBtn.addEventListener('click', () => {
         const picks = [...panel.querySelectorAll('.so-scan-block:checked')].map((c) => ({ name: c.getAttribute('data-bn'), bracket: c.getAttribute('data-bb') === '1' }));
         if (!picks.length) { if (typeof toastr !== 'undefined') toastr.info('没勾选任何块'); return; }
-        const keepEl = sharedState.win.querySelector('#so-fix-keep');
+        const keepEl = win.querySelector('#so-fix-keep');
         const merged = mergeKeepTags(keepEl.value, picks);
         keepEl.value = merged;
         setFixCfg({ fixA_keepTags: merged });
@@ -348,10 +351,10 @@ export function scanFixScope() {
 function applyScopeFromScan(tag) {
     // ✨ 分段校正（1.18.0）：采纳扫描标签 = 同步记住 wrapped 形态；留空 = 清掉形态记忆（回到现场判 / 整条）。
     setFixCfg({ fixA_scopeTag: tag, fixA_scopeManual: false, fixA_pieceMode: tag ? 'wrapped' : '' });
-    const el = sharedState.win && sharedState.win.querySelector('#so-fix-scope');
+    const el = win && win.querySelector('#so-fix-scope');
     if (el) el.value = tag;
     updateFixVerdict();
-    const panel = sharedState.win && sharedState.win.querySelector('#so-fix-scan-panel');
+    const panel = win && win.querySelector('#so-fix-scan-panel');
     if (panel) panel.hidden = true;
     if (typeof toastr !== 'undefined') toastr.success(tag ? ('作用域已设为 <' + tag + '>') : '作用域已留空（校正整条）');
 }
@@ -378,11 +381,11 @@ export function resetFixCfg() {
 // 校正设置里的「带角色卡 / 带世界书」勾选会被忽略，故置灰（disabled + 变淡 + 悬停说明）。手动 + 自动两组都处理。
 // 概要 / 前文仍走 slim 信封（不由预设标记提供），故不灰。
 export function applyFixPresetLock() {
-    if (!sharedState.win) return;
+    if (!win) return;
     const s = getSettings();
     const lockIds = (ids, locked) => {
         for (const id of ids) {
-            const el = sharedState.win.querySelector(id);
+            const el = win.querySelector(id);
             if (!el) continue;
             el.disabled = locked;
             const label = el.closest('label');
@@ -399,9 +402,9 @@ export function applyFixPresetLock() {
 // 用【本聊天】生效配置（per-chat 覆盖全局）回填校正控件（手动 fixM_* + 自动 fixA_*），并按 fixSettingsView 切视图。
 // 控件未建好（窗口未初始化）时静默跳过。
 export function seedFixControls() {
-    if (!sharedState.win) return;
+    if (!win) return;
     const cfg = getEffectiveFixCfg(getSettings(), getFixCfg());
-    const set = (id, prop, val) => { const el = sharedState.win.querySelector(id); if (el) el[prop] = val; };
+    const set = (id, prop, val) => { const el = win.querySelector(id); if (el) el[prop] = val; };
     // 手动（fixM_*）
     set('#so-fixm-depth', 'value', cfg.fixM_contextDepth);
     set('#so-fixm-card', 'checked', !!cfg.fixM_includeCard);
@@ -443,13 +446,13 @@ export function seedFixControls() {
         // seedFixControls 会被切聊天、加载套餐、两个自动勾选调到——脏着时若照常回填，轻则吃掉用户打的字，
         // 重则把下拉挪到别的模板上（程序化写 value 不发 change，「未保存」确认根本不会弹），再按保存就写错人。
         // 故脏着时下拉与文本框一起停在 fixTplDirtyFor 上；其余控件照常无条件回填。
-        if (sharedState.fixTplDirty) {
-            set('#so-fixc-template', 'value', sharedState.fixTplDirtyFor);
+        if (fixTplDirty) {
+            set('#so-fixc-template', 'value', fixTplDirtyFor);
         } else {
             set('#so-fixc-template', 'value', cc.template);
             const t = findFixTemplate(getSettings(), cc.template);
             set('#so-fixc-prompt', 'value', t ? t.prompt : '');
-            sharedState.fixTplDirtyFor = cc.template;   // 不变量：凡是【从模板回填 tplBox.value 的地方】都同时记下归属
+            setFixTplDirtyFor(cc.template);   // 不变量：凡是【从模板回填 tplBox.value 的地方】都同时记下归属
         }
         updateFixTplDirtyMarker();   // 重种子后标记必须与旗一致（脏着回来时它得还在）
         set('#so-fixc-mech', 'checked', cc.useMechanic);
@@ -472,8 +475,8 @@ export function loadFixCfgForChat() {
 
 // ✨ 校正模式 Phase 4：用全局 fixBundles 的名字填充套餐下拉。窗口打开时 + 每次存 / 删后调用。
 export function populateFixBundles() {
-    if (!sharedState.win) return;
-    const sel = sharedState.win.querySelector('#so-fix-bundle');
+    if (!win) return;
+    const sel = win.querySelector('#so-fix-bundle');
     if (!sel) return;
     const prev = sel.value;
     const bundles = (Array.isArray(getSettings().fixBundles) ? getSettings().fixBundles : []);
@@ -504,8 +507,8 @@ export function populateFixBundles() {
 // 没有这一条时 seedFixControls 那句 `set('#so-fixc-template','value','')` 会写不进去，下拉会停在第一项
 // 而配置说「没选」，两边当场分家。
 export function populateFixTemplates() {
-    if (!sharedState.win || !ENABLE_FIX_CUSTOM_TASK) return;
-    const sel = sharedState.win.querySelector('#so-fixc-template');
+    if (!win || !ENABLE_FIX_CUSTOM_TASK) return;
+    const sel = win.querySelector('#so-fixc-template');
     if (!sel) return;
     const prev = sel.value;
     const templates = normalizeFixTemplates(getSettings().fixTemplates);
@@ -551,21 +554,21 @@ export function populateFixTemplates() {
 // 而不是各自去 el.hidden = …；漏一处，用户就会看见一个与实际不符的「未保存」（或看不见该有的那个）。
 // 窗口没建 / 旗关 / 节点不在 → 静默无操作（与 populateFixTemplates 同一套防御）。
 export function updateFixTplDirtyMarker() {
-    if (!sharedState.win || !ENABLE_FIX_CUSTOM_TASK) return;
-    const el = sharedState.win.querySelector('#so-fixc-dirty');
-    if (el) el.hidden = !sharedState.fixTplDirty;
+    if (!win || !ENABLE_FIX_CUSTOM_TASK) return;
+    const el = win.querySelector('#so-fixc-dirty');
+    if (el) el.hidden = !fixTplDirty;
 }
 
 // 让选条目器 UI（两个开关 + 可见性 + 列表）与本聊天元数据对齐。进入诊断模式 / 切聊天时调用。
 export function refreshDiagPickerUI() {
-    if (!sharedState.win || !ENABLE_DIAG_WI_PICKER) return;
+    if (!win || !ENABLE_DIAG_WI_PICKER) return;
     const meta = getDiagWiMeta();
-    const useBox = sharedState.win.querySelector('#so-diag-usesel');
-    const hybBox = sharedState.win.querySelector('#so-diag-hybrid');
+    const useBox = win.querySelector('#so-diag-usesel');
+    const hybBox = win.querySelector('#so-diag-hybrid');
     if (useBox) useBox.checked = meta.use;
     if (hybBox) hybBox.checked = meta.hybrid;
     reflectDiagPickerVisible(meta.use);
-    if (meta.use && sharedState.diagnoseMode) populateDiagWiBooks();
+    if (meta.use && diagnoseMode) populateDiagWiBooks();
 }
 
 
@@ -577,17 +580,17 @@ function formatPrompt(msgs) {
 }
 
 export function openDebug() {
-    const panel = sharedState.win.querySelector('#so-debug');
-    const body = sharedState.win.querySelector('#so-debug-body');
-    const meta = sharedState.win.querySelector('#so-debug-meta');
-    if (!sharedState.lastPrompt || !sharedState.lastPrompt.length) {
+    const panel = win.querySelector('#so-debug');
+    const body = win.querySelector('#so-debug-body');
+    const meta = win.querySelector('#so-debug-meta');
+    if (!lastPrompt || !lastPrompt.length) {
         meta.textContent = '';
         body.textContent = '还没有发送过任何提示词。请先向剧情推进提问，然后再打开此面板。';
     } else {
-        meta.textContent = sharedState.lastPromptMeta
-            ? `· ${sharedState.lastPromptMeta.mode} · ${sharedState.lastPromptMeta.target} · ${sharedState.lastPromptMeta.chars.toLocaleString()} chars · ${sharedState.lastPromptMeta.time}`
+        meta.textContent = lastPromptMeta
+            ? `· ${lastPromptMeta.mode} · ${lastPromptMeta.target} · ${lastPromptMeta.chars.toLocaleString()} chars · ${lastPromptMeta.time}`
             : '';
-        body.textContent = formatPrompt(sharedState.lastPrompt);
+        body.textContent = formatPrompt(lastPrompt);
     }
     panel.classList.add('open');
     body.scrollTop = 0;

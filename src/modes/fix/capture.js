@@ -1,6 +1,6 @@
 import { getSummary, persistConvo } from '../../core/chat-metadata.js';
 import { getCtx } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { buildCardSection, buildTranscriptTurns, composeSummaryWithBridges, renderFixResultHtml, stripMechanismBlocks } from '../chat/context.js';
 import { registerFixApply } from '../chat/history.js';
 import { chatIdentityKey } from '../chat/send.js';
@@ -12,6 +12,8 @@ import { fixNoOp } from '../../prompts/helpers.js';
 import { buildWorldInfo, buildWorldInfoSplit, sideChatScanBlob } from '../../st/adapters.js';
 import { addFixApplyControls, parseFixReply } from '../../ui/messages.js';
 import { presetCurationActive } from '../../ui/settings.js';
+import { setWiAfter, setWiBefore } from '../chat/state.js';
+import { fixActiveMode, fixCaptured, fixCustomJoin, fixExtraKeep, fixOriginalReply, fixPieceDecision, fixPieceTable, fixScope, fixTargetIdx, fixTargetProse, fixThinkProtected, setFixActiveMode, setFixAutoPromptFlavor, setFixAutoPromptVersion, setFixCaptured, setFixCardBlock, setFixContextBlock, setFixCustomJoin, setFixExtraKeep, setFixOriginalReply, setFixPieceDecision, setFixPieceTable, setFixScope, setFixScopeDecision, setFixSummaryBlock, setFixTargetIdx, setFixTargetProse, setFixThinkProtected, setFixWorldBlock } from './state.js';
 
 /* ------------------------------------------------------------------ *
  * ✨ 校正模式 Phase 4 —— 目标完整性守卫（M1）+ 两个数据完整性缺陷。PURE 层（无 DOM / 无副作用 / 确定）
@@ -238,11 +240,11 @@ export async function captureFixContext(s, { mode = 'manual', targetId, wholeFlo
     const cc = (ENABLE_FIX_CUSTOM_TASK && mode === 'custom') ? resolveFixCustomCfg(cfgRaw) : null;
     const norm = resolveFixModeCfg(cfgRaw, cc ? 'auto' : mode);
     if (cc) { norm.keepTags = cc.keepTags; norm.dropTags = fixDropMinusKeep(cc.keepTags, cc.dropTags); }
-    sharedState.fixCustomJoin = null;
+    setFixCustomJoin(null);
     const autoLike = mode === 'auto' || (cc && cc.useMechanic);   // 自定义·沿用识别 = 自动的捕获路径
     // 自动·事件驱动（runAutoFix 经 maybePostReply 传入触发消息 id）→ 钉住那条；手动 / 「按目标校正」按钮无 id → 仍取最近一条。
     const latest = (targetId != null) ? resolveAutoTargetMessage(ctx.chat, targetId) : getLatestAiMessage();
-    sharedState.fixTargetIdx = latest.idx;
+    setFixTargetIdx(latest.idx);
     // ✨ 作用域（仅自动；用户功能请求）：若设了正文标签（默认 content）且回复里确有该标签 → 只校正 <content> 内层，
     // 正文外的所有块作为【信封】逐字保留、原位回插（应用时 wrapContentScope）。找不到该标签 / 留空 → active:false，
     // baseText 回退整条回复（旧行为，简单卡不受影响）。后续 extractExcludedSections / 机制块剥离 / 看改动 都基于 baseText。
@@ -258,22 +260,22 @@ export async function captureFixContext(s, { mode = 'manual', targetId, wholeFlo
         // runFixByTargetsPieces 逐段调用 + 原位回拼。本函数只【决策 + 落模块状态】，不写配置不发通知——
         // 采纳 / 记忆 / 提示是 runAutoFix / runFixByTargets 的事（与 1.17.16 的分工惯例一致）。
         const dec = resolveFixPieces({ pieceMode: norm.pieceMode, scopeTag: norm.scopeTag, scopeManual: norm.scopeManual, pieceAsked: norm.pieceAsked, reply: latest.text });
-        sharedState.fixScopeDecision = null;
-        sharedState.fixPieceTable = null;
-        sharedState.fixScope = { active: false };
+        setFixScopeDecision(null);
+        setFixPieceTable(null);
+        setFixScope({ active: false });
         if (dec.action === 'run' && dec.mode === 'wrapped') {
             const table = fixSegmentReply(latest.text, { mode: 'wrapped', tag: dec.tag, keepNames: fixKeepNameSet(norm.keepTags) });
             if (table.bypass && !cc) {
-                sharedState.fixScope = splitContentScope(latest.text, dec.tag);   // 干净单块：字面老路径（📋 自定义留着单块表 → 恒有 join）
+                setFixScope(splitContentScope(latest.text, dec.tag));   // 干净单块：字面老路径（📋 自定义留着单块表 → 恒有 join）
             } else if (!table.pieces.length) {
                 dec.action = 'skip'; dec.note = { code: 'noNarrative' };   // P7：包裹里全是结构 → 可读跳过
             } else {
-                sharedState.fixPieceTable = table;
+                setFixPieceTable(table);
             }
         } else if (dec.action === 'run' && dec.mode === 'bare') {
             const table = fixSegmentReply(latest.text, { mode: 'bare' });
             if (!table.pieces.length) { dec.action = 'skip'; dec.note = { code: 'noNarrative' }; }
-            else sharedState.fixPieceTable = table;
+            else setFixPieceTable(table);
         } else if (dec.action === 'ask' || dec.action === 'pending') {
             // 提案计数按提案形态建表：wrapped 提案（梯 7.5 未知包裹名）用该标签的 wrapped 表，bare 提案用 bare 表。
             dec.proposal = fixTableCounts(fixSegmentReply(latest.text, (dec.mode === 'wrapped' && dec.tag)
@@ -281,36 +283,36 @@ export async function captureFixContext(s, { mode = 'manual', targetId, wholeFlo
                 : { mode: 'bare' }));
             if (!dec.proposal.pieces) { dec.action = 'skip'; dec.note = { code: 'noNarrative' }; }   // 全结构：没什么可确认
         }
-        sharedState.fixPieceDecision = dec;
+        setFixPieceDecision(dec);
     } else if (autoLike) {
         const dec = resolveFixScope({ cachedTag: norm.scopeTag, scopeManual: norm.scopeManual, reply: latest.text, replies: recentAiReplies(ctx.chat, 5) });
-        sharedState.fixScopeDecision = dec;
-        sharedState.fixPieceDecision = null;
-        sharedState.fixPieceTable = null;
-        sharedState.fixScope = dec.active ? splitContentScope(latest.text, dec.tag) : { active: false };
+        setFixScopeDecision(dec);
+        setFixPieceDecision(null);
+        setFixPieceTable(null);
+        setFixScope(dec.active ? splitContentScope(latest.text, dec.tag) : { active: false });
     } else {
-        sharedState.fixScopeDecision = null;
-        sharedState.fixPieceDecision = null;
-        sharedState.fixPieceTable = null;
+        setFixScopeDecision(null);
+        setFixPieceDecision(null);
+        setFixPieceTable(null);
         // 二创版 2.1：整篇手动也能只改某个标签里的正文（fixM_scopeTag）。只认 wholeFloor：✂️ 选段家族同以
         // mode:'manual' 进来、只取上下文槽，绝不能被作用域改掉字节面。标签不在这条回复里 → 退回整条，并告诉调用方。
         const wantScope = wholeFloor && mode === 'manual' && norm.scopeTag;
-        sharedState.fixScope = wantScope ? splitContentScope(latest.text, norm.scopeTag) : { active: false };
-        if (wantScope && !sharedState.fixScope.active) manualScopeMissed = norm.scopeTag;
+        setFixScope(wantScope ? splitContentScope(latest.text, norm.scopeTag) : { active: false });
+        if (wantScope && !fixScope.active) manualScopeMissed = norm.scopeTag;
     }
     // 📋 自定义模板任务（spec §5.2）：「整条」= 跳过整套阶梯，原文 + 自带两区 → raw 表（不剥 MVU）。沿用识别但阶梯没建出表
     // （whole：没包裹也没结构；或分段开关关着）→ 同一张表但 raw:false（仍剥 MVU、composeFixedReply 接回）。
     if (cc && !cc.useMechanic) {
-        sharedState.fixScopeDecision = null; sharedState.fixPieceDecision = null; sharedState.fixPieceTable = null; sharedState.fixScope = { active: false };
-        sharedState.fixCustomJoin = fixCustomRawTable(latest.text, cc.keepTags, cc.dropTags, { raw: true });
-    } else if (cc && !sharedState.fixPieceTable && !(sharedState.fixPieceDecision && ['ask', 'pending', 'suggest', 'skip'].includes(sharedState.fixPieceDecision.action))) {
-        sharedState.fixScope = { active: false };
-        sharedState.fixCustomJoin = fixCustomRawTable(latest.text, cc.keepTags, cc.dropTags, { raw: false });
+        setFixScopeDecision(null); setFixPieceDecision(null); setFixPieceTable(null); setFixScope({ active: false });
+        setFixCustomJoin(fixCustomRawTable(latest.text, cc.keepTags, cc.dropTags, { raw: true }));
+    } else if (cc && !fixPieceTable && !(fixPieceDecision && ['ask', 'pending', 'suggest', 'skip'].includes(fixPieceDecision.action))) {
+        setFixScope({ active: false });
+        setFixCustomJoin(fixCustomRawTable(latest.text, cc.keepTags, cc.dropTags, { raw: false }));
     }
     // 分段表在场：baseText = 各段 core 拼接——只用于「有没有可校正正文」早退与 R2/预过滤语义；真正逐段的
     // 抠保留区 / 剥机制块 / 建提示在 fixPieceCall 里按【单段】重做。无表：老语义原样（作用域内层 / 整条）。
-    const baseText = sharedState.fixCustomJoin ? sharedState.fixCustomJoin.core : (sharedState.fixPieceTable ? sharedState.fixPieceTable.pieces.map((p) => p.core).join('\n\n') : (sharedState.fixScope.active ? sharedState.fixScope.inner : latest.text));
-    sharedState.fixOriginalReply = baseText;   // 机制块接回 + 看改动「before」基于作用域内层（作用域外的块在信封里、不参与校正与差异）
+    const baseText = fixCustomJoin ? fixCustomJoin.core : (fixPieceTable ? fixPieceTable.pieces.map((p) => p.core).join('\n\n') : (fixScope.active ? fixScope.inner : latest.text));
+    setFixOriginalReply(baseText);   // 机制块接回 + 看改动「before」基于作用域内层（作用域外的块在信封里、不参与校正与差异）
     // ✨ 思考块保护（W1 2026-08-16，§3.1 修复）：手动整篇校正把 REASONING_TAGS 家族思考块经【既有】保留区机械
     // （extractExcludedSections → ⟦SO_KEEP_n⟧ 原位锚 → composeFixedReply 原样接回）码侧收走——模型看不到 =
     // 结构性不可删（实测整篇手动 6/10 静默删光整块 <thinking>，软约束挡不住）。两重门：
@@ -320,38 +322,38 @@ export async function captureFixContext(s, { mode = 'manual', targetId, wholeFlo
     //    看不到块，提示词例外条款够不着；要模型改思考块，先关保护。
     const thinkKeep = (wholeFloor && mode === 'manual')
         ? fixThinkKeepSpec(baseText, norm.protectThink) : '';
-    const ex = sharedState.fixCustomJoin
-        ? { prose: sharedState.fixCustomJoin.core, keepBlocks: sharedState.fixCustomJoin.keepBlocks }   // 📋 raw 表已抠过两区，不再抠第二遍
+    const ex = fixCustomJoin
+        ? { prose: fixCustomJoin.core, keepBlocks: fixCustomJoin.keepBlocks }   // 📋 raw 表已抠过两区，不再抠第二遍
         : extractExcludedSections(baseText, thinkKeep || norm.keepTags, norm.dropTags);   // 排除区（自动=用户 keepTags；手动整篇=思考块保护）
-    sharedState.fixTargetProse = (sharedState.fixCustomJoin && sharedState.fixCustomJoin.raw) ? ex.prose : stripMechanismBlocks(ex.prose);   // 仍自动剥离 MVU 机制块（<UpdateVariable>，composeFixedReply 会原样接回）；📋 整条 raw：不剥
-    sharedState.fixExtraKeep = ex.keepBlocks;   // 保留区块数组（composeFixedReply 按 ⟦SO_KEEP_n⟧ 位置还原，而非接到末尾）
-    sharedState.fixThinkProtected = thinkKeep ? ex.keepBlocks.length : 0;   // 回执计数（renderFixCard 消费；非保护路径恒 0）
+    setFixTargetProse((fixCustomJoin && fixCustomJoin.raw) ? ex.prose : stripMechanismBlocks(ex.prose));   // 仍自动剥离 MVU 机制块（<UpdateVariable>，composeFixedReply 会原样接回）；📋 整条 raw：不剥
+    setFixExtraKeep(ex.keepBlocks);   // 保留区块数组（composeFixedReply 按 ⟦SO_KEEP_n⟧ 位置还原，而非接到末尾）
+    setFixThinkProtected(thinkKeep ? ex.keepBlocks.length : 0);   // 回执计数（renderFixCard 消费；非保护路径恒 0）
     // ✨ Phase 4 目标完整性：抓下这次校正的【身份 + 目标快照】。应用前（尤其手动卡「应用」的延迟点击、以及自动
     // 在 LLM 往返后）用 fixTargetStale 比对，聊天已切（P-CORRUPT）/ 目标换 swipe / 内容变更 / 目标消失 → 不写、记一条。
     // 指纹取整条 m.mes（换 swipe 后 mes 也变，两端不一致即拦下）；prose 存去机制块正文，供 addFixApplyControls 廉价截断复检。
-    sharedState.fixCaptured = {
+    setFixCaptured({
         chatId: chatIdentityKey(),
         targetIdx: latest.idx,
         swipeId: (ctx.chat[latest.idx]?.swipe_id) | 0,
         fingerprint: fixFingerprint(ctx.chat[latest.idx]?.mes),
-        prose: sharedState.fixTargetProse,
+        prose: fixTargetProse,
         // ✨ overlap（fixWaitForMvu）：捕获时（MVU 写块【之前】）的纯叙述正文（去 <UpdateVariable> + 状态栏占位符）；写入前与当前比对——只有 MVU 注块 → 一致 → 放行。
         bodyProse: fixBodyProse(latest.text),
-    };
+    });
     // 📜剧情概要（手动默认带、自动可选）；buildFixEnvelope 包成 <story_summary>。柏宝书记忆桥沿用同一
     // 开关（勾了概要才一并带柏宝书摘要——信封只有一个概要槽，composeSummaryWithBbs 合成；桥空 = 原样）。
-    sharedState.fixSummaryBlock = norm.includeSummary ? composeSummaryWithBridges(getSummary()) : '';
-    sharedState.fixActiveMode = mode;              // buildFixPrompt 据此选系统提示：手动 → FIX_SYSTEM_PROMPT_MANUAL；自动 → 轻校恒收紧版 / 精校按侧重（1.18.3）
-    sharedState.fixAutoPromptVersion = norm.promptVersion;   // ✨ 精校版本（仅自动生效；手动 norm 恒 'light'）；'thorough' → buildFixPrompt 用精校
-    sharedState.fixAutoPromptFlavor = norm.promptFlavor;     // ✨ 精校侧重（'deepseek' / 'opus'）
+    setFixSummaryBlock(norm.includeSummary ? composeSummaryWithBridges(getSummary()) : '');
+    setFixActiveMode(mode);              // buildFixPrompt 据此选系统提示：手动 → FIX_SYSTEM_PROMPT_MANUAL；自动 → 轻校恒收紧版 / 精校按侧重（1.18.3）
+    setFixAutoPromptVersion(norm.promptVersion);   // ✨ 精校版本（仅自动生效；手动 norm 恒 'light'）；'thorough' → buildFixPrompt 用精校
+    setFixAutoPromptFlavor(norm.promptFlavor);     // ✨ 精校侧重（'deepseek' / 'opus'）
     if (norm.includeContext) {
         const depth = norm.contextDepth | 0;              // -1（或任何非正数）= 全部前文
         const fetchDepth = depth > 0 ? depth + 1 : -1;    // 多取 1 条以便下面去掉待校正回复；非正数→-1 取全部
         const turns = buildTranscriptTurns(ctx, { ...s, contextDepth: fetchDepth }, false);
         const prior = turns.slice(0, -1);   // 去掉末条（待校正回复本身）
-        sharedState.fixContextBlock = prior.map((l) => `${l.name}: ${l.text}`).join('\n\n');
+        setFixContextBlock(prior.map((l) => `${l.name}: ${l.text}`).join('\n\n'));
     } else {
-        sharedState.fixContextBlock = '';
+        setFixContextBlock('');
     }
     // 卡 / 世界书：经【自定义补全预设】发送时（fixM_/fixA_usePreset + 已精选预设），由预设的 charDescription / worldInfo 标记在
     // 各自位置提供（见 buildFixPresetMessages 的 expandMarker），故信封里【不再带】卡 / 世界书（slim，免重复）——
@@ -360,14 +362,14 @@ export async function captureFixContext(s, { mode = 'manual', targetId, wholeFlo
     // 房间里只有 note 记录（本就不参与）——不传，保持逐字节稳定。
     const fixSideScan = mode === 'manual' ? await sideChatScanBlob() : '';
     if (fixUsePresetFor(s, mode) && presetCurationActive(s)) {
-        sharedState.fixCardBlock = '';
-        sharedState.fixWorldBlock = '';
+        setFixCardBlock('');
+        setFixWorldBlock('');
         const split = await buildWorldInfoSplit(undefined, fixSideScan, { renderEjs: ENABLE_WI_EJS_RENDER && !!s.wiRenderEjs && mode === 'manual' });   // 仅【手动】校正 = READ 家族；自动校正后台跑 → 恒 raw
-        sharedState.wiBefore = split.before;
-        sharedState.wiAfter = split.after;
+        setWiBefore(split.before);
+        setWiAfter(split.after);
     } else {
-        sharedState.fixCardBlock = norm.includeCard ? buildCardSection(ctx) : '';
-        sharedState.fixWorldBlock = norm.includeWorld ? await buildWorldInfo('st', fixSideScan, { renderEjs: ENABLE_WI_EJS_RENDER && !!s.wiRenderEjs && mode === 'manual' }) : '';   // 仅【手动】校正执行世界书 EJS；自动 → raw
+        setFixCardBlock(norm.includeCard ? buildCardSection(ctx) : '');
+        setFixWorldBlock(norm.includeWorld ? await buildWorldInfo('st', fixSideScan, { renderEjs: ENABLE_WI_EJS_RENDER && !!s.wiRenderEjs && mode === 'manual' }) : '');   // 仅【手动】校正执行世界书 EJS；自动 → raw
     }
     return { manualScopeMissed };
 }
@@ -380,12 +382,12 @@ export async function captureFixContext(s, { mode = 'manual', targetId, wholeFlo
 // .so-content 已显示剥离后的 cleanText、不应覆盖；按目标分支要把原文/「（空回复）」回填——故不在这里统一）。
 export function renderFixCard(assistantEl, contentEl, aEntry, finalText) {
     // 手动宽容 / 自动严格：路由归一成 status；非 ok（'truncated' / 'unparseable'）原样回传给调用点出对应提示。
-    const r = parseFixReply(finalText, sharedState.fixActiveMode);
+    const r = parseFixReply(finalText, fixActiveMode);
     if (r.status !== 'ok') return r.status;
     // P-TRUNC：解析成功但成品像是被截断（<FixedReply> 开了没闭 / 末尾断句且明显偏短）→ 当截断处理，回传
     // 'truncated' 让调用点提示「调大 token / 重试」并【不出应用按钮】——半句稿会腰斩这条回复。
     const finishHint = (/<FixedReply\b[^>]*>/i.test(finalText) && !/<\/FixedReply\s*>/i.test(finalText)) ? 'length' : undefined;
-    if (fixOutputTruncated(r.fixed, finishHint, sharedState.fixTargetProse).truncated) return 'truncated';
+    if (fixOutputTruncated(r.fixed, finishHint, fixTargetProse).truncated) return 'truncated';
     const parsed = { fixed: r.fixed, problems: r.problems };   // 保持下游 parsed.fixed / parsed.problems / addFixApplyControls 契约不变
     aEntry.content = parsed.fixed;   // 历史里存干净的校正正文，而非原始 <FixedReply> 标签
     persistConvo();
@@ -399,7 +401,7 @@ export function renderFixCard(assistantEl, contentEl, aEntry, finalText) {
     }
     // 无改动检测：模型把原文原样返回（手动模式没有 <problems> 可解释——否则用户只看到「同样的输出、没说明」，
     // 这正是用户报的「偶尔拒绝改动、又不解释」）。明确告知，且【不出「应用」按钮】——应用一条与原文相同的 swipe 没意义。
-    if (fixNoOp(sharedState.fixTargetProse, parsed.fixed)) {
+    if (fixNoOp(fixTargetProse, parsed.fixed)) {
         const note = document.createElement('div');
         note.className = 'so-fix-changes';
         note.textContent = '模型没有做出改动——它认为按当前要求无需修改。可换一句更具体的指令、或调整目标后再试。';
@@ -415,7 +417,7 @@ export function renderFixCard(assistantEl, contentEl, aEntry, finalText) {
     }
     // ✨ 思考块保护回执（W1 2026-08-16）：本次捕获抠走了思考块 → 卡下一行可见回执（保护绝不静默——
     // 告知 + 指路开关）。仅整篇手动路径会有计数（captureFixContext 保护条件），按目标 / 自动经此函数时恒 0。
-    const thinkNote = sharedState.fixThinkProtected > 0 ? fixThinkProtectNote(sharedState.fixThinkProtected) : '';
+    const thinkNote = fixThinkProtected > 0 ? fixThinkProtectNote(fixThinkProtected) : '';
     if (thinkNote) {
         const tn = document.createElement('div');
         tn.className = 'so-fix-changes so-fix-think-note';
@@ -425,8 +427,8 @@ export function renderFixCard(assistantEl, contentEl, aEntry, finalText) {
     // 把捕获快照 fixCaptured 一并传给应用控件：延迟点击「应用」时用它做陈旧守卫（P-CORRUPT 主要面）。
     // 重画保真（1.33.1）：先登记应用材料——换房重画时最新一条凭它重挂「应用到回复 / 看改动」。
     // 思考块回执并入 noteText（重画时以单个 .so-fix-changes 重挂——1.33.1 契约，回执不因换房丢失）。
-    registerFixApply(aEntry, parsed, sharedState.fixOriginalReply, sharedState.fixTargetIdx, sharedState.fixExtraKeep, sharedState.fixScope, sharedState.fixCaptured, undefined,
+    registerFixApply(aEntry, parsed, fixOriginalReply, fixTargetIdx, fixExtraKeep, fixScope, fixCaptured, undefined,
         [parsed.problems ? '发现并修正：\n' + parsed.problems : '', thinkNote].filter(Boolean).join('\n'));
-    addFixApplyControls(assistantEl, parsed, sharedState.fixOriginalReply, sharedState.fixTargetIdx, sharedState.fixExtraKeep, sharedState.fixScope, sharedState.fixCaptured, undefined, { entry: aEntry });
+    addFixApplyControls(assistantEl, parsed, fixOriginalReply, fixTargetIdx, fixExtraKeep, fixScope, fixCaptured, undefined, { entry: aEntry });
     return 'ok';
 }

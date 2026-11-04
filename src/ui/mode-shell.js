@@ -1,6 +1,6 @@
 import { confirmModeSwitch } from '../core/chat-metadata.js';
 import { getCtx, getSettings, renderModelBar, save, uiConfirm } from '../core/settings.js';
-import { sharedState } from '../core/state.js';
+
 import { addSystemNote, modeEntryNote, renderEmptyState, syncConvoStream } from '../modes/advisor/cards.js';
 import { activeDraftContent, draftCardLabel, getBuilderState, setBuilderState } from '../modes/advisor/metadata.js';
 import { checkPlanReminder } from '../modes/advisor/story-path.js';
@@ -14,6 +14,8 @@ import { populateBuilderBooks, populateLorebookBooks } from '../modes/lorebook/u
 import { ENABLE_AUTO_DIAGNOSE, ENABLE_CHAR_BUILDER, ENABLE_DIAG_WI_PICKER, ENABLE_DRAFT_CONDENSE, ENABLE_FIX_CUSTOM_TASK, ENABLE_LIGHT_CONDENSE, ENABLE_REPLY_FIX, ENABLE_SCHEMA_DIAG } from '../prompts/builtins.js';
 import { ensureWindowInView, windowIsReachable } from './geometry.js';
 import { applySysPromptPresetUiState, buildCurationRows, getActiveMainPresetName, snapshotFromRows, updateBadge } from './settings.js';
+import { advisorMode, builderMode, convo, diagnoseMode, fixMode, lorebookMode, priorOracleMode, setAdvisorMode, setBuilderMode, setDiagnoseMode, setFixMode, setLorebookMode, setPriorOracleMode } from '../core/runtime-state.js';
+import { curationState, inputEl, messagesEl, setCurationState, setQpMenuOpen, win } from './state.js';
 
 /* ------------------------------------------------------------------ *
  * Curation modal — the user is the sole curator (no LLM step).
@@ -21,7 +23,7 @@ import { applySysPromptPresetUiState, buildCurationRows, getActiveMainPresetName
  * pre-checked by a name/role/structure classifier, draggable to reorder.
  * Saving freezes the kept rows (in their final order) into curatedPresets.
  * ------------------------------------------------------------------ */
-sharedState.curationState = null;
+
 
 const CUR_TAG_LABEL = {
     marker: '插槽', story: '故事', machinery: '变量机制', wrapper: '包裹',
@@ -35,13 +37,13 @@ export function openCuration(name, seedRows) {
         addSystemNote(`预设「${name}」没有可挑选的已启用块。请检查它在 ST 里是否配置正确。`);
         return;
     }
-    sharedState.curationState = { name, rows, dragFrom: -1 };
+    setCurationState({ name, rows, dragFrom: -1 });
 
-    let modal = sharedState.win.querySelector('#so-curate');
+    let modal = win.querySelector('#so-curate');
     if (!modal) {
         modal = document.createElement('div');
         modal.id = 'so-curate';
-        sharedState.win.appendChild(modal);
+        win.appendChild(modal);
     }
     modal.innerHTML = `
         <div id="so-cur-card">
@@ -74,7 +76,7 @@ export function openCuration(name, seedRows) {
     modal.querySelector('#so-cur-x').addEventListener('click', closeCuration);
     modal.querySelector('#so-cur-cancel').addEventListener('click', closeCuration);
     modal.querySelector('#so-cur-reset').addEventListener('click', () => {
-        sharedState.curationState.rows = buildCurationRows(name); // re-seed from classifier
+        curationState.rows = buildCurationRows(name); // re-seed from classifier
         renderCurationRows();
     });
     modal.querySelector('#so-cur-save').addEventListener('click', saveCuration);
@@ -141,16 +143,16 @@ function maybeShowCurationWarning(modal, name) {
 }
 
 function closeCuration() {
-    const modal = sharedState.win.querySelector('#so-curate');
+    const modal = win.querySelector('#so-curate');
     if (modal) { modal.classList.remove('open'); modal.style.display = 'none'; }
-    sharedState.curationState = null;
+    setCurationState(null);
 }
 
 function renderCurationRows() {
-    const list = sharedState.win.querySelector('#so-cur-list');
-    if (!list || !sharedState.curationState) return;
+    const list = win.querySelector('#so-cur-list');
+    if (!list || !curationState) return;
     list.innerHTML = '';
-    sharedState.curationState.rows.forEach((r, idx) => {
+    curationState.rows.forEach((r, idx) => {
         const row = document.createElement('div');
         row.className = 'so-cur-row' + (r.keep ? '' : ' so-cur-off') + (r.kind === 'marker' ? ' so-cur-marker' : '');
         row.draggable = true;
@@ -182,25 +184,25 @@ function renderCurationRows() {
         const cbEl0 = row.querySelector('.so-cur-cb');
         if (cbEl0) cbEl0.style.cssText += ';flex:0 0 auto;width:15px;height:15px;cursor:pointer;';
         row.querySelector('.so-cur-cb').addEventListener('change', (e) => {
-            sharedState.curationState.rows[idx].keep = e.target.checked;
+            curationState.rows[idx].keep = e.target.checked;
             row.classList.toggle('so-cur-off', !e.target.checked);
             row.style.opacity = e.target.checked ? '' : '0.5';
             updateCurationCount();
         });
-        row.addEventListener('dragstart', () => { sharedState.curationState.dragFrom = idx; row.classList.add('so-cur-drag'); });
+        row.addEventListener('dragstart', () => { curationState.dragFrom = idx; row.classList.add('so-cur-drag'); });
         row.addEventListener('dragend', () => { row.classList.remove('so-cur-drag'); });
         row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('so-cur-over'); });
         row.addEventListener('dragleave', () => row.classList.remove('so-cur-over'));
         row.addEventListener('drop', (e) => {
             e.preventDefault();
             row.classList.remove('so-cur-over');
-            const from = sharedState.curationState.dragFrom;
+            const from = curationState.dragFrom;
             const to = idx;
             if (from < 0 || from === to) return;
-            const arr = sharedState.curationState.rows;
+            const arr = curationState.rows;
             const [moved] = arr.splice(from, 1);
             arr.splice(to, 0, moved);
-            sharedState.curationState.dragFrom = -1;
+            curationState.dragFrom = -1;
             renderCurationRows();
         });
 
@@ -210,9 +212,9 @@ function renderCurationRows() {
 }
 
 function updateCurationCount() {
-    const el = sharedState.win.querySelector('#so-cur-count');
-    if (!el || !sharedState.curationState) return;
-    const kept = sharedState.curationState.rows.filter((r) => r.keep);
+    const el = win.querySelector('#so-cur-count');
+    if (!el || !curationState) return;
+    const kept = curationState.rows.filter((r) => r.keep);
     const texts = kept.filter((r) => r.kind === 'text');
     const slots = kept.filter((r) => r.kind === 'marker');
     const chars = texts.reduce((n, r) => n + (r.chars || 0), 0);
@@ -220,8 +222,8 @@ function updateCurationCount() {
 }
 
 function saveCuration() {
-    if (!sharedState.curationState) return;
-    const { name, rows } = sharedState.curationState;
+    if (!curationState) return;
+    const { name, rows } = curationState;
     const snap = snapshotFromRows(rows);
     if (!snap.items.length) {
         addSystemNote('至少要保留一个块。请勾选后再保存。');
@@ -233,7 +235,7 @@ function saveCuration() {
     s.sysPromptPresetName = name;
     save();
     closeCuration();
-    const sel = sharedState.win.querySelector('#so-sysprompt-preset');
+    const sel = win.querySelector('#so-sysprompt-preset');
     if (sel) sel.value = name;
     applySysPromptPresetUiState();
     updateBadge();
@@ -296,27 +298,27 @@ export function soIsMobileForEnter() {
 // 用户点输入框时系统自然弹键盘。判据用主指针粗细而非视口宽度：横屏手机 / 平板宽度可超 600 也不该弹。
 // 明确要打字的场景（概要编辑器、消息编辑框）不走这里——那些聚焦是功能本体，不是礼貌。
 export function focusOracleInput() {
-    if (!sharedState.inputEl) return;
+    if (!inputEl) return;
     const coarse = window.matchMedia
         ? window.matchMedia('(pointer: coarse)').matches
         : (window.innerWidth < 600);   // matchMedia 缺席的古董环境退回旧宽度判据
     if (coarse) return;
-    sharedState.inputEl.focus();
+    inputEl.focus();
 }
 
 export function toggleWindow(show) {
-    if (!sharedState.win) return;
-    const visible = sharedState.win.style.display !== 'none';
+    if (!win) return;
+    const visible = win.style.display !== 'none';
     // 无参切换（🌙 聊天栏快捷钮）：窗口「开着」但已被拖出可见区时，按字面切换只会把它关掉——屏幕上
     // 什么都没变，用户会觉得这颗钮坏了（得再点一下才靠 ensureWindowInView 拉回来）。这种情况按
     // 【显示并拉回可见区】处理，下面 next=true 分支里的 ensureWindowInView 会把它夹回屏内。
     const next = (show === undefined) ? (!visible || !windowIsReachable()) : show;
-    sharedState.win.style.display = next ? 'flex' : 'none';
+    win.style.display = next ? 'flex' : 'none';
     if (next) {
         // Re-trigger the open animation each time the window is shown.
-        sharedState.win.classList.remove('so-opening');
-        void sharedState.win.offsetWidth; // force reflow so the animation restarts
-        sharedState.win.classList.add('so-opening');
+        win.classList.remove('so-opening');
+        void win.offsetWidth; // force reflow so the animation restarts
+        win.classList.add('so-opening');
         ensureWindowInView();   // 每次开窗都把窗口夹回可见区——卡在屏外的窗口下次打开即自愈
         // 触屏不自动聚焦（见 focusOracleInput）：弹软键盘会压缩视口、把标题栏挤出屏外；桌面保留自动聚焦。
         focusOracleInput();
@@ -342,7 +344,7 @@ function isOracleUiEvent(target) {
 }
 export function onDocClickOutside(e) {
     if (!getSettings().clickOutsideClose) return;
-    if (!sharedState.win || sharedState.win.style.display === 'none') return;
+    if (!win || win.style.display === 'none') return;
     if (isOracleUiEvent(e.target)) return;
     try {
         const sel = window.getSelection();
@@ -404,7 +406,7 @@ export const MODE_EMPTY = {
 };
 
 export function currentOracleMode() {
-    return sharedState.diagnoseMode ? 'diagnose' : (sharedState.lorebookMode ? 'lorebook' : (sharedState.advisorMode ? 'advisor' : (sharedState.fixMode ? 'fix' : (sharedState.builderMode ? 'builder' : 'chat'))));
+    return diagnoseMode ? 'diagnose' : (lorebookMode ? 'lorebook' : (advisorMode ? 'advisor' : (fixMode ? 'fix' : (builderMode ? 'builder' : 'chat'))));
 }
 
 export function modeReturnNote(mode) {
@@ -417,39 +419,39 @@ export function modeReturnNote(mode) {
 }
 
 export function setOracleMode(target) {
-    sharedState.diagnoseMode = target === 'diagnose';
-    sharedState.lorebookMode = target === 'lorebook';
-    sharedState.advisorMode = target === 'advisor';
-    sharedState.fixMode = target === 'fix';
-    sharedState.builderMode = target === 'builder';
-    sharedState.win.classList.toggle('so-diag-on', sharedState.diagnoseMode);
-    sharedState.win.classList.toggle('so-lb-on', sharedState.lorebookMode);
-    sharedState.win.classList.toggle('so-adv-on', sharedState.advisorMode);
-    sharedState.win.classList.toggle('so-fix-on', sharedState.fixMode);
-    sharedState.win.classList.toggle('so-bld-on', sharedState.builderMode);
-    sharedState.win.querySelector('#so-diagnose-btn').classList.toggle('so-diag-active', sharedState.diagnoseMode);
-    sharedState.win.querySelector('#so-lorebook-btn').classList.toggle('so-lb-active', sharedState.lorebookMode);
-    sharedState.win.querySelector('#so-advisor-btn').classList.toggle('so-adv-active', sharedState.advisorMode);
-    sharedState.win.querySelector('#so-fix-btn').classList.toggle('so-fix-active', sharedState.fixMode);
-    sharedState.win.querySelector('#so-builder-btn')?.classList.toggle('so-bld-active', sharedState.builderMode);
-    sharedState.inputEl.placeholder = MODE_PLACEHOLDERS[target] || MODE_PLACEHOLDERS.chat;
+    setDiagnoseMode(target === 'diagnose');
+    setLorebookMode(target === 'lorebook');
+    setAdvisorMode(target === 'advisor');
+    setFixMode(target === 'fix');
+    setBuilderMode(target === 'builder');
+    win.classList.toggle('so-diag-on', diagnoseMode);
+    win.classList.toggle('so-lb-on', lorebookMode);
+    win.classList.toggle('so-adv-on', advisorMode);
+    win.classList.toggle('so-fix-on', fixMode);
+    win.classList.toggle('so-bld-on', builderMode);
+    win.querySelector('#so-diagnose-btn').classList.toggle('so-diag-active', diagnoseMode);
+    win.querySelector('#so-lorebook-btn').classList.toggle('so-lb-active', lorebookMode);
+    win.querySelector('#so-advisor-btn').classList.toggle('so-adv-active', advisorMode);
+    win.querySelector('#so-fix-btn').classList.toggle('so-fix-active', fixMode);
+    win.querySelector('#so-builder-btn')?.classList.toggle('so-bld-active', builderMode);
+    inputEl.placeholder = MODE_PLACEHOLDERS[target] || MODE_PLACEHOLDERS.chat;
     if (ENABLE_DIAG_WI_PICKER) refreshDiagPickerUI();   // 诊断「精选条目」栏随模式刷新（用户功能请求）
     updateDiagButtonVisual();   // 诊断按钮（含红色 AUTO）状态随模式切换始终对齐（含从子模式回到诊断时）
     updateFixButtonVisual();    // ✨ 校正按钮：自动校正开启时图标染金（随模式切换对齐）
     // A3：切换模式时自动收起设置面板——腾出纵向空间、别让设置盖住新模式的栏（二创 settings-panel 行为原生化）。
-    const _setPanel = sharedState.win.querySelector('#so-settings');
+    const _setPanel = win.querySelector('#so-settings');
     if (_setPanel && _setPanel.classList.contains('open')) {
         _setPanel.classList.remove('open');
-        sharedState.win.classList.remove('so-settings-open');
+        win.classList.remove('so-settings-open');
     }
     // 📥📤 气泡行 / 空态的导出导入入口随模式刷新（只在 chat / advisor 出现）。
     soApplyConvoIoVisual(null);
     // 每模式独立房间：切模式即把可见侧聊换到该模式的房间（先落盘现流、再重载）。换房时 loadConvoForChat 已重画
     // （含空态）；没换房（同房间 / 开关关）才手动刷新空态——每模式自带引导语 + 示例 chip。
-    sharedState.qpMenuOpen = false;
+    setQpMenuOpen(false);
     renderModelBar();   // ⚡ 快捷指令按模式显示
     const swapped = syncConvoStream();
-    if (!swapped && sharedState.messagesEl && !sharedState.convo.length) { sharedState.messagesEl.innerHTML = ''; renderEmptyState(); }
+    if (!swapped && messagesEl && !convo.length) { messagesEl.innerHTML = ''; renderEmptyState(); }
 }
 
 // 诊断按钮 = 纯粹的【视图】两态开关（关 ↔ 诊断），1.65.0 起不再承担自动诊断的开关职责。
@@ -461,7 +463,7 @@ export function setOracleMode(target) {
 // 于是死胡同不复存在（按钮永远能把你带回诊断视图），diagButtonState / nextDiagState / diagShouldReveal
 // 三个纯函数随三态循环一并退役。
 export async function toggleDiagnose() {
-    const entering = !sharedState.diagnoseMode;
+    const entering = !diagnoseMode;
     if (!(await confirmModeSwitch(entering ? 'diagnose' : 'chat'))) return;   // 1.36.0 中断确认
     setOracleMode(entering ? 'diagnose' : 'chat');
     if (entering && ENABLE_SCHEMA_DIAG) maybeRunSaveHealth('first');   // 🩺 1.89.0：本聊天首次进诊断 → 查一次存档
@@ -493,19 +495,19 @@ export function setAutoDiagnose(on) {
 
 // 勾选框回显（唯一写者）：设置面板重开 / 换聊天 / 警告弹窗确认后都靠它把 UI 拉回与 autoDiagnoseEnabled 一致。
 export function reflectAutoDiagCheckbox() {
-    if (!sharedState.win || !ENABLE_AUTO_DIAGNOSE) return;
-    const chk = sharedState.win.querySelector('#so-diag-auto');
+    if (!win || !ENABLE_AUTO_DIAGNOSE) return;
+    const chk = win.querySelector('#so-diag-auto');
     if (chk) chk.checked = !!getSettings().autoDiagnoseEnabled;
 }
 
 // 诊断按钮视觉：自动开启时图标变红 + 显示 AUTO 标签（覆盖普通诊断的蓝色高亮）。init 与每次切换后调用。
 export function updateDiagButtonVisual() {
-    if (!sharedState.win) return;
-    const btn = sharedState.win.querySelector('#so-diagnose-btn');
+    if (!win) return;
+    const btn = win.querySelector('#so-diagnose-btn');
     if (!btn) return;
     const auto = ENABLE_AUTO_DIAGNOSE && !!getSettings().autoDiagnoseEnabled;
     btn.classList.toggle('so-diag-auto', auto);
-    sharedState.win.classList.toggle('so-diag-auto-on', auto);
+    win.classList.toggle('so-diag-auto-on', auto);
     btn.title = auto
         ? '诊断模式（点一下开 / 关这一房）—— 🔴 自动诊断正在后台运行：要停掉它，在诊断设置里取消勾选'
         : '诊断模式 —— 修复 MVU 状态变量（自动诊断在诊断设置里勾选开启）';
@@ -528,8 +530,8 @@ function fixButtonVisualState(cfg) {
 // 回复被 runAutoFix 的 pending 分支静默跳过（用户以为坏了）。init / 切模式 / 改开关 / 换聊天 / 问过（ask）/
 // 确认（confirm）后调用对齐（与 updateDiagButtonVisual 同款 win 守卫）。
 export function updateFixButtonVisual() {
-    if (!sharedState.win) return;
-    const btn = sharedState.win.querySelector('#so-fix-btn');
+    if (!win) return;
+    const btn = win.querySelector('#so-fix-btn');
     if (!btn) return;
     const state = fixButtonVisualState(getEffectiveFixCfg(getSettings(), getFixCfg()));
     btn.classList.toggle('so-fix-auto', state === 'on');
@@ -543,35 +545,35 @@ export function updateFixButtonVisual() {
 
 // 首次开启自动模式前的一次性警告弹窗（含「不再提示」+ 与 MVU「额外模型解析」并用时的兼容开关提醒）。
 export function openAutoDiagWarn() {
-    if (!sharedState.win) return;
-    const never = sharedState.win.querySelector('#so-autowarn-never');
+    if (!win) return;
+    const never = win.querySelector('#so-autowarn-never');
     if (never) never.checked = false;
-    const modal = sharedState.win.querySelector('#so-autowarn');
+    const modal = win.querySelector('#so-autowarn');
     if (modal) modal.classList.add('open');
 }
 
 // ✨ 校正：首次切到「自动校正」时弹的一次性提醒（标签块 <sceneinfo>/<details> 的留存要靠排除区·保留——写起始标记即可）。
 // 与 openAutoDiagWarn 同款：纯展示弹窗，「知道了」关闭、勾「不再提示」则置 autoFixWarned。仅在 !autoFixWarned 时由切到自动的处理器调起。
 export function openAutoFixWarn() {
-    if (!sharedState.win) return;
-    const never = sharedState.win.querySelector('#so-fixwarn-never');
+    if (!win) return;
+    const never = win.querySelector('#so-fixwarn-never');
     if (never) never.checked = false;
-    const modal = sharedState.win.querySelector('#so-fixwarn');
+    const modal = win.querySelector('#so-fixwarn');
     if (modal) modal.classList.add('open');
 }
 
 export async function toggleLorebook() {
-    if (sharedState.lorebookMode) {
-        const back = sharedState.priorOracleMode || 'chat';
+    if (lorebookMode) {
+        const back = priorOracleMode || 'chat';
         if (!(await confirmModeSwitch(back))) return;   // 1.36.0 中断确认：有在途回复会被切换中止 → 先问
-        sharedState.priorOracleMode = 'chat';
+        setPriorOracleMode('chat');
         setOracleMode(back);
         modeEntryNote(modeReturnNote(back));
         focusOracleInput();
         return;
     }
     if (!(await confirmModeSwitch('lorebook'))) return;   // 1.36.0 中断确认
-    sharedState.priorOracleMode = currentOracleMode();
+    setPriorOracleMode(currentOracleMode());
     setOracleMode('lorebook');
     populateLorebookBooks();
     modeEntryNote('世界书模式已开启。我已读取选定世界书的全部条目——你可以问里面写了什么、找矛盾、聊扩写思路；也可以让我改写、新增或删除条目，我会给出一份你能一键应用（并可撤销）的改动。上方可切换要处理哪一本。');
@@ -581,10 +583,10 @@ export async function toggleLorebook() {
 // 校正模式按钮：进入 / 退出（普通两态，无 AUTO）。杀死开关关闭时 no-op（不可进入）。
 export async function toggleFix() {
     if (!ENABLE_REPLY_FIX) return;
-    if (sharedState.fixMode) {
-        const back = sharedState.priorOracleMode || 'chat';
+    if (fixMode) {
+        const back = priorOracleMode || 'chat';
         if (!(await confirmModeSwitch(back))) return;   // 1.36.0 中断确认
-        sharedState.priorOracleMode = 'chat';
+        setPriorOracleMode('chat');
         setOracleMode(back);
         modeEntryNote(modeReturnNote(back));
         focusOracleInput();
@@ -597,7 +599,7 @@ export async function toggleFix() {
 // 进入校正模式的【无门】本体（1.42.0 抽出）：toggleFix = 确认门 + 本体。主聊天 ✂️ 入口的门放在【开窗之前】
 //（spec 决定 6「拒绝零足迹」），过门后直接调本体——不复用 toggleFix 是为了不弹第二次确认。行为与抽出前逐字节同。
 export function enterFixMode() {
-    sharedState.priorOracleMode = currentOracleMode();
+    setPriorOracleMode(currentOracleMode());
     setOracleMode('fix');
     modeEntryNote('校正模式已开启。我会读取最新一条 AI 回复，按你说的把它改一版——你想怎么改都行：重写某段、改语气、调节奏、删减、改掉某个设定或不合适的描写……任何要求都可以。直接说你想改什么，我给出一份可一键应用的校正稿（应用后原文仍在，左滑即可看回）。');
     focusOracleInput();
@@ -606,17 +608,17 @@ export function enterFixMode() {
 // 角色工坊按钮：进入 / 退出。总开关关闭时 no-op。
 export async function toggleBuilder() {
     if (!ENABLE_CHAR_BUILDER) return;
-    if (sharedState.builderMode) {
-        const back = sharedState.priorOracleMode || 'chat';
+    if (builderMode) {
+        const back = priorOracleMode || 'chat';
         if (!(await confirmModeSwitch(back))) return;   // 1.36.0 中断确认（锻造/深度精简保活不触发——它们切走不中断）
-        sharedState.priorOracleMode = 'chat';
+        setPriorOracleMode('chat');
         setOracleMode(back);   // 内部已 syncConvoStream → 切回该模式的房间
         modeEntryNote(modeReturnNote(back));
         focusOracleInput();
         return;
     }
     if (!(await confirmModeSwitch('builder'))) return;   // 1.36.0 中断确认
-    sharedState.priorOracleMode = currentOracleMode();
+    setPriorOracleMode(currentOracleMode());
     setOracleMode('builder');   // 内部已 syncConvoStream → 切到当前打造目标的独立房间
     populateBuilderBooks();   // Task 4：填充选书 / 选条目器 + chips（定义在 populateLorebookBooks 附近）
     refreshDraftCard();       // Task 6 provides this; stub `function refreshDraftCard() {}` this task
@@ -625,7 +627,7 @@ export async function toggleBuilder() {
 }
 // 草稿常驻卡：唯一事实源是 chat metadata；每次刷新整卡重建（含重载后恢复）。
 export function refreshDraftCard() {
-    const card = sharedState.win?.querySelector('#so-bld-card');
+    const card = win?.querySelector('#so-bld-card');
     if (!card) return;
     const st = getBuilderState();
     // 复审修复 2：中间态——已有访谈汇总但草稿还没生成（重载后可从这里直接锻造，让 brief-only 会话可恢复）。

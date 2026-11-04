@@ -1,12 +1,13 @@
 import { convoForPrompt, getSummary } from '../core/chat-metadata.js';
 import { getCtx } from '../core/settings.js';
-import { sharedState } from '../core/state.js';
+
 import { buildAdvisorPrompt, buildBbsHistorySection, buildChatWorldSection, buildFixPrompt, buildLorebookPrompt, buildLwbHistorySection, buildSummarySection, buildTranscriptTurns, getBbsHistoryText, getLwbSummaryText, lbSnapshotMsg } from '../modes/chat/context.js';
 import { buildBuilderPrompt } from '../modes/lorebook/core.js';
 import { ENABLE_OFFSTAGE_GUARD } from '../prompts/builtins.js';
 import { buildPersonaBlock } from '../prompts/helpers.js';
 import { P, buildChatStatSection } from '../prompts/registry.js';
 import { getCuratedSnapshot } from '../ui/settings.js';
+import { wiAfter, wiBefore } from '../modes/chat/state.js';
 
 /* ------------------------------------------------------------------ *
  * Faithful, marker-aware, role-preserving assembly from a curated preset.
@@ -46,10 +47,10 @@ function expandMarker(out, identifier, ctx, s) {
             pushMsg(out, 'system', subst(ctx, card.scenario || ''));
             break;
         case 'worldInfoBefore':
-            pushMsg(out, 'system', subst(ctx, sharedState.wiBefore));
+            pushMsg(out, 'system', subst(ctx, wiBefore));
             break;
         case 'worldInfoAfter':
-            pushMsg(out, 'system', subst(ctx, sharedState.wiAfter));
+            pushMsg(out, 'system', subst(ctx, wiAfter));
             break;
         case 'dialogueExamples':
             pushMsg(out, 'system', subst(ctx, card.mesExamples || ''));

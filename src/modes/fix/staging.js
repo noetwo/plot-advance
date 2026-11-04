@@ -1,6 +1,6 @@
 import { awaitFixMvuBoundary, beginPostReplyCall, drainPendingPostReply, postReplyShouldStop } from '../../core/post-reply.js';
 import { FIX_PARK_MAX, FIX_PARK_TTL_MS, POST_REPLY_CALL_TIMEOUT_MS, fixParked, getCtx, getSettings } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { addSystemNote, renderEmptyState } from '../advisor/cards.js';
 import { buildFixPrompt } from '../chat/context.js';
 import { scrollToBottom } from '../chat/history.js';
@@ -17,6 +17,9 @@ import { compileFixTargets, detectMvuBlockDialect, fixEffMaxTokens, fixEffective
 import { P } from '../../prompts/registry.js';
 import { addMessage, parseFixedReply } from '../../ui/messages.js';
 import { maybeWrapJb, presetCurationActive } from '../../ui/settings.js';
+import { abortCtl, activePostReplyRun, convoStreamKey, isGenerating, postReplyBusy, setActivePostReplyRun, setIsGenerating, setPostReplyBusy, setPostReplyCancelled } from '../../core/runtime-state.js';
+import { fixCaptured, fixCustomJoin, fixExtraKeep, fixOriginalReply, fixPieceDecision, fixPieceTable, fixScope, fixScopeDecision, fixTargetIdx, fixTargetProse, setFixCustomTemplateText } from './state.js';
+import { messagesEl, sendBtn, soFollowStream, win } from '../../ui/state.js';
 
 /* ------------------------------------------------------------------ *
  * 📋 自定义模板任务的【流式直播】（1.77.0，Prince 点单 2026-09-04）。
@@ -60,7 +63,7 @@ function fixCustomPreviewStart(meta, toastHandle, s) {
         // 就是校正房。复审 minor #5：只看 convoStreamKey 会把「窗口关着但上次停在校正房」也判成可见，
         // 于是气泡进了一个没人看得见的容器、计数器又因为走了气泡枝而不出 —— 自动轮那几十秒里用户
         // 两样反馈都拿不到。窗口没建好 / 收起时一律落到 ② 的提示计数器。
-        if (sharedState.win && sharedState.win.style.display !== 'none' && sharedState.convoStreamKey === 'fix' && sharedState.messagesEl) {
+        if (win && win.style.display !== 'none' && convoStreamKey === 'fix' && messagesEl) {
             const head = `📋 模板〔${meta.template || ''}〕 · 处理中…`;
             const wrap = addMessage('assistant', '', null);   // 不传 entry ⇒ 不挂编辑/重生成/删除按钮，也永不进 convo
             wrap.classList.add('so-fixc-preview');
@@ -72,7 +75,7 @@ function fixCustomPreviewStart(meta, toastHandle, s) {
                 onDelta: (acc) => {
                     if (done) return;
                     contentEl.textContent = head + '\n\n' + String(acc == null ? '' : acc);
-                    if (sharedState.soFollowStream) scrollToBottom();   // house law：在底部才自动滚（跟随位由滚动监听现测）
+                    if (soFollowStream) scrollToBottom();   // house law：在底部才自动滚（跟随位由滚动监听现测）
                 },
                 end() {
                     if (done) return;
@@ -81,7 +84,7 @@ function fixCustomPreviewStart(meta, toastHandle, s) {
                         contentEl.classList.remove('so-streaming');
                         wrap.remove();
                         // 房间被这只气泡清掉过空态卡：真的空了才补回（renderEmptyState 自带 convo/children 守卫）。
-                        if (sharedState.messagesEl && !sharedState.messagesEl.children.length) renderEmptyState();
+                        if (messagesEl && !messagesEl.children.length) renderEmptyState();
                     } catch (e) { /* 页面已换 / 节点已被重画掉 */ }
                 },
             };
@@ -180,7 +183,7 @@ async function fixLandOrPark(payload, opts) {
 export async function fixDrainParked() {
     // 复审 minor #9：绝不与在飞的一轮交错落地（它随时会 applyFixAsSwipe / 写记录）。有轮在飞就让位，
     // 由那一轮 finally 里的 drainPendingPostReply 再唤我们一次（锁那时已释放）。
-    if (sharedState.postReplyBusy) return 'deferred';
+    if (postReplyBusy) return 'deferred';
     // ★ 顺序是【先取本聊天这一份、再扫其余】★（G 轮复审）：反过来的话，槽里挤着 ≥9 个聊天、而本聊天恰是
     // 其中最旧的那一个时，封顶淘汰会把「马上就要落地的这一份」当成最旧的踢掉——用户回到原聊天，已经
     // 买单的成品凭空消失。取出后仍按同一把尺子判它【自己】的保质期，TTL 语义与扫描不变。
@@ -214,7 +217,7 @@ async function fixRunJoin(ctx, s, directive, join, compatSession, meta) {
     // ★ 必须是【第一句】★（复审 Critical #1）：把捕获快照从模块级全局取下来。调用方（runCustomTask /
     // runAutoFixPieces）从 captureFixContext 返回到这里全程无 await，所以这一刻的 fixCaptured / fixTargetIdx
     // 仍是本轮的；此后的几十秒里用户可能在别的聊天点「按目标给最新回复去 AI 味」把它们覆写掉。
-    const cap = sharedState.fixCaptured, tIdx = sharedState.fixTargetIdx;
+    const cap = fixCaptured, tIdx = fixTargetIdx;
     const genToast2 = showAutoFixGenerating();
     // 📋 只有自定义模板任务 + 全局流式开着时才拿得到 onDelta；校正路 preview.onDelta 恒 undefined
     // ⇒ fixJoinCall 走的还是今天那条非流式分支（不变量 2：校正路径零行为变化）。
@@ -257,8 +260,8 @@ async function fixRunJoin(ctx, s, directive, join, compatSession, meta) {
 async function runAutoFixPieces(ctx, s, compatSession) {
     // ★ 与 fixRunJoin 同一条纪律（复审 Critical #1）：捕获快照在这里取下（runAutoFix 从 captureFixContext
     // 到这里全程无 await），此后一律用 cap / tIdx，绝不再读模块级 fixCaptured / fixTargetIdx。
-    const cap = sharedState.fixCaptured, tIdx = sharedState.fixTargetIdx;
-    const table = sharedState.fixPieceTable;
+    const cap = fixCaptured, tIdx = fixTargetIdx;
+    const table = fixPieceTable;
     if (!table || !table.pieces.length) return;
     const cfg = getEffectiveFixCfg(s, getFixCfg());
     const a = resolveFixModeCfg(cfg, 'auto');
@@ -397,10 +400,10 @@ function replyExpectsMvu(text) {
 // ——这是【有意】的，不是串档：spec §5.2 把「沿用识别」定义成【逐字沿用自动的捕获路径】，正文形态的记忆
 // 本就是一张卡一份、两种任务共用（同一张卡的 <content> 不会因为换了任务就变），故不另开一套 fixC_ 形态键。
 function fixLandAutoDecisions(s, meta) {
-    const scopeDec = sharedState.fixScopeDecision;
+    const scopeDec = fixScopeDecision;
     if (scopeDec && scopeDec.action === 'detected') {
         setFixCfg({ fixA_scopeTag: scopeDec.tag, fixA_scopeManual: false });
-        const scopeEl = sharedState.win && sharedState.win.querySelector('#so-fix-scope');
+        const scopeEl = win && win.querySelector('#so-fix-scope');
         if (scopeEl) scopeEl.value = scopeDec.tag;   // 单字段回填；el.value= 不触发 'input' 事件，scopeManual 不会被误置 true
         addAutoFixNote('scope', scopeDec.note, null, meta);
         if (typeof toastr !== 'undefined') toastr.success(fixScopeNoteText(scopeDec.note).body, '', { timeOut: 6000 });   // ✨ M4：一次性自动切标签——窗口关着也看得见（skip/suggest 每条都弹会烦，故只 detected 弹）
@@ -411,13 +414,13 @@ function fixLandAutoDecisions(s, meta) {
     // ✨ 分段校正（1.18.0）门：captureFixContext 已跑决策阶梯（fixPieceDecision）。这里只【落地】——
     // 记忆（adopt 写回 per-chat）/ 提示 / 决定走哪条路。bypass / whole（无分段表）落到调用方的老单段路径，
     // 行为逐字节不变；开关关时 fixPieceDecision 恒 null、整块蒸发。
-    if (ENABLE_FIX_PIECEWISE && sharedState.fixPieceDecision) {
-        const pd = sharedState.fixPieceDecision;
+    if (ENABLE_FIX_PIECEWISE && fixPieceDecision) {
+        const pd = fixPieceDecision;
         if (pd.adopt) {
             const cur = getEffectiveFixCfg(s, getFixCfg());
             if (cur.fixA_pieceMode !== 'wrapped' || cur.fixA_scopeTag !== pd.tag) {   // 只在有变化时写（免得每条回复都 saveChatMetadata）
                 setFixCfg({ fixA_pieceMode: 'wrapped', fixA_scopeTag: pd.tag, fixA_scopeManual: false });
-                const scopeEl = sharedState.win && sharedState.win.querySelector('#so-fix-scope');
+                const scopeEl = win && win.querySelector('#so-fix-scope');
                 if (scopeEl) scopeEl.value = pd.tag;
                 if (!pd.adopt.quiet) {
                     addAutoFixNote('scope', pd.note, null, meta);
@@ -450,15 +453,15 @@ export async function runCustomTask(ctx, s, targetId, compatSession, manual = fa
         if (fixNoTemplateShouldNote(fixNoTemplateNoted, chatIdentityKey(), cc.template)) addAutoFixNote('notemplate', '', null, meta);
         return;
     }
-    sharedState.fixCustomTemplateText = tpl.prompt;
+    setFixCustomTemplateText(tpl.prompt);
     await captureFixContext(s, { mode: 'custom', targetId });
     // 楼号快照（G 轮复审的纪律条，与 runAutoFix 同式）：捕获之后本函数里的每一处楼号都读它，绝不再读
     // 模块级 fixTargetIdx。落地那一份快照由 fixRunJoin 的第一句自己取（cap/tIdx 三处的既有钉）。
-    const tIdx = sharedState.fixTargetIdx;
-    if (!sharedState.fixTargetProse.trim()) return;
+    const tIdx = fixTargetIdx;
+    if (!fixTargetProse.trim()) return;
     if (isFixSwipe((ctx.chat || [])[tIdx])) { addAutoFixNote('nochange', '这条已是一次处理结果', null, meta); return; }
     if (cc.useMechanic && fixLandAutoDecisions(s, meta).stop) return;
-    const join = sharedState.fixCustomJoin || (sharedState.fixPieceTable ? fixJoinTable(sharedState.fixPieceTable, fixDropMinusKeep(cc.keepTags, cc.dropTags)) : null);
+    const join = fixCustomJoin || (fixPieceTable ? fixJoinTable(fixPieceTable, fixDropMinusKeep(cc.keepTags, cc.dropTags)) : null);
     if (!join) { addAutoFixNote('nochange', '没有可处理的正文', null, meta); return; }
     if ([...join.core].length < clampFixAutoMinChars(cfg.fixAutoMinChars)) { addAutoFixNote('nochange', '太短', null, meta); return; }
     await fixRunJoin(ctx, s, P('fix.customLead', null, s), join, compatSession, meta);
@@ -470,8 +473,8 @@ export async function runCustomTask(ctx, s, targetId, compatSession, manual = fa
 // postReplyBusy 是 maybePostReply 持的那把共享锁：自动轮在飞时点这颗，会把 fixTargetIdx / fixCaptured
 // 覆写掉、并抢走在途的 AbortController（两轮互相踩），故直接挡住。
 export async function runCustomTaskNow() {
-    if (sharedState.isGenerating || !ENABLE_FIX_CUSTOM_TASK) return;
-    if (sharedState.postReplyBusy) { addSystemNote('正在跑自动处理，稍后再点。'); return; }
+    if (isGenerating || !ENABLE_FIX_CUSTOM_TASK) return;
+    if (postReplyBusy) { addSystemNote('正在跑自动处理，稍后再点。'); return; }
     const s = getSettings();
     if (s.mode === 'direct' && (!s.endpoint || !s.model)) { addSystemNote('请先在设置里配置直连端点与模型。'); return; }
     if (s.mode === 'profile' && !s.profileId) { addSystemNote('请先在设置里选择一个连接配置档。'); return; }
@@ -495,15 +498,15 @@ export async function runCustomTaskNow() {
     // 起手 + 收尾各清一次，并注册自己的 run —— 与 maybePostReply 逐字同款，这样 MESSAGE_SENT 的
     // supersedePostReply() 也能像作废自动轮一样作废按钮这一轮（此前按钮路从不注册 run，supersede 够不着）。
     const run = { messageId: idx, superseded: false, step: 'custom' };   // step：切聊天时 onChatChanged 只作废 diag / trainer，模板轮跑完后暂存
-    sharedState.postReplyBusy = true;
-    sharedState.postReplyCancelled = false;
-    sharedState.activePostReplyRun = run;
+    setPostReplyBusy(true);
+    setPostReplyCancelled(false);
+    setActivePostReplyRun(run);
     try {
         await runCustomTask(ctx, s, idx, compatSession, true);
     } finally {
-        if (sharedState.activePostReplyRun === run) sharedState.activePostReplyRun = null;
-        sharedState.postReplyCancelled = false;
-        sharedState.postReplyBusy = false;
+        if (activePostReplyRun === run) setActivePostReplyRun(null);
+        setPostReplyCancelled(false);
+        setPostReplyBusy(false);
         drainPendingPostReply();
     }
 }
@@ -521,8 +524,8 @@ export async function runAutoFix(ctx, s, targetId, compatSession) {
     await captureFixContext(s, { mode: 'auto', targetId });     // 自动模式：双稿 / 目标 / 上下文按 fixA_*（收紧仍受 ✂️收紧 开关）；targetId 钉住触发消息
     // ★ 捕获快照【立刻】取下（复审 Critical #1）：老单段路径在下面还要跑一整趟模型往返，期间用户可能在
     // 别的聊天点「按目标给最新回复去 AI 味」把这两个全局覆写掉；落地判据只认这里取下的这一份。
-    const cap = sharedState.fixCaptured, tIdx = sharedState.fixTargetIdx;
-    if (!sharedState.fixTargetProse.trim()) return;                         // 没有可校正的 AI 回复正文
+    const cap = fixCaptured, tIdx = fixTargetIdx;
+    if (!fixTargetProse.trim()) return;                         // 没有可校正的 AI 回复正文
     // R2 双重校正（自动）：目标当前 swipe 已是一次校正结果 → 跳过 + 记一条 nochange（防止在校正稿上再叠一层、越改越偏）。
     // 楼号一律读 tIdx（G 轮复审的纪律条）：快照取下之后，本函数里再也不许出现模块级 fixTargetIdx / fixCaptured
     // ——今天这一句与快照之间虽然没有 await（读到的是同一个值），但「只认快照」这条纪律留不得例外，
@@ -530,7 +533,7 @@ export async function runAutoFix(ctx, s, targetId, compatSession) {
     if (isFixSwipe((ctx.chat || [])[tIdx])) { addAutoFixNote('nochange'); return; }
 
     if (fixLandAutoDecisions(s, null).stop) return;
-    if (ENABLE_FIX_PIECEWISE && sharedState.fixPieceDecision && sharedState.fixPieceTable) { await runAutoFixPieces(ctx, s, compatSession); return; }
+    if (ENABLE_FIX_PIECEWISE && fixPieceDecision && fixPieceTable) { await runAutoFixPieces(ctx, s, compatSession); return; }
     // bypass / whole（无分段表）：继续走下面的老单段路径
 
     // 自动模式配置（per-chat 覆盖全局，再归一）；fixAutoMinChars = 成本门最小字符数（自动专属，不进归一）。
@@ -540,7 +543,7 @@ export async function runAutoFix(ctx, s, targetId, compatSession) {
     const constraints = { knowledge: a.knowledge, guardrails: a.guardrails };
 
     // 成本门：不值得发调用（太短 / 没勾目标的禁词命中 / 没约束）→ 记一条「无需校正」直接跳过，不发 LLM。
-    if (!fixPreFilter(sharedState.fixTargetProse, targets, constraints, clampFixAutoMinChars(cfg.fixAutoMinChars))) { addAutoFixNote('nochange'); return; }   // ✨ 防呆（P5）：读侧钳制
+    if (!fixPreFilter(fixTargetProse, targets, constraints, clampFixAutoMinChars(cfg.fixAutoMinChars))) { addAutoFixNote('nochange'); return; }   // ✨ 防呆（P5）：读侧钳制
 
     const directive = compileFixTargets(
         targets,
@@ -569,16 +572,16 @@ export async function runAutoFix(ctx, s, targetId, compatSession) {
         const fr = fixFailureReason(finalText, undefined);
         let why = fr.kind === 'ok' ? '' : fr.message;
         // 这条回复期待 MVU 状态栏但环境没有 MVU：顺带说明「状态栏不显示是环境问题、与校正无关」（fixEnvNote）。
-        try { if (replyExpectsMvu(sharedState.fixOriginalReply) && !(await getMvu())) why = (why ? why + '\n' : '') + fixEnvNote('mvuAbsent'); } catch (e) { /* ignore */ }
+        try { if (replyExpectsMvu(fixOriginalReply) && !(await getMvu())) why = (why ? why + '\n' : '') + fixEnvNote('mvuAbsent'); } catch (e) { /* ignore */ }
         addAutoFixNote('failed', why);
         return;
     }
     // Tier 0 ①：等于没改（逐字相同 或 近抄）→ 不落 swipe。区分提示：逐字相同=无需校正；近抄=模型基本没改（高上下文常见）。
-    if (fixEffectivelyUnchanged(sharedState.fixTargetProse, parsed.fixed)) { addAutoFixNote(fixNoOp(sharedState.fixTargetProse, parsed.fixed) ? 'nochange' : 'nearcopy'); return; }
+    if (fixEffectivelyUnchanged(fixTargetProse, parsed.fixed)) { addAutoFixNote(fixNoOp(fixTargetProse, parsed.fixed) ? 'nochange' : 'nearcopy'); return; }
     // R1 P-TRUNC 截断守卫：原始回复里 <FixedReply> 开了没闭 → 合成 finish='length'；否则靠启发式（末尾断句 + 原文
     // 收尾干净 + 明显偏短）。截断稿会把回复腰斩成半句 → 不应用、记一条 truncated（不落 swipe）。
     const finishHint = (/<FixedReply\b[^>]*>/i.test(finalText) && !/<\/FixedReply\s*>/i.test(finalText)) ? 'length' : undefined;
-    if (fixOutputTruncated(parsed.fixed, finishHint, sharedState.fixTargetProse).truncated) { addAutoFixNote('truncated'); return; }
+    if (fixOutputTruncated(parsed.fixed, finishHint, fixTargetProse).truncated) { addAutoFixNote('truncated'); return; }
 
     // 接回原回复的机制块（<UpdateVariable> + 状态栏占位符）+ 用户「排除·保留」区，再作为【新 swipe】应用。
     // ✨ overlap（opt-in fixWaitForMvu）：校正的 LLM 已和 MVU 额外模型更新【并行】跑完；写 swipe 前【等 MVU 写完】，
@@ -586,8 +589,8 @@ export async function runAutoFix(ctx, s, targetId, compatSession) {
     // MVU 不忙 → awaitMvuIdle 即时返回、mergeMvuTail 无操作，行为字节不变。
     const boundary = await awaitFixMvuBoundary(s, compatSession, cap && cap.chatId);
     if (!boundary.proceed) return;   // 等 MVU 期间被中断 / supersede / 兼容超时 → 不写
-    const innerFixed = composeFixedReply(parsed.fixed, sharedState.fixOriginalReply, sharedState.fixExtraKeep);
-    let finalText2 = wrapContentScope(sharedState.fixScope, innerFixed);   // ✨ 作用域：把校正后的内层回插信封原位（inactive 时为无操作）
+    const innerFixed = composeFixedReply(parsed.fixed, fixOriginalReply, fixExtraKeep);
+    let finalText2 = wrapContentScope(fixScope, innerFixed);   // ✨ 作用域：把校正后的内层回插信封原位（inactive 时为无操作）
     if (boundary.coordinated) finalText2 = mergeMvuTail(finalText2, (ctx.chat || [])[tIdx]?.mes);   // MVU 事后注的机制块补接末尾
     // P-CORRUPT 权威网：LLM 返回后聊天可能已切走 / 这条回复已换 swipe / 被编辑 / 被删——写入前再核对捕获快照，失效则不写、记一条
     // stale。overlap 模式（fixWaitForMvu）用 mvuTolerant：只比去机制块正文，容忍 MVU 刚注入的块，仍拦真编辑 / 换 swipe / 切聊天 / 目标没了。
@@ -599,18 +602,18 @@ export async function runAutoFix(ctx, s, targetId, compatSession) {
     // vs parsed.fixed 一致）。swipe 目标仍是 finalText2 落点（不动）。
     await fixLandOrPark({
         captured: cap, targetIdx: tIdx, joined: finalText2, status: 'fixed',
-        problems: parsed.problems, before: sharedState.fixTargetProse, after: parsed.fixed, meta: null,
+        problems: parsed.problems, before: fixTargetProse, after: parsed.fixed, meta: null,
     }, { mvuTolerant: boundary.coordinated });
 }
 
 
 export function stopGeneration() {
-    try { sharedState.abortCtl?.abort(); } catch (e) { /* ignore */ }
+    try { abortCtl?.abort(); } catch (e) { /* ignore */ }
 }
 
 export function setGenerating(on) {
-    sharedState.isGenerating = on;
-    sharedState.sendBtn.innerHTML = on ? '<i class="fa-solid fa-stop"></i>' : '<i class="fa-solid fa-paper-plane"></i>';
-    sharedState.sendBtn.title = on ? '停止' : '发送';
-    sharedState.sendBtn.classList.toggle('so-generating', on);
+    setIsGenerating(on);
+    sendBtn.innerHTML = on ? '<i class="fa-solid fa-stop"></i>' : '<i class="fa-solid fa-paper-plane"></i>';
+    sendBtn.title = on ? '停止' : '发送';
+    sendBtn.classList.toggle('so-generating', on);
 }

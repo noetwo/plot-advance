@@ -1,6 +1,6 @@
 import { convoExportAllowed, convoStreamKeyForMode, getConvoMeta, persistConvo, serializeConvo, streamCueLabel } from '../../core/chat-metadata.js';
 import { getSettings, uiConfirm } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { getPath } from './metadata.js';
 import { adoptPath, wantAutoDetail } from './story-path.js';
 import { runForge } from '../builder/ui.js';
@@ -12,6 +12,8 @@ import { parseLorebookBlocks, renderBuilderReplyHtml } from '../lorebook/core.js
 import { ADVISOR_SPEEDS, ENABLE_SCHEMA_DIAG } from '../../prompts/builtins.js';
 import { addApplyControls, addLorebookApplyControls, addMessage, diagSchemaAfterManualReply } from '../../ui/messages.js';
 import { MODE_EMPTY, currentOracleMode } from '../../ui/mode-shell.js';
+import { abortCtl, cidSeq, convo, convoStreamKey, isGenerating, liveCondense, liveForge, setCidSeq, setConvo, setConvoStreamKey, setLiveCondense, setLiveForge } from '../../core/runtime-state.js';
+import { inputEl, messagesEl } from '../../ui/state.js';
 
 /* ------------------------------------------------------------------ *
  * 参谋方案区块 <StoryPlan>（2.5.0 剧情脉络）的解析与卡片。
@@ -232,14 +234,14 @@ export function addSystemNote(text) {
     const wrap = document.createElement('div');
     wrap.className = 'so-note';
     wrap.textContent = text;
-    sharedState.messagesEl.appendChild(wrap);
+    messagesEl.appendChild(wrap);
     scrollToBottom();
 }
 
 // 模式进入 / 退出的说明：仅在侧聊已有内容时才作为系统记录追加。侧聊为空时，落地模式
 // 专属的空状态（引导语 + 示例 chip）已充当介绍，再叠一段说明反而冗余（用户选择方案 A）。
 export function modeEntryNote(text) {
-    if (sharedState.convo.length) addSystemNote(text);
+    if (convo.length) addSystemNote(text);
 }
 
 // 持久化的「系统记录」气泡（自动诊断 / 自动校正的记录、导入分隔线等）。带 entry（写进 convo → 持久化 → 重载可
@@ -249,7 +251,7 @@ export function modeEntryNote(text) {
 // loadConvoForChat 凭 peekNoteOpts 重挂；重载后注册表为空 → 记录变只读（重放旧补丁不安全，与手动
 // 诊断回复重载后失去按钮一致）。
 export function addNoteMessage(entry, opts) {
-    const empty = sharedState.messagesEl.querySelector('.so-empty');
+    const empty = messagesEl.querySelector('.so-empty');
     if (empty) empty.remove();
     const wrap = document.createElement('div');
     wrap.className = 'so-note so-note-record';
@@ -263,13 +265,13 @@ export function addNoteMessage(entry, opts) {
     else if (opts && opts.health) addSaveHealthControls(wrap, opts.health);   // 🩺 1.89.0 存档检查：跳格按钮 + 技术细节
     else if (opts && opts.mvued) addMvuedUndoControls(wrap, opts.mvued);   // 🎛 手动编辑记录：整份快照互换的撤销
     else if (opts && opts.fullReply) addFullReplyControls(wrap, opts.fullReply);   // 1.71.1 unparsed 记录：查看完整回复
-    sharedState.messagesEl.appendChild(wrap);
+    messagesEl.appendChild(wrap);
     scrollToBottom();
     return wrap;
 }
 
 export function renderEmptyState() {
-    if (sharedState.convo.length || sharedState.messagesEl.children.length) return;
+    if (convo.length || messagesEl.children.length) return;
     const m = MODE_EMPTY[currentOracleMode()] || MODE_EMPTY.chat;
     const wrap = document.createElement('div');
     wrap.className = 'so-empty';
@@ -287,15 +289,15 @@ export function renderEmptyState() {
         chip.className = 'so-empty-chip';
         chip.textContent = q;
         chip.addEventListener('click', () => {
-            sharedState.inputEl.value = q;
-            sharedState.inputEl.dispatchEvent(new Event('input'));   // 触发自动高度 / 发送键状态
-            sharedState.inputEl.focus();
+            inputEl.value = q;
+            inputEl.dispatchEvent(new Event('input'));   // 触发自动高度 / 发送键状态
+            inputEl.focus();
         });
         chips.appendChild(chip);
     }
     wrap.appendChild(chips);
     appendConvoImportEntry(wrap);
-    sharedState.messagesEl.appendChild(wrap);
+    messagesEl.appendChild(wrap);
 }
 
 /* 📤 空页的「导入对话」入口（1.61.0）。导出 / 导入的常规入口是 AI 气泡行上那对按钮 —— 空页一条气泡
@@ -326,19 +328,19 @@ export function appendConvoImportEntry(host) {
 export async function clearConversation() {
     // 清空会连带删除本聊天已保存的侧聊历史（含自动诊断记录），无法撤销——与本扩展其它破坏性
     // 操作（清空概要 / 重置提示词 / 放弃序列）保持一致，先确认再执行。空对话则无需打扰直接返回。
-    const where = sharedState.convoStreamKey === 'main' ? '本聊天（普通聊天）的侧聊记录' : (streamCueLabel(sharedState.convoStreamKey, getSettings()) || '本模式的侧聊记录');
-    if (sharedState.convo.length && !(await uiConfirm(`确定清空${where}吗？此操作会删除已保存的记录，无法撤销。`))) return;
+    const where = convoStreamKey === 'main' ? '本聊天（普通聊天）的侧聊记录' : (streamCueLabel(convoStreamKey, getSettings()) || '本模式的侧聊记录');
+    if (convo.length && !(await uiConfirm(`确定清空${where}吗？此操作会删除已保存的记录，无法撤销。`))) return;
     // 保活：若正有后台锻造 / 深度精简流进【本房间】，清空即中断它并清两槽（用户主动清本房记录）；保活
     // 运行在别的房间则不动（下面 loadConvoForChat 的守卫也据此放它继续）。
-    const liveRun = sharedState.liveForge || sharedState.liveCondense;
-    if (sharedState.isGenerating && sharedState.abortCtl && liveRun && liveRun.streamKey === sharedState.convoStreamKey) {
-        try { sharedState.abortCtl.abort(); } catch (e) { /* ignore */ }
-        sharedState.liveForge = null;
-        sharedState.liveCondense = null;
+    const liveRun = liveForge || liveCondense;
+    if (isGenerating && abortCtl && liveRun && liveRun.streamKey === convoStreamKey) {
+        try { abortCtl.abort(); } catch (e) { /* ignore */ }
+        setLiveForge(null);
+        setLiveCondense(null);
     }
-    sharedState.convo = [];
+    setConvo([]);
     persistConvo();   // 用户功能请求：手动清空也清掉本聊天保存的历史（删元数据键）
-    sharedState.messagesEl.innerHTML = '';
+    messagesEl.innerHTML = '';
     loadConvoForChat();   // 重载空流：主流走空态，工坊房间重画头部提示线
 }
 
@@ -396,50 +398,50 @@ function repaintControlPlan(streamKey, list) {
 // 从本聊天的元数据重建侧聊窗口。chat 切换 / 首次载入时调用（onChatChanged）。先中止任何在途
 // 生成，避免流式气泡继续写到被清掉的 DOM 上。
 export function loadConvoForChat() {
-    if (!sharedState.messagesEl) return;                       // 窗口还没建好（极早期）——略过，init 末尾会再调一次
+    if (!messagesEl) return;                       // 窗口还没建好（极早期）——略过，init 末尾会再调一次
     // 保活：切模式重画时【不】中断在途的锻造 / 深度精简——liveForge / liveCondense 存在 = 后台保活运行
     // 正跑，让它继续（回房时下方重挂气泡，完成后按原始房间归位）。切聊天 / 清空由 onChatChanged /
     // clearConversation 显式中断并清掉两槽，到这里已 null，照常中断其它在途生成（普通聊天/访谈/校正等，
     // 维持 1.28.0 起行为；1.36.0 起用户侧切换入口会先弹确认——见 confirmConvoSwap）。
-    if (sharedState.isGenerating && sharedState.abortCtl && !sharedState.liveForge && !sharedState.liveCondense) { try { sharedState.abortCtl.abort(); } catch (e) { /* ignore */ } }
+    if (isGenerating && abortCtl && !liveForge && !liveCondense) { try { abortCtl.abort(); } catch (e) { /* ignore */ } }
     const saved = getConvoMeta();
     // 读回 = 落盘的同一份口径（serializeConvo）：同样的角色筛选 + 同样的字段白名单，外加诊断卡的
     // diagStamp（Task 5 的陈旧闸重载后就靠它）。两处各写一遍，迟早有一处漏带新字段。
-    sharedState.convo = serializeConvo(saved);
-    sharedState.cidSeq = sharedState.convo.reduce((mx, m) => Math.max(mx, Number(m.id) || 0), sharedState.cidSeq);
-    sharedState.messagesEl.innerHTML = '';
+    setConvo(serializeConvo(saved));
+    setCidSeq(convo.reduce((mx, m) => Math.max(mx, Number(m.id) || 0), cidSeq));
+    messagesEl.innerHTML = '';
     // 房间头部提示线（每模式独立房间）：让「历史换了一批」读成「独立记录」而不是「记录丢了」。主流不显示。
-    const cueText = streamCueLabel(sharedState.convoStreamKey, getSettings());
+    const cueText = streamCueLabel(convoStreamKey, getSettings());
     if (cueText) {
         const cue = document.createElement('div');
         cue.className = 'so-stream-cue';
         cue.textContent = cueText;
-        sharedState.messagesEl.appendChild(cue);
+        messagesEl.appendChild(cue);
     }
     // 保活修（1.36.0 :8001 smoke 抓到）：空房只画空态、【不得提前 return】——回房重挂在函数尾部，
     // 提前退出会漏挂正在后台流式的锻造/深度精简气泡（空房 + 在途保活 = 清过本房记录再开跑的场景）。
     // 1.85.3：整段重画走批量段——段内逐条 addMessage / addNoteMessage / 动作卡重挂都不再各滚一次（每次滚 = 读
     // scrollHeight = 整页强制重排），历史气泡也不挂入场动画；段尾那一次 scrollToBottom 照旧。
     soBulkRender(() => {
-        if (!sharedState.convo.length) renderEmptyState();
-        for (const m of sharedState.convo) {
+        if (!convo.length) renderEmptyState();
+        for (const m of convo) {
             // note 重画时凭注册表重挂本会话的按钮（自动诊断撤销 / 自动校正用原文——重载后注册表为空 = 只读记录，契约不变）
-            m._el = (m.role === 'note') ? addNoteMessage(m, peekNoteOpts(sharedState.convoStreamKey, m)) : addMessage(m.role, m.content, m);
+            m._el = (m.role === 'note') ? addNoteMessage(m, peekNoteOpts(convoStreamKey, m)) : addMessage(m.role, m.content, m);
             // F5 补渲，1.33.1 起按房间分道（repaintHtmlForRoom）：恢复的 AI 回复用与定稿路径
             // 同源的渲染器（参谋 StoryPlan 进 <pre>、诊断/世界书保持纯文本原样、校正走 ST 格式器、其余渲
             // Markdown）。仅助手回复、仅尚未渲染时。
             if (m.role === 'assistant' && m._el) {
                 const c = m._el.querySelector('.so-content');
                 if (c && !c.classList.contains('so-rendered')) {
-                    const html = repaintHtmlForRoom(sharedState.convoStreamKey, m.content || '');
+                    const html = repaintHtmlForRoom(convoStreamKey, m.content || '');
                     if (html != null) { c.innerHTML = html; c.classList.add('so-rendered'); c.style.whiteSpace = 'normal'; }
                 }
             }
         }
         // 重画保真（1.33.1）：按房间重挂动作卡（重挂规则见 repaintControlPlan）。校正材料凭 id+内容
         // 从会话注册表取（取不到 = 重载过 / 内容不符 → 记录保持只读，与 1.31.1 自动记录同一契约）。
-        for (const p of repaintControlPlan(sharedState.convoStreamKey, sharedState.convo)) {
-            const m = sharedState.convo.find((x) => x.id === p.id);
+        for (const p of repaintControlPlan(convoStreamKey, convo)) {
+            const m = convo.find((x) => x.id === p.id);
             if (!m || !m._el) continue;
             if (p.kind === 'plans') addPathCards(m._el, p.plans);
             else if (p.kind === 'lorebook') addLorebookApplyControls(m._el, p.parsed, m);
@@ -448,7 +450,7 @@ export function loadConvoForChat() {
                 if (ENABLE_SCHEMA_DIAG) diagSchemaAfterManualReply(m._el, p.block, m, { previewOnly: true });   // 重画补回预演块，不重发
             }
             else if (p.kind === 'fixApply') {
-                const fa = (peekNoteOpts(sharedState.convoStreamKey, m) || {}).fixApply;
+                const fa = (peekNoteOpts(convoStreamKey, m) || {}).fixApply;
                 if (fa) rehangFixApply(m._el, fa, m);
             }
         }
@@ -456,9 +458,9 @@ export function loadConvoForChat() {
         // 重建一个流式气泡、接上累积文本（entry._el 重指向新气泡，paintForge 继续画到这里）。完成/失败的
         // 落盘由各自 run 函数负责（按 originKey 归位），这里只恢复「正在流」的可见性；成稿后它已进 convo，
         // 故 id 去重防重挂。
-        const liveRun = sharedState.liveForge || sharedState.liveCondense;
-        if (liveRun && liveRun.streamKey === sharedState.convoStreamKey && liveRun.entry
-            && !sharedState.convo.some((m) => m.id === liveRun.entry.id)) {
+        const liveRun = liveForge || liveCondense;
+        if (liveRun && liveRun.streamKey === convoStreamKey && liveRun.entry
+            && !convo.some((m) => m.id === liveRun.entry.id)) {
             const el = addMessage('assistant', '', liveRun.entry);
             liveRun.entry._el = el;
             const c = el.querySelector('.so-content');
@@ -469,7 +471,7 @@ export function loadConvoForChat() {
         // 把唯一那条 AI 回复删掉就会掉进去（review 2026-08-09 抓到的可达性回归 —— 1.61.0 之前 ⋯ 菜单还兜得住）。
         // 放在消息循环【之后】：这样它落在最后一条消息下面，而不是插在消息上头。
         // 幂等 + 自带模式闸（见 appendConvoImportEntry），空房且空态已渲出来时这一次是 no-op。
-        if (!sharedState.convo.some((m) => m.role === 'assistant')) appendConvoImportEntry(sharedState.messagesEl);
+        if (!convo.some((m) => m.role === 'assistant')) appendConvoImportEntry(messagesEl);
     });
     scrollToBottom();
 }
@@ -479,9 +481,9 @@ export function loadConvoForChat() {
 // 据此决定要不要再手动刷空态）。由 setOracleMode 调用。
 export function syncConvoStream() {
     const target = convoStreamKeyForMode(currentOracleMode(), getSettings());
-    if (target === sharedState.convoStreamKey) return false;
+    if (target === convoStreamKey) return false;
     persistConvo();                 // 现流落盘（写的是切换前的 convoStreamKey）
-    sharedState.convoStreamKey = target;
+    setConvoStreamKey(target);
     loadConvoForChat();             // 从新流的元数据重建窗口
     return true;
 }

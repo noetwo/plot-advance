@@ -1,7 +1,7 @@
 import { confirmModeSwitch, persistConvo } from '../../core/chat-metadata.js';
 import { cancelPostReply } from '../../core/post-reply.js';
 import { POST_REPLY_CALL_TIMEOUT_MS, getCtx, getSettings } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { addSystemNote, showTyping } from '../advisor/cards.js';
 import { buildFixPrompt, buildSpanMessages, parseFixSpan, renderFixResultHtml, stripMechanismBlocks } from '../chat/context.js';
 import { appendNoteToRoom, registerFixApply, scrollToBottom } from '../chat/history.js';
@@ -20,6 +20,9 @@ import { callDirect, callProfile, callProfileStream, resolveEndpointUrl, streamD
 import { addFixApplyControls, addMessage, parseFixedReply } from '../../ui/messages.js';
 import { enterFixMode, toggleWindow, updateFixButtonVisual } from '../../ui/mode-shell.js';
 import { maybeWrapJb, presetCurationActive } from '../../ui/settings.js';
+import { abortCtl, fixMode, isGenerating, nextCid, setAbortCtl } from '../../core/runtime-state.js';
+import { fixActiveMode, fixCaptured, fixChatSelSnap, fixCustomJoin, fixPieceDecision, fixPieceTable, fixScopeDecision, fixSelCard, fixSelDebug, fixSelDebugLines, fixSelExpandArmed, fixSelGate, fixSelMode, fixSelSegOk, fixSelState, fixSelStored, fixTargetIdx, fixTargetProse, setFixChatSelSnap, setFixExtraKeep, setFixSelCard, setFixSelDebug, setFixSelDebugLines, setFixSelExpandArmed, setFixSelMode, setFixSelSegOk, setFixSelState, setFixSelStored, setFixTargetProse } from './state.js';
+import { soFollowStream, win } from '../../ui/state.js';
 
 /* ------------------------------------------------------------------ *
  * ✂️ 选段校正·主聊天入口（1.42.0，spec 2026-07-27-fixsel-chat-entry）：最新 AI 楼层动作行上的 ✂️ 按钮。
@@ -29,7 +32,7 @@ import { maybeWrapJb, presetCurationActive } from '../../ui/settings.js';
  * ------------------------------------------------------------------ */
 const FIXSEL_CHAT_CTX_LEN = 40;      // 渲染层前后文各取几字（映射阶梯②消歧）
 const FIXSEL_CHAT_TTL_MS = 180000;   // 划选记忆保鲜期 3 分钟（防很久前的旧划选还魂预选）
-sharedState.fixChatSelSnap = null;           // { text, prefix, suffix, mesIdx, ts } | null
+           // { text, prefix, suffix, mesIdx, ts } | null
 
 // 从 DOM Range 提取划选快照：两端点须同在【带 mesid 的 .mes】的同一个 .mes_text 里（状态栏 iframe 是另一份
 // document，天然进不来）。prefix/suffix 取渲染层文本（与 Range.toString 同一语义）。不读 ctx——纯 DOM 可单测。
@@ -69,14 +72,14 @@ function extractChatSelRange(range) {
 // 存在的理由）。顺手清过期残留。
 function recordChatSelection(range) {
     const snap = extractChatSelRange(range);
-    if (snap) sharedState.fixChatSelSnap = { ...snap, ts: Date.now() };
-    else if (sharedState.fixChatSelSnap && (Date.now() - sharedState.fixChatSelSnap.ts) > FIXSEL_CHAT_TTL_MS) sharedState.fixChatSelSnap = null;
+    if (snap) setFixChatSelSnap({ ...snap, ts: Date.now() });
+    else if (fixChatSelSnap && (Date.now() - fixChatSelSnap.ts) > FIXSEL_CHAT_TTL_MS) setFixChatSelSnap(null);
 }
-export function clearFixChatSel() { sharedState.fixChatSelSnap = null; }
+export function clearFixChatSel() { setFixChatSelSnap(null); }
 // 取用（点 ✂️ 时）：楼层仍是最新 AI + 保鲜期内 → 返回快照。【不消费】——送达开卡那步才消费（spec 决定 5/6：
 // 确认弹窗被拒时留着，重试点一次还在）。
 function takeFixChatSel(latestIdx, now) {
-    const s = sharedState.fixChatSelSnap;
+    const s = fixChatSelSnap;
     if (!s) return null;
     if (s.mesIdx !== latestIdx) return null;
     if ((now === undefined ? Date.now() : now) - s.ts > FIXSEL_CHAT_TTL_MS) return null;
@@ -124,7 +127,7 @@ function soWaitGenIdle(maxMs) {
     return new Promise((resolve) => {
         const t0 = Date.now();
         const tick = () => {
-            if (!sharedState.isGenerating || (Date.now() - t0) >= maxMs) { resolve(); return; }
+            if (!isGenerating || (Date.now() - t0) >= maxMs) { resolve(); return; }
             setTimeout(tick, 50);
         };
         tick();
@@ -139,7 +142,7 @@ export async function onFixChatEntryClick() {
     const latest = getLatestAiMessage();
     if (!latest || latest.idx < 0) return;
     const presel = takeFixChatSel(latest.idx);
-    const needEnter = !sharedState.fixMode;   // enterFixMode 会翻转 fixMode——先拍板，两处分支同一判据
+    const needEnter = !fixMode;   // enterFixMode 会翻转 fixMode——先拍板，两处分支同一判据
     if (needEnter) {
         if (!(await confirmModeSwitch('fix'))) return;
     }
@@ -156,23 +159,23 @@ export async function onFixChatEntryClick() {
  * 于只读 textarea——划选定位到字符偏移，回插精确（片段之外的字节永不进模型、永不变，结构块构造性安全）。
  * 采集规则仿 GG corrections.js（5 条，见下）。开始校正 → runFixSelect。整篇手动校正独立并存、不受影响。
  * ------------------------------------------------------------------ */
-sharedState.fixSelState = null;    // { idx, swipeId, fingerprint, start, end, text, full, pins }
-sharedState.fixSelCard = null;     // 懒建一次、复用
-sharedState.fixSelStored = null;   // 存下的选区 { start, end }（失焦后信它——浏览器失焦常报损坏范围）
+    // { idx, swipeId, fingerprint, start, end, text, full, pins }
+     // 懒建一次、复用
+   // 存下的选区 { start, end }（失焦后信它——浏览器失焦常报损坏范围）
 
 /* ------------------------------------------------------------------ *
  * ✂️ 点选模式（ENABLE_FIX_TAP_SELECT）的模块级前提。权威状态【仍然只有】一个精确草稿 fixSelStored
  * + 钉选表 fixSelState.pins —— 单元下标永远只是查表结果，不是状态（R1 的 index+delta 方案会在扩选
  * 时悄悄丢掉已修剪的那一头，四人一致否掉）。模式在开卡时定一次，中途绝不因旋转 / 插鼠标而改。
  * ------------------------------------------------------------------ */
-sharedState.fixSelMode = 'drag';          // 'tap' | 'drag'
-sharedState.fixSelExpandArmed = false;    // 扩选一次性武装：下一次被接受的点击取并集后立即解除
-sharedState.fixSelDebug = false;          // 裁定 0.3：localStorage['so.fixsel.debug'] 打开的逐手势日志
-sharedState.fixSelDebugLines = [];        // 环形缓冲（≤400 行），镜像进卡里那个只读文本框
+          // 'tap' | 'drag'
+    // 扩选一次性武装：下一次被接受的点击取并集后立即解除
+          // 裁定 0.3：localStorage['so.fixsel.debug'] 打开的逐手势日志
+        // 环形缓冲（≤400 行），镜像进卡里那个只读文本框
 // 点击闸门的记录（按下那一刻的时间/坐标/滚动位 + 在按的指针集合）。住在模块级【只】为了让
 // fixSelApplyMode 能在每次开卡 / 切模式时把它归零（复审 #4）；布线仍全在 buildFixSelCard 里。
-sharedState.fixSelGate = { down: null, lastScrollAt: -1e9, active: new Set() };
-sharedState.fixSelSegOk = false;          // 微调可用性：开卡拿 fixSelGraphemes 探一次（Intl.Segmenter 缺席 → 置灰 + 说明，绝不手搓拆字）
+
+          // 微调可用性：开卡拿 fixSelGraphemes 探一次（Intl.Segmenter 缺席 → 置灰 + 说明，绝不手搓拆字）
 
 // 开卡时定一次模式：旗关恒拖选；否则存过的偏好赢，没存过看 (hover:none)+(pointer:coarse)。
 // localStorage / matchMedia 在隐私模式与老 WebView 上会缺席或抛 → 一律按「没存过 / 不是手机」处理。
@@ -186,7 +189,7 @@ function fixSelResolveMode() {
 
 // 提示行文案的唯一出口（两种模式各一套说法）。拖选三句与 1.78.0 逐字节相同——那是回归钉，别动。
 function fixSelHint(kind, n) {
-    const tap = sharedState.fixSelMode === 'tap';
+    const tap = fixSelMode === 'tap';
     if (kind === 'pinned') return tap ? `已钉住 ${n} 段——可继续点选下一段，或直接开始。` : `已钉住 ${n} 段——可继续划选下一段，或直接开始。`;
     if (kind === 'none-open') return tap ? '未选中片段——请轻点上方一句。' : '未选中片段——请在上方文本里划选。';
     return tap ? '未选中片段——请轻点上方一句。' : '未选中片段——请在上方文本里划选（至少 2 个字）。';
@@ -196,7 +199,7 @@ function fixSelHint(kind, n) {
 // reason 直接用 normalizePinAdd 自己的词汇（'overlap' / 'cap' / 'empty'），外加只有点选才可能发生
 // 的 'expand-cross'。'cap' 与模式无关；其余两种模式各一句。拖选那几句与 1.78.0 逐字节相同——回归钉。
 function fixSelRefuse(reason, n) {
-    const tap = sharedState.fixSelMode === 'tap';
+    const tap = fixSelMode === 'tap';
     if (reason === 'cap') return `一次最多钉 ${MULTIFIX_MAX_PINS} 段。`;
     if (reason === 'expand-cross') return `扩选会跨过片段${n}——请分开钉住。`;
     if (reason === 'overlap') return tap ? `这句在片段${n} 里——先移除再重选。` : `与片段${n}重叠——换一段划选。`;
@@ -206,16 +209,16 @@ function fixSelRefuse(reason, n) {
 // 裁定 0.3 的逐手势日志（一行一条，环形 ≤400 行）。开关没开 = 不建 DOM、不攒缓冲、零开销。
 // 每条 apply 都印 activeElement（§5 opus：藏起来的 textarea 会不会又偷偷拿到焦点，只能这样看见）。
 function fixSelLog(kind, f) {
-    if (!sharedState.fixSelDebug) return;
+    if (!fixSelDebug) return;
     const o = f || {};
     const v = (x) => (x === undefined || x === null ? '-' : x);
-    const sel = (sharedState.fixSelStored && sharedState.fixSelStored.end > sharedState.fixSelStored.start) ? (sharedState.fixSelStored.end - sharedState.fixSelStored.start) : 0;
+    const sel = (fixSelStored && fixSelStored.end > fixSelStored.start) ? (fixSelStored.end - fixSelStored.start) : 0;
     const act = (document.activeElement && document.activeElement.tagName) ? document.activeElement.tagName : '-';
     const t = (performance.now() / 1000).toFixed(2).padStart(7);
-    sharedState.fixSelDebugLines.push(`${t} ${kind} dt=${v(o.dt)} dx=${v(o.dx)} dy=${v(o.dy)} dTop=${v(o.dTop)} since=${v(o.since)} reason=${v(o.reason)} unit=${v(o.unit)} sel=${sel} mode=${sharedState.fixSelMode} active=${act}`);
-    if (sharedState.fixSelDebugLines.length > 400) sharedState.fixSelDebugLines.shift();
-    const box = sharedState.fixSelCard ? sharedState.fixSelCard.querySelector('.so-fixsel-debuglog') : null;
-    if (box) box.value = sharedState.fixSelDebugLines.join('\n');
+    fixSelDebugLines.push(`${t} ${kind} dt=${v(o.dt)} dx=${v(o.dx)} dy=${v(o.dy)} dTop=${v(o.dTop)} since=${v(o.since)} reason=${v(o.reason)} unit=${v(o.unit)} sel=${sel} mode=${fixSelMode} active=${act}`);
+    if (fixSelDebugLines.length > 400) fixSelDebugLines.shift();
+    const box = fixSelCard ? fixSelCard.querySelector('.so-fixsel-debuglog') : null;
+    if (box) box.value = fixSelDebugLines.join('\n');
 }
 
 // 开卡时读一次调试开关：开 → 在 #so-fixsel-body 末尾挂一个可全选复制的只读文本框（不碰剪贴板 API，
@@ -223,8 +226,8 @@ function fixSelLog(kind, f) {
 function fixSelDebugInit(card) {
     let on = false;
     try { on = !!localStorage.getItem('so.fixsel.debug'); } catch (e) { on = false; }
-    sharedState.fixSelDebug = on;
-    sharedState.fixSelDebugLines = [];
+    setFixSelDebug(on);
+    setFixSelDebugLines([]);
     let box = card.querySelector('.so-fixsel-debug');
     if (!on) { if (box) box.remove(); return; }
     if (!box) {
@@ -243,21 +246,21 @@ function fixSelSyncStrip(card) {
     const clearBtn = card.querySelector('.so-fixsel-clear');
     const expandBtn = card.querySelector('.so-fixsel-expand');
     const adjustBtn = card.querySelector('.so-fixsel-adjust');
-    const has = !!(sharedState.fixSelStored && sharedState.fixSelStored.end > sharedState.fixSelStored.start);
+    const has = !!(fixSelStored && fixSelStored.end > fixSelStored.start);
     if (clearBtn) clearBtn.disabled = !has;
     if (expandBtn) {
-        expandBtn.textContent = sharedState.fixSelExpandArmed ? '取消扩选' : '扩选';
-        expandBtn.classList.toggle('on', sharedState.fixSelExpandArmed);
+        expandBtn.textContent = fixSelExpandArmed ? '取消扩选' : '扩选';
+        expandBtn.classList.toggle('on', fixSelExpandArmed);
     }
     // 微调要两个前提：手上有草稿，而且这个浏览器拆得了字素。拆不了就一直灰着并把原因写在 title 上
     //（§2「No Intl.Segmenter」：宁可少一个功能，也绝不手搓拆字把 ZWJ 家庭 / 旗帜拆散）。
     // 还有第三个前提（复审 #7）：钉满 8 段时 fixSelChProbe 的每一格都会被 normalizePinAdd 的 cap 挡掉 ——
     // 开出来就是一窗全灰的格子、还没有一句解释。不如根本不让它开。
     if (adjustBtn) {
-        const capped = ((sharedState.fixSelState && sharedState.fixSelState.pins) || []).length >= MULTIFIX_MAX_PINS;
-        adjustBtn.disabled = !has || !sharedState.fixSelSegOk || capped;
-        adjustBtn.classList.toggle('so-fixsel-adjust-na', !sharedState.fixSelSegOk);
-        if (sharedState.fixSelSegOk) adjustBtn.removeAttribute('title');
+        const capped = ((fixSelState && fixSelState.pins) || []).length >= MULTIFIX_MAX_PINS;
+        adjustBtn.disabled = !has || !fixSelSegOk || capped;
+        adjustBtn.classList.toggle('so-fixsel-adjust-na', !fixSelSegOk);
+        if (fixSelSegOk) adjustBtn.removeAttribute('title');
         else adjustBtn.title = '此浏览器不支持逐字微调';
     }
 }
@@ -268,21 +271,21 @@ function fixSelSyncStrip(card) {
 // 外面的贴底操作条（是搬不是克隆：一个元素、一处布线），软键盘弹起时正文照旧可见（裁定 0.2）。
 function fixSelApplyMode(card) {
     if (!ENABLE_FIX_TAP_SELECT || !card) return;
-    const tap = sharedState.fixSelMode === 'tap';
+    const tap = fixSelMode === 'tap';
     card.classList.toggle('so-fixsel-tap', tap);
-    card.querySelectorAll('.so-fixsel-mode-btn').forEach((b) => b.classList.toggle('on', b.dataset.mode === sharedState.fixSelMode));
+    card.querySelectorAll('.so-fixsel-mode-btn').forEach((b) => b.classList.toggle('on', b.dataset.mode === fixSelMode));
     // 标题文字的唯一写点就是那个 span（旗开时 buildFixSelCard 一定建了它，复审 #2）——1b #e：原先那条
     // 「找不到 span 就改文本节点」的兜底是死代码（旗关时本函数早已 return），删掉，不留第二个写法。
     const titleTx = card.querySelector('#so-fixsel-head .so-fixsel-title-text');
     if (titleTx) titleTx.textContent = tap ? ' ✂️ 选段校正 —— 轻点要改的句子' : ' ✂️ 选段校正 —— 划选要改的片段';
-    sharedState.fixSelExpandArmed = false;
+    setFixSelExpandArmed(false);
     // 闸门记录按【每次开卡 / 每次切模式】归零（复审 #4）：万一有一次抬手被吃掉（页面被别的扩展挡下、
     // 切后台），残留的 pointerId 会让此后每一次轻点都被判成「多指」——重开一次卡就该干净。
-    sharedState.fixSelGate.down = null;
-    sharedState.fixSelGate.active.clear();
+    fixSelGate.down = null;
+    fixSelGate.active.clear();
     // 1b #d：上一次滚动的时刻也一起归零。它的含义是「本次开卡里离上一次滚动多久」，上一张卡关掉前
     // 那一下滚动与这一次无关；留着它，关卡后 120ms 内重开的第一次轻点会被 scroll-quiet 白白挡掉。
-    sharedState.fixSelGate.lastScrollAt = -1e9;
+    fixSelGate.lastScrollAt = -1e9;
     // 微调选择器不跨模式、也不跨开卡：这里统一收起来（开卡走这条、头部切换也走这条）。真正的「落定 /
     // 还原」在卡里那对 openChooser/closeChooser 手上，切换前已经先落定过了，这一下只是保证屏上不留残影。
     const chBox = card.querySelector('.so-fixsel-chooser');
@@ -308,7 +311,7 @@ function fixSelApplyMode(card) {
     const pinsBox = card.querySelector('.so-fixsel-pins');
     const instrBox = card.querySelector('.so-fixsel-instr');
     if (tap) {
-        if (sharedState.fixSelState) sharedState.fixSelState.units = fixSelUnits(sharedState.fixSelState.full);   // 查表用，开卡与切换时重算
+        if (fixSelState) fixSelState.units = fixSelUnits(fixSelState.full);   // 查表用，开卡与切换时重算
         const ta = card.querySelector('.so-fixsel-text');
         try { ta.blur(); } catch (e) { /* ignore */ }
         if (strip && inforow && inforow.parentElement !== strip) strip.insertBefore(inforow, strip.firstChild);
@@ -327,7 +330,7 @@ function fixSelApplyMode(card) {
     }
     fixSelSyncStrip(card);
     paintFixSelOverlayAll(card);
-    fixSelLog('MODE', { reason: sharedState.fixSelMode });
+    fixSelLog('MODE', { reason: fixSelMode });
 }
 
 // 点选层重画：整块 innerHTML 换 + scrollTop 保存/恢复（探针实测 30 次轻点 0 跳动）。所有重画点
@@ -338,17 +341,17 @@ function renderFixSelPicker(card) {
     if (!body || !picker) return;
     const top = body.scrollTop;
     picker.innerHTML = buildFixSelPickerHtml(
-        (sharedState.fixSelState && sharedState.fixSelState.full) || '',
-        (sharedState.fixSelState && sharedState.fixSelState.units) || [],
-        sharedState.fixSelStored,
-        (sharedState.fixSelState && sharedState.fixSelState.pins) || []);
+        (fixSelState && fixSelState.full) || '',
+        (fixSelState && fixSelState.units) || [],
+        fixSelStored,
+        (fixSelState && fixSelState.pins) || []);
     body.scrollTop = top;
 }
 
 // 点进已钉段时闪一下那段：chip 行与点选层里属于它的片同时加 so-fixsel-flash（CSS 两拍描边），
 // 动画结束自摘。jsdom 不发 animationend，类留着也无害。
 function fixSelFlashPin(card, idx) {
-    const pin = ((sharedState.fixSelState && sharedState.fixSelState.pins) || [])[idx];
+    const pin = ((fixSelState && fixSelState.pins) || [])[idx];
     if (!pin) return;
     const targets = [];
     const rows = card.querySelectorAll('.so-fixsel-pinrow');
@@ -391,10 +394,10 @@ function fixSelChUnitAt(units, pos) {
 // 返回 ok（格子给不给点）+ exact（规整后与候选逐字节相同；‹ 一字 / 一字 › 只认这一种，被收边就算没落稳）
 // + added（规整后的区间，挑格子时直接采纳它）。edge='start' 时 pos 是新开头，'end' 时 pos 是新结尾。
 function fixSelChProbe(edge, pos) {
-    const d = sharedState.fixSelStored;
-    if (!d || !sharedState.fixSelState) return { ok: false, exact: false, cand: null, added: null, reason: 'no-draft' };
+    const d = fixSelStored;
+    if (!d || !fixSelState) return { ok: false, exact: false, cand: null, added: null, reason: 'no-draft' };
     const cand = edge === 'start' ? { start: pos, end: d.end } : { start: d.start, end: pos };
-    const r = normalizePinAdd(sharedState.fixSelState.pins, cand, sharedState.fixSelState.full, MULTIFIX_MAX_PINS);
+    const r = normalizePinAdd(fixSelState.pins, cand, fixSelState.full, MULTIFIX_MAX_PINS);
     if (!r.ok) return { ok: false, exact: false, cand, added: null, reason: r.reason };
     const added = { start: r.added.start, end: r.added.end };
     return { ok: true, exact: added.start === cand.start && added.end === cand.end, cand, added, reason: '' };
@@ -403,53 +406,53 @@ function fixSelChProbe(edge, pos) {
 export function openFixSelectCard(presel) {
     if (!ENABLE_FIX_SELECT) return;                       // 杀死开关读点①
     // 生成中禁开卡（终审补钉）：并发单段跑会抢走共享 abortCtl（停止键错杀）＋提前清 isGenerating
-    if (sharedState.isGenerating) { addSystemNote('正在生成回复中——请等它完成或先停止，再开选段校正。'); return; }
+    if (isGenerating) { addSystemNote('正在生成回复中——请等它完成或先停止，再开选段校正。'); return; }
     const ctx = getCtx();
     const latest = getLatestAiMessage();
     if (!latest || latest.idx < 0) { addSystemNote('没有可校正的 AI 回复。'); return; }
     const m = (ctx.chat || [])[latest.idx];
     const full = (m && typeof m.mes === 'string') ? m.mes : '';
     if (!full.trim()) { addSystemNote('最新回复为空，无法选段。'); return; }
-    sharedState.fixSelState = { idx: latest.idx, swipeId: (m && Number.isInteger(m.swipe_id)) ? m.swipe_id : 0, fingerprint: fixFingerprint(full), start: 0, end: 0, text: '', full, pins: [] };
-    sharedState.fixSelStored = null;
-    if (!sharedState.fixSelCard) sharedState.fixSelCard = buildFixSelCard();
-    const ta = sharedState.fixSelCard.querySelector('.so-fixsel-text');
+    setFixSelState({ idx: latest.idx, swipeId: (m && Number.isInteger(m.swipe_id)) ? m.swipe_id : 0, fingerprint: fixFingerprint(full), start: 0, end: 0, text: '', full, pins: [] });
+    setFixSelStored(null);
+    if (!fixSelCard) setFixSelCard(buildFixSelCard());
+    const ta = fixSelCard.querySelector('.so-fixsel-text');
     ta.value = full;
     try { ta.setSelectionRange(0, 0); } catch (e) { /* ignore */ }   // 复开同文时 Chromium 不重置原生选区（值没变=赋值 no-op）——显式清掉，开卡必须真「未选中」
-    sharedState.fixSelCard.querySelector('.so-fixsel-instr').value = '';
+    fixSelCard.querySelector('.so-fixsel-instr').value = '';
     if (ENABLE_FIX_TAP_SELECT) {   // 点选杀死开关读点③：开卡定一次模式，此后旋转 / 插鼠标都不再改
-        sharedState.fixSelMode = fixSelResolveMode();
-        fixSelDebugInit(sharedState.fixSelCard);
+        setFixSelMode(fixSelResolveMode());
+        fixSelDebugInit(fixSelCard);
         // 微调可用性：开卡拿一个字探一次，整个开卡周期就用这个答案（真拆字时 fixSelGraphemes 仍会
         // 每次现查 Intl.Segmenter——这个布尔只决定按钮灰不灰，不是可用性的判据）。
-        sharedState.fixSelSegOk = !!fixSelGraphemes('字', 0, 1);
-        fixSelApplyMode(sharedState.fixSelCard);
+        setFixSelSegOk(!!fixSelGraphemes('字', 0, 1));
+        fixSelApplyMode(fixSelCard);
     }
-    const info = sharedState.fixSelCard.querySelector('.so-fixsel-info');
+    const info = fixSelCard.querySelector('.so-fixsel-info');
     info.textContent = fixSelHint('none-open');
-    sharedState.fixSelCard.querySelector('.so-fixsel-pin-btn').disabled = true;
-    renderFixSelPins(sharedState.fixSelCard);      // 开卡从零开始（v1 钉选不跨开卡持久，交接 4.1）
-    updateFixSelGo(sharedState.fixSelCard);        // 恢复「开始校正」+ disabled（0 钉无选区）
-    const overlay = sharedState.fixSelCard.querySelector('.so-fixsel-overlay');
+    fixSelCard.querySelector('.so-fixsel-pin-btn').disabled = true;
+    renderFixSelPins(fixSelCard);      // 开卡从零开始（v1 钉选不跨开卡持久，交接 4.1）
+    updateFixSelGo(fixSelCard);        // 恢复「开始校正」+ disabled（0 钉无选区）
+    const overlay = fixSelCard.querySelector('.so-fixsel-overlay');
     overlay.innerHTML = ''; overlay.style.display = 'none';
-    sharedState.fixSelCard.classList.add('open');
+    fixSelCard.classList.add('open');
     if (presel && presel.text) {   // 主聊天入口预选（1.42.0）：送达即消费——成败都算送达（spec 决定 5）
         clearFixChatSel();
         const mapped = mapSelectionToRaw(presel.text, presel.prefix, presel.suffix, full);
         if (mapped) {
-            if (ENABLE_FIX_TAP_SELECT && sharedState.fixSelMode === 'tap') {
+            if (ENABLE_FIX_TAP_SELECT && fixSelMode === 'tap') {
                 // 点选：逐字采纳映射到的区间（【不】吸附到整句边界），并且绝不去聚焦那个已经藏起来的
                 // textarea、不派发 select —— 那两样都会把 record() 那条老路重新叫醒。
-                sharedState.fixSelStored = { start: mapped.start, end: mapped.end };
-                sharedState.fixSelCard.dispatchEvent(new Event('so-fixsel-refresh'));   // 卡内同一段写回（apply + 重画）
-                scrollFixSelToOffset(sharedState.fixSelCard, mapped.start);
+                setFixSelStored({ start: mapped.start, end: mapped.end });
+                fixSelCard.dispatchEvent(new Event('so-fixsel-refresh'));   // 卡内同一段写回（apply + 重画）
+                scrollFixSelToOffset(fixSelCard, mapped.start);
             } else {
                 try {
                     ta.focus();
                     ta.setSelectionRange(mapped.start, mapped.end);
-                    sharedState.fixSelStored = { start: mapped.start, end: mapped.end };
+                    setFixSelStored({ start: mapped.start, end: mapped.end });
                     ta.dispatchEvent(new Event('select'));   // 走卡自己的 record/apply 原路：已选中 N 字 + 📌 + go 态
-                    scrollFixSelToOffset(sharedState.fixSelCard, mapped.start);
+                    scrollFixSelToOffset(fixSelCard, mapped.start);
                 } catch (e) { /* 预选设置失败 = 按未选中开卡（fail-open） */ }
             }
         } else {
@@ -562,15 +565,15 @@ function buildFixSelCard() {
     const apply = () => {
         const sel = resolveRecordedSelection(
             { focused: document.activeElement === ta, start: ta.selectionStart, end: ta.selectionEnd },
-            sharedState.fixSelStored, ta.value.length);
+            fixSelStored, ta.value.length);
         const pinBtn = el.querySelector('.so-fixsel-pin-btn');
-        const nPins = (sharedState.fixSelState && sharedState.fixSelState.pins) ? sharedState.fixSelState.pins.length : 0;
+        const nPins = (fixSelState && fixSelState.pins) ? fixSelState.pins.length : 0;
         if (sel && (sel.end - sel.start) >= 2) {
-            sharedState.fixSelState.start = sel.start; sharedState.fixSelState.end = sel.end; sharedState.fixSelState.text = ta.value.slice(sel.start, sel.end);
-            info.textContent = '已选中 ' + sharedState.fixSelState.text.length + ' 字。' + (nPins ? `（已钉 ${nPins} 段）` : '');
+            fixSelState.start = sel.start; fixSelState.end = sel.end; fixSelState.text = ta.value.slice(sel.start, sel.end);
+            info.textContent = '已选中 ' + fixSelState.text.length + ' 字。' + (nPins ? `（已钉 ${nPins} 段）` : '');
             pinBtn.disabled = false;
         } else {
-            sharedState.fixSelState.start = 0; sharedState.fixSelState.end = 0; sharedState.fixSelState.text = '';
+            fixSelState.start = 0; fixSelState.end = 0; fixSelState.text = '';
             info.textContent = nPins ? fixSelHint('pinned', nPins) : fixSelHint('none');
             pinBtn.disabled = true;
         }
@@ -579,9 +582,9 @@ function buildFixSelCard() {
         fixSelLog('APPLY', {});      // 裁定 0.3：每次 apply 都印 activeElement
     };
     const record = () => {
-        if (sharedState.fixSelMode === 'tap') return;   // 结构性闸门（§5 opus）：点选模式下这条老路【永不】写草稿
+        if (fixSelMode === 'tap') return;   // 结构性闸门（§5 opus）：点选模式下这条老路【永不】写草稿
         const start = ta.selectionStart, end = ta.selectionEnd;
-        if (typeof start === 'number' && typeof end === 'number' && end > start) sharedState.fixSelStored = { start, end };   // 规则3：只在真选区时更新存档
+        if (typeof start === 'number' && typeof end === 'number' && end > start) setFixSelStored({ start, end });   // 规则3：只在真选区时更新存档
         apply();
     };
     // 规则1：mouseup / keyup / select
@@ -590,7 +593,7 @@ function buildFixSelCard() {
     ta.addEventListener('touchend', () => setTimeout(record, 50), { passive: true });
     // 规则1（续）：document selectionchange，仅当焦点在本 textarea——iOS 拖选手柄时唯一可靠信号
     document.addEventListener('selectionchange', () => {
-        if (ENABLE_FIX_TAP_SELECT && sharedState.fixSelMode === 'tap') { fixSelClearNativeSelection(el); return; }   // 点选：只清场，永不 record
+        if (ENABLE_FIX_TAP_SELECT && fixSelMode === 'tap') { fixSelClearNativeSelection(el); return; }   // 点选：只清场，永不 record
         if (document.activeElement === ta) record();
     });
     // 规则5（多段版）：聚焦时只画钉选段——活选区让位给原生黄选；无钉 = 隐藏（与旧版行为一致）
@@ -601,21 +604,21 @@ function buildFixSelCard() {
 
     // 📌 钉住这段：规整（收白边 / 查重叠 / 查上限）→ 入列 → 清活选区（手机上顺序流：划一段钉一段）
     el.querySelector('.so-fixsel-pin-btn').addEventListener('click', () => {
-        if (!sharedState.fixSelState || sharedState.fixSelState.text.length < 2) return;
+        if (!fixSelState || fixSelState.text.length < 2) return;
         if (chCommit) chCommit();   // 微调窗开着时按钉 = 先落定当下这个区间（不还原快照），再照常钉
-        const r = normalizePinAdd(sharedState.fixSelState.pins, { start: sharedState.fixSelState.start, end: sharedState.fixSelState.end }, sharedState.fixSelState.full, MULTIFIX_MAX_PINS);
+        const r = normalizePinAdd(fixSelState.pins, { start: fixSelState.start, end: fixSelState.end }, fixSelState.full, MULTIFIX_MAX_PINS);
         if (!r.ok) {
             info.textContent = fixSelRefuse(r.reason, r.index + 1);
             return;
         }
-        sharedState.fixSelState.pins = r.pins;
-        sharedState.fixSelState.start = 0; sharedState.fixSelState.end = 0; sharedState.fixSelState.text = '';
-        sharedState.fixSelStored = null;
+        fixSelState.pins = r.pins;
+        fixSelState.start = 0; fixSelState.end = 0; fixSelState.text = '';
+        setFixSelStored(null);
         try { ta.setSelectionRange(0, 0); } catch (e) { /* ignore */ }
-        sharedState.fixSelExpandArmed = false;   // 钉住 = 这一段结束，扩选的一次性武装随之作废
+        setFixSelExpandArmed(false);   // 钉住 = 这一段结束，扩选的一次性武装随之作废
         renderFixSelPins(el);
         paintFixSelOverlayAll(el);
-        info.textContent = fixSelHint('pinned', sharedState.fixSelState.pins.length);
+        info.textContent = fixSelHint('pinned', fixSelState.pins.length);
         el.querySelector('.so-fixsel-pin-btn').disabled = true;
         updateFixSelGo(el);
         fixSelSyncStrip(el);
@@ -623,10 +626,10 @@ function buildFixSelCard() {
 
     go.addEventListener('click', () => {
         const instr = (el.querySelector('.so-fixsel-instr').value || '').trim();
-        const pins = (sharedState.fixSelState && sharedState.fixSelState.pins) || [];
+        const pins = (fixSelState && fixSelState.pins) || [];
         // 裁定 0.4（两种模式同守）：有钉在手时，还亮着的那段草稿必须先钉住或清除——看得见的暖色高亮
         // 绝不能被悄悄丢掉。放在最前面，三条派发路都在它后面。
-        if (pins.length >= 1 && sharedState.fixSelState && sharedState.fixSelState.text.length >= 2) {
+        if (pins.length >= 1 && fixSelState && fixSelState.text.length >= 2) {
             info.textContent = '还有一段选中但没钉住——请先钉住或清除。';
             return;
         }
@@ -640,13 +643,13 @@ function buildFixSelCard() {
         if (pins.length === 1) {   // H1：单钉 = 钉的偏移灌回 fixSelState、走今天的单段路（字节同一调用）
             const eff = resolvePinInstruction(pins[0].instr, instr);
             if (!eff) { info.textContent = '请先说要怎么改这个片段（该段的要求或整体要求都行）。'; return; }
-            sharedState.fixSelState.start = pins[0].start; sharedState.fixSelState.end = pins[0].end; sharedState.fixSelState.text = pins[0].text;
+            fixSelState.start = pins[0].start; fixSelState.end = pins[0].end; fixSelState.text = pins[0].text;
             close();
             runFixSelect(eff);
             return;
         }
         if (!instr) { info.textContent = '请先说要怎么改这个片段。'; return; }
-        if (!sharedState.fixSelState || sharedState.fixSelState.text.length < 2) { info.textContent = '请先在上方划选一段文字（至少 2 个字）。'; return; }
+        if (!fixSelState || fixSelState.text.length < 2) { info.textContent = '请先在上方划选一段文字（至少 2 个字）。'; return; }
         close();
         runFixSelect(instr);   // C4（0 钉裸选区 = 今天的原路，逐字节不动）
     });
@@ -663,55 +666,55 @@ function buildFixSelCard() {
         // 与钉段重叠 / 到没到上限）全由既有的 normalizePinAdd 说了算（§5 fable：诊断书里最怕的就是
         // 这里冒出第二套判定）。它返回的 pins 数组在这儿丢掉——轻点只出草稿，不钉任何东西。
         const onUnitTap = (i) => {
-            const unit = (sharedState.fixSelState && sharedState.fixSelState.units) ? sharedState.fixSelState.units[i] : null;
+            const unit = (fixSelState && fixSelState.units) ? fixSelState.units[i] : null;
             if (!unit) return;
-            const cand = (sharedState.fixSelExpandArmed && sharedState.fixSelStored)
-                ? { start: Math.min(sharedState.fixSelStored.start, unit.start), end: Math.max(sharedState.fixSelStored.end, unit.end) }
+            const cand = (fixSelExpandArmed && fixSelStored)
+                ? { start: Math.min(fixSelStored.start, unit.start), end: Math.max(fixSelStored.end, unit.end) }
                 : { start: unit.start, end: unit.end };
-            const r = normalizePinAdd(sharedState.fixSelState.pins, cand, sharedState.fixSelState.full, MULTIFIX_MAX_PINS);
+            const r = normalizePinAdd(fixSelState.pins, cand, fixSelState.full, MULTIFIX_MAX_PINS);
             if (!r.ok) {
-                info.textContent = fixSelRefuse((r.reason === 'overlap' && sharedState.fixSelExpandArmed) ? 'expand-cross' : r.reason, r.index + 1);
+                info.textContent = fixSelRefuse((r.reason === 'overlap' && fixSelExpandArmed) ? 'expand-cross' : r.reason, r.index + 1);
                 if (r.reason === 'overlap') fixSelFlashPin(el, r.index);
-                sharedState.fixSelExpandArmed = false;
+                setFixSelExpandArmed(false);
                 fixSelSyncStrip(el);
                 fixSelLog('TAP-NO', { unit: i, reason: r.reason });
                 return;
             }
             closeChooser(true);   // 微调窗开着时新点一句 = 先落定当下的微调结果（不还原），再按新句重选
-            sharedState.fixSelStored = { start: r.added.start, end: r.added.end };   // 已经规整过：📌 不会再挪动看得见的边
-            sharedState.fixSelExpandArmed = false;
+            setFixSelStored({ start: r.added.start, end: r.added.end });   // 已经规整过：📌 不会再挪动看得见的边
+            setFixSelExpandArmed(false);
             writeBack();
         };
 
-        bodyBox.addEventListener('scroll', () => { sharedState.fixSelGate.lastScrollAt = performance.now(); }, { passive: true });
+        bodyBox.addEventListener('scroll', () => { fixSelGate.lastScrollAt = performance.now(); }, { passive: true });
         picker.addEventListener('pointerdown', (e) => {
-            sharedState.fixSelGate.active.add(e.pointerId);
+            fixSelGate.active.add(e.pointerId);
             const now = performance.now();
-            sharedState.fixSelGate.down = { id: e.pointerId, t: now, x: e.clientX, y: e.clientY, scrollTop: bodyBox.scrollTop, type: e.pointerType, sinceScroll: now - sharedState.fixSelGate.lastScrollAt, multi: sharedState.fixSelGate.active.size > 1, cancelled: false };
-            fixSelLog('DOWN', { since: Math.min(99999, sharedState.fixSelGate.down.sinceScroll) | 0 });
+            fixSelGate.down = { id: e.pointerId, t: now, x: e.clientX, y: e.clientY, scrollTop: bodyBox.scrollTop, type: e.pointerType, sinceScroll: now - fixSelGate.lastScrollAt, multi: fixSelGate.active.size > 1, cancelled: false };
+            fixSelLog('DOWN', { since: Math.min(99999, fixSelGate.down.sinceScroll) | 0 });
         });
         // 抬手 / 取消【恒挂在 document 上】：手指从点选层滑出去再松开时 picker 收不到 pointerup，
         // 挂在 picker 身上的计数就只增不减 —— 第二次轻点起全被判成「多指」，点选模式当场作废。
         // 探针没暴露这个洞（它每次都在同一块里抬手）。按 pointerId 记名，多余的抬手是无害的 delete。
-        document.addEventListener('pointerup', (e) => { sharedState.fixSelGate.active.delete(e.pointerId); });
+        document.addEventListener('pointerup', (e) => { fixSelGate.active.delete(e.pointerId); });
         document.addEventListener('pointercancel', (e) => {
-            sharedState.fixSelGate.active.delete(e.pointerId);
-            if (sharedState.fixSelGate.down && sharedState.fixSelGate.down.id === e.pointerId) sharedState.fixSelGate.down.cancelled = true;
+            fixSelGate.active.delete(e.pointerId);
+            if (fixSelGate.down && fixSelGate.down.id === e.pointerId) fixSelGate.down.cancelled = true;
         });
         // 长按菜单 / 选区起手在点选层里一律不给（配 CSS 的 user-select:none 组）；touchmove 绝不 preventDefault、
         // 指针绝不 setPointerCapture —— 那两样会把正常的滚动手势一起吃掉。
         picker.addEventListener('contextmenu', (e) => { e.preventDefault(); });
         picker.addEventListener('selectstart', (e) => { e.preventDefault(); });
         picker.addEventListener('click', (e) => {
-            const d = sharedState.fixSelGate.down;
-            const v = fixSelJudgeTap(d, performance.now(), { x: e.clientX, y: e.clientY }, bodyBox.scrollTop, sharedState.fixSelGate.lastScrollAt);
+            const d = fixSelGate.down;
+            const v = fixSelJudgeTap(d, performance.now(), { x: e.clientX, y: e.clientY }, bodyBox.scrollTop, fixSelGate.lastScrollAt);
             const u = (e.target && e.target.closest) ? e.target.closest('.so-fixsel-u') : null;
             const line = {
                 dt: v.dt, reason: v.reason || 'ok', unit: u ? u.dataset.i : '-',
                 dx: d ? Math.abs(e.clientX - d.x) : '-', dy: d ? Math.abs(e.clientY - d.y) : '-',
                 dTop: d ? (bodyBox.scrollTop - d.scrollTop) : '-', since: d ? (Math.min(99999, d.sinceScroll) | 0) : '-',
             };
-            sharedState.fixSelGate.down = null;
+            fixSelGate.down = null;
             if (!v.ok) { fixSelLog('TAP-REJECT', line); return; }   // 被拒 = 屏上零变化
             fixSelLog('TAP', line);
             if (!u) return;                                        // 点在 gap（空白）上：什么都不做
@@ -719,17 +722,17 @@ function buildFixSelCard() {
         });
 
         el.querySelector('.so-fixsel-expand').addEventListener('click', () => {
-            if (!sharedState.fixSelStored || sharedState.fixSelStored.end <= sharedState.fixSelStored.start) { info.textContent = '先点一句，再按扩选。'; return; }
-            sharedState.fixSelExpandArmed = !sharedState.fixSelExpandArmed;
+            if (!fixSelStored || fixSelStored.end <= fixSelStored.start) { info.textContent = '先点一句，再按扩选。'; return; }
+            setFixSelExpandArmed(!fixSelExpandArmed);
             fixSelSyncStrip(el);
-            if (sharedState.fixSelExpandArmed) info.textContent = '扩选：再点另一头，中间全选上。';
+            if (fixSelExpandArmed) info.textContent = '扩选：再点另一头，中间全选上。';
             else apply();   // 收手 = 提示行回到「已选中 N 字」
-            fixSelLog('EXPAND', { reason: sharedState.fixSelExpandArmed ? 'armed' : 'disarmed' });
+            fixSelLog('EXPAND', { reason: fixSelExpandArmed ? 'armed' : 'disarmed' });
         });
         el.querySelector('.so-fixsel-clear').addEventListener('click', () => {
             closeChooser(true);   // 清除 = 连微调一起收掉，且【不】把快照放回来（草稿就是要没了）
-            sharedState.fixSelStored = null;
-            sharedState.fixSelExpandArmed = false;
+            setFixSelStored(null);
+            setFixSelExpandArmed(false);
             // 拖选模式下 textarea 还聚焦着、原生选区还在，apply() 会走【实时】那一支把草稿原样捡回来
             //（复审 #1 的出路必须真的通）——同 📌 成功后的那一行，显式清零。点选模式下是 no-op。
             try { ta.setSelectionRange(0, 0); } catch (e) { /* ignore */ }
@@ -753,8 +756,8 @@ function buildFixSelCard() {
         const chPick = (g) => {
             const p = fixSelChProbe(CH.edge, CH.edge === 'start' ? g.start : g.end);
             if (!p.ok) return;
-            sharedState.fixSelStored = { start: p.added.start, end: p.added.end };
-            fixSelLog('CH-PICK', { reason: `${CH.edge} → [${sharedState.fixSelStored.start},${sharedState.fixSelStored.end})`, unit: CH.unit });
+            setFixSelStored({ start: p.added.start, end: p.added.end });
+            fixSelLog('CH-PICK', { reason: `${CH.edge} → [${fixSelStored.start},${fixSelStored.end})`, unit: CH.unit });
             writeBack();
             renderChooser();   // 挑完不关窗：格子上的 on 跟着挪，可以接着挑
         };
@@ -762,9 +765,9 @@ function buildFixSelCard() {
         // ‹ 一字 / 一字 ›：在边界前后各 FIXSEL_CH_NUDGE_WIN 字的窗口里拆字素，挪到相邻的那个字素边界。
         // 只认【原样采纳】：规整后但凡被收过边（落在空白上）或被拒（踩进钉段 / 压塌区间），一律不动。
         const chNudge = (dir) => {
-            if (!chIsOpen() || !sharedState.fixSelStored || !sharedState.fixSelState) return;
-            const full = sharedState.fixSelState.full;
-            const pos = CH.edge === 'start' ? sharedState.fixSelStored.start : sharedState.fixSelStored.end;
+            if (!chIsOpen() || !fixSelStored || !fixSelState) return;
+            const full = fixSelState.full;
+            const pos = CH.edge === 'start' ? fixSelStored.start : fixSelStored.end;
             const lo = Math.max(0, pos - FIXSEL_CH_NUDGE_WIN), hi = Math.min(full.length, pos + FIXSEL_CH_NUDGE_WIN);
             const gs = fixSelGraphemes(full, lo, hi) || [];
             const bounds = gs.map((g) => g.start).concat([hi]);
@@ -774,9 +777,9 @@ function buildFixSelCard() {
             if (np === undefined) return;
             const p = fixSelChProbe(CH.edge, np);
             if (!p.ok || !p.exact) { fixSelLog('CH-NUDGE-NO', { reason: p.reason || 'trimmed' }); return; }
-            sharedState.fixSelStored = { start: p.cand.start, end: p.cand.end };
-            fixSelLog('CH-NUDGE', { reason: `${CH.edge} ${dir > 0 ? '+' : '-'}1 → [${sharedState.fixSelStored.start},${sharedState.fixSelStored.end})` });
-            CH.unit = fixSelChUnitAt(sharedState.fixSelState.units, CH.edge === 'start' ? sharedState.fixSelStored.start : sharedState.fixSelStored.end - 1);
+            setFixSelStored({ start: p.cand.start, end: p.cand.end });
+            fixSelLog('CH-NUDGE', { reason: `${CH.edge} ${dir > 0 ? '+' : '-'}1 → [${fixSelStored.start},${fixSelStored.end})` });
+            CH.unit = fixSelChUnitAt(fixSelState.units, CH.edge === 'start' ? fixSelStored.start : fixSelStored.end - 1);
             writeBack();
             renderChooser();
         };
@@ -784,15 +787,15 @@ function buildFixSelCard() {
         // 整块重画（页签 / 格子 / 翻页键从属态 / 预览）。没草稿的微调不成立 → 直接收工。
         const renderChooser = () => {
             if (!chIsOpen()) return;
-            const d = sharedState.fixSelStored;
-            if (!d || d.end <= d.start || !sharedState.fixSelState) { closeChooser(true); return; }
+            const d = fixSelStored;
+            if (!d || d.end <= d.start || !fixSelState) { closeChooser(true); return; }
             chooser.querySelectorAll('.so-fixsel-ch-tab').forEach((b) => b.classList.toggle('on', b.dataset.edge === CH.edge));
-            const us = sharedState.fixSelState.units || [];
+            const us = fixSelState.units || [];
             if (!us[CH.unit] || us[CH.unit].kind !== 'prose') {
                 CH.unit = fixSelChUnitAt(us, CH.edge === 'start' ? d.start : d.end - 1);
             }
             const u = us[CH.unit];
-            const gs = u ? (fixSelGraphemes(sharedState.fixSelState.full, u.start, u.end) || []) : [];
+            const gs = u ? (fixSelGraphemes(fixSelState.full, u.start, u.end) || []) : [];
             const pages = Math.max(1, Math.ceil(gs.length / FIXSEL_CH_PAGE));
             CH.page = Math.max(0, Math.min(CH.page, pages - 1));
             chCells.innerHTML = '';
@@ -808,7 +811,7 @@ function buildFixSelCard() {
                     b.appendChild(w);
                 } else { b.textContent = g.g; }
                 // 纯装饰：这一格落在某个钉段里就标蓝。能不能点【不】看它，看下面那一问。
-                b.classList.toggle('inpin', ((sharedState.fixSelState.pins) || []).some((p) => g.start < p.end && p.start < g.end));
+                b.classList.toggle('inpin', ((fixSelState.pins) || []).some((p) => g.start < p.end && p.start < g.end));
                 b.disabled = !fixSelChProbe(CH.edge, CH.edge === 'start' ? g.start : g.end).ok;
                 b.classList.toggle('on', CH.edge === 'start' ? g.start === d.start : g.end === d.end);
                 b.addEventListener('click', () => chPick(g));
@@ -816,17 +819,17 @@ function buildFixSelCard() {
             });
             chooser.querySelector('.so-fixsel-ch-prev').disabled = CH.page === 0;
             chooser.querySelector('.so-fixsel-ch-next').disabled = CH.page >= pages - 1;
-            chooser.querySelector('.so-fixsel-ch-preview').textContent = sharedState.fixSelState.full.slice(d.start, d.end);
+            chooser.querySelector('.so-fixsel-ch-preview').textContent = fixSelState.full.slice(d.start, d.end);
         };
 
         const openChooser = (edge) => {
             // 三道前提都由按钮的从属态挡在外面（没草稿 / 拆不了字 = 灰）；这里只是不信任地再守一遍，
             // 所以【不】写提示文案——屏上永远看不到它，只在调试日志里留痕。
-            if (!sharedState.fixSelSegOk || chIsOpen()) return;
-            if (!sharedState.fixSelStored || sharedState.fixSelStored.end <= sharedState.fixSelStored.start) { fixSelLog('CH-OPEN-NO', { reason: 'no-draft' }); return; }
+            if (!fixSelSegOk || chIsOpen()) return;
+            if (!fixSelStored || fixSelStored.end <= fixSelStored.start) { fixSelLog('CH-OPEN-NO', { reason: 'no-draft' }); return; }
             CH.edge = edge === 'end' ? 'end' : 'start';
-            CH.snapshot = { start: sharedState.fixSelStored.start, end: sharedState.fixSelStored.end };
-            CH.unit = fixSelChUnitAt(sharedState.fixSelState.units, CH.edge === 'start' ? sharedState.fixSelStored.start : sharedState.fixSelStored.end - 1);
+            CH.snapshot = { start: fixSelStored.start, end: fixSelStored.end };
+            CH.unit = fixSelChUnitAt(fixSelState.units, CH.edge === 'start' ? fixSelStored.start : fixSelStored.end - 1);
             CH.page = 0;
             chooser.classList.add('open');
             // 1.79 手机实测：贴底条在 540px 高的窗里已经吃掉约 227px，微调窗只剩约 51px（滚动条后面才是
@@ -846,7 +849,7 @@ function buildFixSelCard() {
         // commit=false：把草稿还原成打开那一刻的快照（只有「取消」走）。
         const closeChooser = (commit) => {
             if (!chIsOpen()) return;
-            if (!commit && CH.snapshot) sharedState.fixSelStored = { start: CH.snapshot.start, end: CH.snapshot.end };
+            if (!commit && CH.snapshot) setFixSelStored({ start: CH.snapshot.start, end: CH.snapshot.end });
             chooser.classList.remove('open');
             el.classList.remove('so-fixsel-ch-open');
             // 只还原【显示】，绝不碰值：用户在整体要求框里敲的字原样还在（那是 textarea 的 value，
@@ -862,9 +865,9 @@ function buildFixSelCard() {
         el.querySelector('.so-fixsel-adjust').addEventListener('click', () => openChooser('start'));
         chooser.querySelectorAll('.so-fixsel-ch-tab').forEach((tab) => {
             tab.addEventListener('click', () => {   // 换一头 = 按【当前草稿的那一头】重新找句子，回到第 0 页
-                if (!sharedState.fixSelStored) return;
+                if (!fixSelStored) return;
                 CH.edge = tab.dataset.edge === 'end' ? 'end' : 'start';
-                CH.unit = fixSelChUnitAt(sharedState.fixSelState.units, CH.edge === 'start' ? sharedState.fixSelStored.start : sharedState.fixSelStored.end - 1);
+                CH.unit = fixSelChUnitAt(fixSelState.units, CH.edge === 'start' ? fixSelStored.start : fixSelStored.end - 1);
                 CH.page = 0;
                 renderChooser();
             });
@@ -872,7 +875,7 @@ function buildFixSelCard() {
         chooser.querySelector('.so-fixsel-ch-prev').addEventListener('click', () => { CH.page--; renderChooser(); });
         chooser.querySelector('.so-fixsel-ch-next').addEventListener('click', () => { CH.page++; renderChooser(); });
         const chMoveUnit = (dir) => {   // 只落在散文句上：换行 / 空白那些 gap 单元一律跳过
-            const us = (sharedState.fixSelState && sharedState.fixSelState.units) || [];
+            const us = (fixSelState && fixSelState.units) || [];
             for (let k = CH.unit + dir; k >= 0 && k < us.length; k += dir) {
                 if (us[k].kind === 'prose') { CH.unit = k; CH.page = 0; renderChooser(); return; }
             }
@@ -888,10 +891,10 @@ function buildFixSelCard() {
         el.querySelectorAll('.so-fixsel-mode-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const mode = btn.dataset.mode === 'tap' ? 'tap' : 'drag';
-                if (mode === sharedState.fixSelMode) return;
+                if (mode === fixSelMode) return;
                 closeChooser(true);   // 换模式 = 先落定微调（拖选那边没有停靠选择器）
                 try { localStorage.setItem('so.fixsel.mode', mode); } catch (e) { /* 隐私模式写不进，不挡本次切换 */ }
-                sharedState.fixSelMode = mode;
+                setFixSelMode(mode);
                 fixSelApplyMode(el);
                 apply();   // 提示行换成新模式的说法
             });
@@ -903,12 +906,12 @@ function buildFixSelCard() {
 // 多段 overlay 全量重画（规则4/5 的多段版）：钉选段（.so-fixsel-hl-pin，冷色）+ 失焦存档选区
 //（.so-fixsel-hl，暖色）。聚焦时只画钉——活选区让位原生黄选。无任何区间 = 隐藏（与旧版一致）。
 function paintFixSelOverlayAll(card) {
-    if (ENABLE_FIX_TAP_SELECT && sharedState.fixSelMode === 'tap') { renderFixSelPicker(card); return; }   // 点选层是它自己的画布
+    if (ENABLE_FIX_TAP_SELECT && fixSelMode === 'tap') { renderFixSelPicker(card); return; }   // 点选层是它自己的画布
     const ta = card.querySelector('.so-fixsel-text');
     const overlay = card.querySelector('.so-fixsel-overlay');
-    const ranges = ((sharedState.fixSelState && sharedState.fixSelState.pins) || []).map((p) => ({ start: p.start, end: p.end, cls: 'so-fixsel-hl-pin' }));
-    if (document.activeElement !== ta && sharedState.fixSelStored && sharedState.fixSelStored.end > sharedState.fixSelStored.start) {
-        ranges.push({ start: sharedState.fixSelStored.start, end: sharedState.fixSelStored.end, cls: 'so-fixsel-hl' });
+    const ranges = ((fixSelState && fixSelState.pins) || []).map((p) => ({ start: p.start, end: p.end, cls: 'so-fixsel-hl-pin' }));
+    if (document.activeElement !== ta && fixSelStored && fixSelStored.end > fixSelStored.start) {
+        ranges.push({ start: fixSelStored.start, end: fixSelStored.end, cls: 'so-fixsel-hl' });
     }
     if (!ranges.length) { overlay.innerHTML = ''; overlay.style.display = 'none'; return; }
     overlay.innerHTML = buildFixSelOverlayHtml(ta.value || '', ranges);
@@ -920,7 +923,7 @@ function paintFixSelOverlayAll(card) {
 // 临时画一个只含标记 span 的 overlay、读它的 offsetTop、把 ta 滚到上 1/3 处，再交还 paintFixSelOverlayAll
 // 重画常规态（钉/存档高亮 + 滚动同步在那边）。量不出（jsdom / 零高布局）→ 停在顶部，无害。
 function scrollFixSelToOffset(card, start) {
-    if (ENABLE_FIX_TAP_SELECT && sharedState.fixSelMode === 'tap') {   // 点选：找 data-s ≤ start < data-e 的那一片，滚到上 1/3
+    if (ENABLE_FIX_TAP_SELECT && fixSelMode === 'tap') {   // 点选：找 data-s ≤ start < data-e 的那一片，滚到上 1/3
         try {
             const body = card.querySelector('#so-fixsel-body');
             const picker = card.querySelector('.so-fixsel-picker');
@@ -957,7 +960,7 @@ function scrollFixSelToOffset(card, start) {
 // min-width 挤不下自动换整行；× ≥32px 点区。输入直写 pin.instr（对象引用，开跑时快照）。
 function renderFixSelPins(card) {
     const box = card.querySelector('.so-fixsel-pins');
-    const pins = (sharedState.fixSelState && sharedState.fixSelState.pins) || [];
+    const pins = (fixSelState && fixSelState.pins) || [];
     box.innerHTML = '';
     box.style.display = pins.length ? 'flex' : 'none';
     pins.forEach((p, i) => {
@@ -976,10 +979,10 @@ function renderFixSelPins(card) {
         rm.type = 'button'; rm.className = 'so-fixsel-pinrm'; rm.title = '移除此段';
         rm.innerHTML = '<i class="fa-solid fa-xmark"></i>';
         rm.addEventListener('click', () => {
-            sharedState.fixSelState.pins.splice(i, 1);
+            fixSelState.pins.splice(i, 1);
             renderFixSelPins(card); paintFixSelOverlayAll(card); updateFixSelGo(card);
             const info = card.querySelector('.so-fixsel-info');   // 终审补钉：移除后同步刷新提示行（防「已钉 n 段」滞留旧数）
-            if (info) info.textContent = sharedState.fixSelState.pins.length ? fixSelHint('pinned', sharedState.fixSelState.pins.length) : fixSelHint('none');
+            if (info) info.textContent = fixSelState.pins.length ? fixSelHint('pinned', fixSelState.pins.length) : fixSelHint('none');
             fixSelSyncStrip(card);
         });
         row.appendChild(tag); row.appendChild(instr); row.appendChild(rm);
@@ -991,10 +994,10 @@ function renderFixSelPins(card) {
 // 2+ = 「开始多段校正（n 段，n 次调用）」——调用数写在脸上，成本绝不意外。
 function updateFixSelGo(card) {
     const go = card.querySelector('.so-fixsel-go');
-    const pins = (sharedState.fixSelState && sharedState.fixSelState.pins) || [];
+    const pins = (fixSelState && fixSelState.pins) || [];
     if (pins.length >= 2) { go.textContent = `开始多段校正（${pins.length} 段，${pins.length} 次调用）`; go.disabled = false; }
     else if (pins.length === 1) { go.textContent = '开始校正'; go.disabled = false; }
-    else { go.textContent = '开始校正'; go.disabled = !(sharedState.fixSelState && sharedState.fixSelState.text.length >= 2); }
+    else { go.textContent = '开始校正'; go.disabled = !(fixSelState && fixSelState.text.length >= 2); }
 }
 
 // 校正调用共用传输；回调接收累计全文，自动任务不传回调时保持非流式。
@@ -1018,27 +1021,27 @@ export async function fixCallTransport(s, messages, signal, onCum, effMaxTokens 
 // 只回改写片段；上下文走手动那套 fixM_* 开关（captureFixContext 填卡/概要/前文模块槽——选段正是能扛高上下文的形态）。
 // 调用机理与 runFixByTargets 同构（direct/profile + 流式 + 共享 abortCtl 停止键）。定稿 → renderFixSelectResult。
 async function runFixSelect(instruction) {
-    if (!ENABLE_FIX_SELECT || !sharedState.fixSelState || sharedState.fixSelState.text.length < 2) return;
+    if (!ENABLE_FIX_SELECT || !fixSelState || fixSelState.text.length < 2) return;
     const ctx = getCtx();
     const s = getSettings();
-    const sel = sharedState.fixSelState;   // 快照本次划选（fixSelState 可能被下次开卡覆盖）
+    const sel = fixSelState;   // 快照本次划选（fixSelState 可能被下次开卡覆盖）
     await captureFixContext(s, { mode: 'manual' });   // 填 fixCardBlock/fixSummaryBlock/fixContextBlock（buildFixSpanPrompt 读）
     const messages = buildSpanMessages(ctx, s, sel, instruction);
 
-    const aEntry = { id: ++sharedState.cidSeq, role: 'assistant', content: '' };
+    const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
     const contentEl = assistantEl.querySelector('.so-content');
     const clearTyping = showTyping(contentEl);
     setGenerating(true);
-    sharedState.abortCtl = new AbortController();   // 共享中断器：停止键即时生效（同 runFixByTargets）
-    const timer = setTimeout(() => { try { sharedState.abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
+    setAbortCtl(new AbortController());   // 共享中断器：停止键即时生效（同 runFixByTargets）
+    const timer = setTimeout(() => { try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
     let finalText = '';
     try {
         // 传输四格收进 fixCallTransport（1.37.0 单一来源）；onCum 累计语义 = 原 profile 流分支原样，
         // direct 流从「+= 增量」改「= 累计」——同一字符串级数，最终画面逐字节一致。
         if (s.stream) contentEl.classList.add('so-streaming');
-        finalText = await fixCallTransport(s, messages, sharedState.abortCtl.signal, (full) => { clearTyping(); contentEl.textContent = full; if (sharedState.soFollowStream) scrollToBottom(); });
+        finalText = await fixCallTransport(s, messages, abortCtl.signal, (full) => { clearTyping(); contentEl.textContent = full; if (soFollowStream) scrollToBottom(); });
         contentEl.classList.remove('so-streaming');
         clearTyping();
         renderFixSelectResult(assistantEl, contentEl, sel, finalText);
@@ -1047,8 +1050,8 @@ async function runFixSelect(instruction) {
         if (isUserAbort(e)) contentEl.textContent = '(已停止)';
         else { contentEl.textContent = '选段校正失败：' + (e?.message || e); contentEl.classList.add('so-hint-error'); }
     } finally {
-        clearTimeout(timer); setGenerating(false); sharedState.abortCtl = null;
-        if (sharedState.soFollowStream) scrollToBottom();
+        clearTimeout(timer); setGenerating(false); setAbortCtl(null);
+        if (soFollowStream) scrollToBottom();
     }
 }
 
@@ -1178,25 +1181,25 @@ async function runSpanCall(s, messages, batchSignal) {
 // 切模式确认（confirmConvoSwap）/ 切聊天中断全部免费继承；不入保活槽（liveForge/liveCondense 是锻造/
 // 深度精简专属）。起跑后绝不 convo.push（1.36.0 串房教训）——全部落笔进起跑时建好的这只气泡。
 async function runFixSelectBatch(sharedInstr) {
-    if (!ENABLE_FIX_SELECT || sharedState.isGenerating) return;
-    if (!sharedState.fixSelState || !Array.isArray(sharedState.fixSelState.pins) || sharedState.fixSelState.pins.length < 2) return;
+    if (!ENABLE_FIX_SELECT || isGenerating) return;
+    if (!fixSelState || !Array.isArray(fixSelState.pins) || fixSelState.pins.length < 2) return;
     const ctx = getCtx();
     const s = getSettings();
     // 快照（await 前）：重开卡会覆盖 fixSelState，批发全程只认起跑这一刻的钉选
-    const job = { idx: sharedState.fixSelState.idx, swipeId: sharedState.fixSelState.swipeId, fingerprint: sharedState.fixSelState.fingerprint, full: sharedState.fixSelState.full, pins: sharedState.fixSelState.pins.map((p) => ({ ...p })) };
+    const job = { idx: fixSelState.idx, swipeId: fixSelState.swipeId, fingerprint: fixSelState.fingerprint, full: fixSelState.full, pins: fixSelState.pins.map((p) => ({ ...p })) };
     await captureFixContext(s, { mode: 'manual' });   // 填模块槽（同 runFixSelect，一次够全批用——手动分支不依赖片段）
     const calls = job.pins.map((pin) => ({
         pin,
         messages: buildSpanMessages(ctx, s, { full: job.full, text: pin.text }, resolvePinInstruction(pin.instr, sharedInstr)),
     }));
-    const aEntry = { id: ++sharedState.cidSeq, role: 'assistant', content: '' };
+    const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
     const contentEl = assistantEl.querySelector('.so-content');
     const clearTyping = showTyping(contentEl);
     setGenerating(true);
-    sharedState.abortCtl = new AbortController();   // 共享中断器（H7）：停止键 / 切聊天 / 1.36.0 确认后切换 都打得到
-    const batchSignal = sharedState.abortCtl.signal;
+    setAbortCtl(new AbortController());   // 共享中断器（H7）：停止键 / 切聊天 / 1.36.0 确认后切换 都打得到
+    const batchSignal = abortCtl.signal;
     let done = 0;
     try {
         const results = await runBoundedPool(calls.map((c) => () =>
@@ -1214,8 +1217,8 @@ async function runFixSelectBatch(sharedInstr) {
         contentEl.textContent = '多段校正失败：' + ((e && e.message) || e);
         contentEl.classList.add('so-hint-error');
     } finally {
-        setGenerating(false); sharedState.abortCtl = null;
-        if (sharedState.soFollowStream) scrollToBottom();
+        setGenerating(false); setAbortCtl(null);
+        if (soFollowStream) scrollToBottom();
     }
 }
 
@@ -1313,14 +1316,14 @@ function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
 // 重试失败段：只重发 failed/truncated/unparseable/aborted 的段。messages 起跑时已建好、【原样复用】——
 // 不重建 prompt、不再 captureFixContext（信封与首轮字节相同，H2 恒守）。归并结果后整卡重画。
 async function retryFixSelectBatch(assistantEl, contentEl, job, rows) {
-    if (sharedState.isGenerating) return;
+    if (isGenerating) return;
     const s = getSettings();
     const targets = [];
     rows.forEach((r, i) => { if (r.status === 'failed' || r.status === 'truncated' || r.status === 'unparseable' || r.status === 'aborted') targets.push(i); });
     if (!targets.length) return;
     setGenerating(true);
-    sharedState.abortCtl = new AbortController();
-    const batchSignal = sharedState.abortCtl.signal;
+    setAbortCtl(new AbortController());
+    const batchSignal = abortCtl.signal;
     let done = 0;
     contentEl.textContent = `重试中… 0/${targets.length} 段完成`;
     try {
@@ -1336,7 +1339,7 @@ async function retryFixSelectBatch(assistantEl, contentEl, job, rows) {
     } catch (e) {
         contentEl.textContent = '重试失败：' + ((e && e.message) || e);
     } finally {
-        setGenerating(false); sharedState.abortCtl = null;
+        setGenerating(false); setAbortCtl(null);
     }
 }
 
@@ -1358,22 +1361,22 @@ async function applyFixSelectBatch(job, accepted) {
 // 「按目标校正最新回复」：用勾选的目标 + 约束（不是手动输入）当指令，对最新回复跑一次两段式校正并出卡。
 // 这是后续自动模式的核心，这里由按钮手动触发。一次性非流式调用（仿 runAutoDiagnose）。
 export async function runFixByTargets() {
-    if (sharedState.isGenerating) return;
+    if (isGenerating) return;
     const s = getSettings();
     if (s.mode === 'direct' && (!s.endpoint || !s.model)) { addSystemNote('请先在设置里配置直连端点与模型。'); return; }
     if (s.mode === 'profile' && !s.profileId) { addSystemNote('请先在设置里选择一个连接配置档。'); return; }
     await captureFixContext(s, { mode: 'auto' });   // 「按目标校正」= 自动那套（双稿 / 目标 / 上下文按 fixA_*），手动触发一次
-    if (!sharedState.fixTargetProse.trim()) { addSystemNote('没找到可校正的 AI 回复（主聊天里要先有一条 AI 回复）。'); return; }
+    if (!fixTargetProse.trim()) { addSystemNote('没找到可校正的 AI 回复（主聊天里要先有一条 AI 回复）。'); return; }
     // R2 双重校正（一次性手动触发）：目标当前 swipe 已是校正结果 → 提醒会在其基础上再校正，随后继续（不静默改基准）。
-    if (isFixSwipe((getCtx().chat || [])[sharedState.fixTargetIdx])) addSystemNote('这条回复当前显示的已是一次校正结果；将在其基础上再次校正（如需校正原文请先左滑回原文）。');
+    if (isFixSwipe((getCtx().chat || [])[fixTargetIdx])) addSystemNote('这条回复当前显示的已是一次校正结果；将在其基础上再次校正（如需校正原文请先左滑回原文）。');
     // ✨ Phase 5 D+E 门：与 runAutoFix 同一套判断（RESOLUTION A——这个按钮走的也是「自动」那套配置，理应遵守
     // 同一份 D 静默兜底），只是这里是一次性、有人盯着屏幕的手动触发，所以走 addSystemNote 通道（普通侧聊提示），
     // 不是 addAutoFixNote 的持久记录；suggest / skip 时直接 return，不出校正卡（呼应下面「没找到可校正的
     // AI 回复」那类提前退出，不留下一张会误导的卡片）。
-    const scopeDec = sharedState.fixScopeDecision;
+    const scopeDec = fixScopeDecision;
     if (scopeDec && scopeDec.action === 'detected') {
         setFixCfg({ fixA_scopeTag: scopeDec.tag, fixA_scopeManual: false });
-        const scopeEl = sharedState.win && sharedState.win.querySelector('#so-fix-scope');
+        const scopeEl = win && win.querySelector('#so-fix-scope');
         if (scopeEl) scopeEl.value = scopeDec.tag;
         addSystemNote(fixScopeNoteText(scopeDec.note).body);
     } else if (scopeDec && (scopeDec.action === 'suggest' || scopeDec.action === 'skip')) {
@@ -1383,13 +1386,13 @@ export async function runFixByTargets() {
     // ✨ 分段校正（1.18.0）门（与 runAutoFix 同一套决策；这里是有人盯着屏幕的手动触发 → addSystemNote 通道，
     // 呼应 1.17.16 的 RESOLUTION A）。ask 时用户在场：立刻把提案摆出来（addSystemNote）+ 走一次 emitPieceAsk
     // （toast 可点确认 + 持久记录 + 记 pieceAsked），本轮不校正。
-    if (ENABLE_FIX_PIECEWISE && sharedState.fixPieceDecision) {
-        const pd = sharedState.fixPieceDecision;
+    if (ENABLE_FIX_PIECEWISE && fixPieceDecision) {
+        const pd = fixPieceDecision;
         if (pd.adopt) {
             const cur = getEffectiveFixCfg(s, getFixCfg());
             if (cur.fixA_pieceMode !== 'wrapped' || cur.fixA_scopeTag !== pd.tag) {
                 setFixCfg({ fixA_pieceMode: 'wrapped', fixA_scopeTag: pd.tag, fixA_scopeManual: false });
-                const scopeEl = sharedState.win && sharedState.win.querySelector('#so-fix-scope');
+                const scopeEl = win && win.querySelector('#so-fix-scope');
                 if (scopeEl) scopeEl.value = pd.tag;
                 if (!pd.adopt.quiet) addSystemNote(fixScopeNoteText(pd.note).body);
             }
@@ -1404,7 +1407,7 @@ export async function runFixByTargets() {
             return;
         }
         if (pd.action === 'suggest' || pd.action === 'skip') { addSystemNote(fixScopeNoteText(pd.note).body); return; }
-        if (sharedState.fixPieceTable) { await runFixByTargetsPieces(s); return; }
+        if (fixPieceTable) { await runFixByTargetsPieces(s); return; }
         // bypass / whole：继续走下面的老单段路径
     }
     // 自动模式配置（per-chat 覆盖全局，再经 resolveFixModeCfg 归一）。
@@ -1421,7 +1424,7 @@ export async function runFixByTargets() {
     const messages = (fixUsePresetFor(s, 'auto') && presetCurationActive(s))
         ? buildFixPresetMessages(s, directive)   // 破限 / 越狱：套上自定义补全预设（仅文本块 + 角色，跳过 RP 内容标记）
         : maybeWrapJb([{ role: 'system', content: buildFixPrompt(ctx, s) }, { role: 'user', content: directive }], 'fixAuto', s);
-    const aEntry = { id: ++sharedState.cidSeq, role: 'assistant', content: '' };
+    const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
     const contentEl = assistantEl.querySelector('.so-content');
@@ -1430,13 +1433,13 @@ export async function runFixByTargets() {
     // 用【模块级】abortCtl（与 generateReply / stopGeneration / 停止按钮同一个）：setGenerating(true) 已把发送键变成
     // 「停止」键，点它经 onSend → stopGeneration 中断的正是 abortCtl。此前这里用【本地】ctl，停止键够不着 →「按目标
     // 校正最新回复」一旦发出就无法中断（只能等 120s 超时 / 重载）。改用 abortCtl 后停止键即时生效（用户反馈修复）。
-    sharedState.abortCtl = new AbortController();
-    const timer = setTimeout(() => { try { sharedState.abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
+    setAbortCtl(new AbortController());
+    const timer = setTimeout(() => { try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
     try {
         const effMaxTokens = fixEffMaxTokens(s);   // Tier 0 ③：可被 fixMaxTokens 顶高（长楼层）
-        const onCum = s.stream ? (full) => { clearTyping(); contentEl.textContent = full; if (sharedState.soFollowStream) scrollToBottom(); } : undefined;
+        const onCum = s.stream ? (full) => { clearTyping(); contentEl.textContent = full; if (soFollowStream) scrollToBottom(); } : undefined;
         if (s.stream) contentEl.classList.add('so-streaming');
-        const finalText = await fixCallTransport(s, messages, sharedState.abortCtl.signal, onCum, effMaxTokens);
+        const finalText = await fixCallTransport(s, messages, abortCtl.signal, onCum, effMaxTokens);
         if (s.stream) contentEl.classList.remove('so-streaming');
         clearTyping();
         if (renderFixCard(assistantEl, contentEl, aEntry, finalText) !== 'ok') {
@@ -1454,8 +1457,8 @@ export async function runFixByTargets() {
     } finally {
         clearTimeout(timer);
         setGenerating(false);
-        sharedState.abortCtl = null;                                             // 交还共享中断器（与 generateReply 一致）
-        if (sharedState.soFollowStream) scrollToBottom();   // #1 定稿后只在用户跟随到底部时才滚
+        setAbortCtl(null);                                             // 交还共享中断器（与 generateReply 一致）
+        if (soFollowStream) scrollToBottom();   // #1 定稿后只在用户跟随到底部时才滚
     }
 }
 
@@ -1465,7 +1468,7 @@ export async function runFixByTargets() {
 // 应用前陈旧守卫照跑（fixCaptured）。「看改动」= 修好各段的 prose↔prose 拼接对比（守卫两侧都不在，不刷屏）。
 async function runFixByTargetsPieces(s) {
     const ctx = getCtx();
-    const table = sharedState.fixPieceTable;
+    const table = fixPieceTable;
     if (!table || !table.pieces.length) return;
     const cfg = getEffectiveFixCfg(s, getFixCfg());
     const a = resolveFixModeCfg(cfg, 'auto');
@@ -1476,13 +1479,13 @@ async function runFixByTargetsPieces(s) {
     const join = a.pieceJoin ? fixJoinTable(table, a.dropTags) : null;
     const plan = join ? null : fixPiecePlan(table.pieces, a.targets, constraints, clampFixAutoMinChars(cfg.fixAutoMinChars));
     if (!join && !plan.attempts.length) { addSystemNote(`这条回复分了 ${table.pieces.length} 段正文，但都太短 / 成本门判定不值得发调用（可调低「成本门字符数」再试）。`); return; }
-    const aEntry = { id: ++sharedState.cidSeq, role: 'assistant', content: '' };
+    const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
     const contentEl = assistantEl.querySelector('.so-content');
     const clearTyping = showTyping(contentEl);
     setGenerating(true);
-    sharedState.abortCtl = new AbortController();   // 共享中断器：setGenerating(true) 已把发送键变停止键，点它中断的正是这个
+    setAbortCtl(new AbortController());   // 共享中断器：setGenerating(true) 已把发送键变停止键，点它中断的正是这个
     const results = join ? [] : plan.entries.map((e) => ({ status: e.status }));
     let stopped = false;
     let joinResult = null;
@@ -1491,13 +1494,13 @@ async function runFixByTargetsPieces(s) {
             clearTyping();
             const joinHead = `整体校正中…（1 次调用；${join.keepBlocks.length} 块结构锚点原位保留）`;
             contentEl.textContent = joinHead;
-            const timer = setTimeout(() => { try { sharedState.abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
+            const timer = setTimeout(() => { try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
             try {
                 contentEl.classList.add('so-streaming');
                 // ✨ 1.18.3：按钮路径流式直播草稿（尊重全局 流式 开关；锚点 / <FixedReply> 标签会原样闪过——
                 // 定稿后由下方卡片渲染替换，同弧线实时输出的契约）。
-                joinResult = await fixJoinCall(ctx, s, directive, join, sharedState.abortCtl.signal,
-                    (full) => { contentEl.textContent = joinHead + '\n\n' + full; if (sharedState.soFollowStream) scrollToBottom(); });
+                joinResult = await fixJoinCall(ctx, s, directive, join, abortCtl.signal,
+                    (full) => { contentEl.textContent = joinHead + '\n\n' + full; if (soFollowStream) scrollToBottom(); });
             } catch (e) {
                 if (isUserAbort(e)) { stopped = true; }
                 else joinResult = { status: 'failed', reason: 'error' };
@@ -1508,11 +1511,11 @@ async function runFixByTargetsPieces(s) {
                 clearTyping();
                 const pieceHead = `正在分段校正…（第 ${k + 1}/${plan.attempts.length} 次调用，共 ${table.pieces.length} 段正文）`;
                 contentEl.textContent = pieceHead;
-                const timer = setTimeout(() => { try { sharedState.abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
+                const timer = setTimeout(() => { try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
                 try {
                     contentEl.classList.add('so-streaming');
-                    results[i] = await fixPieceCall(ctx, s, a, directive, table.pieces[i], sharedState.abortCtl.signal,
-                        (full) => { contentEl.textContent = pieceHead + '\n\n' + full; if (sharedState.soFollowStream) scrollToBottom(); });
+                    results[i] = await fixPieceCall(ctx, s, a, directive, table.pieces[i], abortCtl.signal,
+                        (full) => { contentEl.textContent = pieceHead + '\n\n' + full; if (soFollowStream) scrollToBottom(); });
                 } catch (e) {
                     if (isUserAbort(e)) { stopped = true; break; }
                     results[i] = { status: 'failed', reason: 'error' };
@@ -1550,8 +1553,8 @@ async function runFixByTargetsPieces(s) {
                 + (r.problems ? '\n发现并修正：\n' + r.problems : '');
             assistantEl.querySelector('.so-bubble')?.appendChild(note2);
             // 重画保真（1.33.1）：登记应用材料，换房重画时最新一条凭它重挂（说明文一并原样重挂）。
-            registerFixApply(aEntry, { fixed: r.after, problems: '' }, r.before, sharedState.fixTargetIdx, [], { active: false }, sharedState.fixCaptured, spliced2, note2.textContent);
-            addFixApplyControls(assistantEl, { fixed: r.after, problems: '' }, r.before, sharedState.fixTargetIdx, [], { active: false }, sharedState.fixCaptured, spliced2, { entry: aEntry });
+            registerFixApply(aEntry, { fixed: r.after, problems: '' }, r.before, fixTargetIdx, [], { active: false }, fixCaptured, spliced2, note2.textContent);
+            addFixApplyControls(assistantEl, { fixed: r.after, problems: '' }, r.before, fixTargetIdx, [], { active: false }, fixCaptured, spliced2, { entry: aEntry });
             return;
         }
         const summary = fixPieceSummary(table.pieces, results);
@@ -1580,16 +1583,16 @@ async function runFixByTargetsPieces(s) {
         assistantEl.querySelector('.so-bubble')?.appendChild(note);
         // 应用控件：finalOverride = splice 好的整条；diff 用修好各段的 prose↔prose 拼接（keep 空、scope 关）。
         // 重画保真（1.33.1）：登记应用材料，换房重画时最新一条凭它重挂（说明文一并原样重挂）。
-        registerFixApply(aEntry, { fixed: summary.afterJoined, problems: '' }, summary.beforeJoined, sharedState.fixTargetIdx, [], { active: false }, sharedState.fixCaptured, spliced, note.textContent);
-        addFixApplyControls(assistantEl, { fixed: summary.afterJoined, problems: '' }, summary.beforeJoined, sharedState.fixTargetIdx, [], { active: false }, sharedState.fixCaptured, spliced, { entry: aEntry });
+        registerFixApply(aEntry, { fixed: summary.afterJoined, problems: '' }, summary.beforeJoined, fixTargetIdx, [], { active: false }, fixCaptured, spliced, note.textContent);
+        addFixApplyControls(assistantEl, { fixed: summary.afterJoined, problems: '' }, summary.beforeJoined, fixTargetIdx, [], { active: false }, fixCaptured, spliced, { entry: aEntry });
     } catch (e) {
         clearTyping();
         contentEl.textContent = '校正失败：' + (e?.message || e);
         contentEl.classList.add('so-hint-error');
     } finally {
         setGenerating(false);
-        sharedState.abortCtl = null;   // 交还共享中断器（与 generateReply / runFixByTargets 一致）
-        if (sharedState.soFollowStream) scrollToBottom();
+        setAbortCtl(null);   // 交还共享中断器（与 generateReply / runFixByTargets 一致）
+        if (soFollowStream) scrollToBottom();
     }
 }
 
@@ -1613,7 +1616,7 @@ export function addAutoFixNote(status, problems, fix = null, meta = null) {
         const content = (meta && meta.task === 'custom')
             ? customTaskNoteContent({ status, problems, stamp, template: meta.template })
             : autoFixNoteContent({ status, problems, stamp });
-        const entry = { id: ++sharedState.cidSeq, role: 'note', content };
+        const entry = { id: nextCid(), role: 'note', content };
         // fix（仅 'fixed' 结果带）= { idx, before, after, fixSwipeId }，给记录挂「用原文 / 看改动」按钮。
         // 注意：和手动校正回复一样，按钮只在【本会话】可用——重载后记录是纯文本（fix 不进 persistConvo）。
         appendNoteToRoom('fix', entry, fix ? { fix } : null);   // 自动校正记录归入【校正房间】（不可见时直接落其元数据、不上屏）
@@ -1672,7 +1675,7 @@ export function confirmPieceBare() {
 // 用户确认「正文包在 <tag> 里」（梯 7.5 未知包裹名提案）：按聊天记住 wrapped + 标签（非手填，之后仍可自纠）。
 export function confirmPieceWrapped(tag) {
     setFixCfg({ fixA_pieceMode: 'wrapped', fixA_scopeTag: tag, fixA_scopeManual: false });
-    const scopeEl = sharedState.win && sharedState.win.querySelector('#so-fix-scope');
+    const scopeEl = win && win.querySelector('#so-fix-scope');
     if (scopeEl) scopeEl.value = tag;
     try { window.toastr && window.toastr.success && window.toastr.success(`已确认：之后自动校正只改 <${tag}> 里的正文，标签外与内嵌结构块原样保留。`, '剧情推进 · 自动校正'); } catch (e) { /* ignore */ }
     updateFixVerdict();
@@ -1689,8 +1692,8 @@ export async function fixPieceCall(ctx, s, a, directive, piece, signal, onDelta)
     const ex = extractExcludedSections(piece.core, a.keepTags, a.dropTags);
     const pieceProse = stripMechanismBlocks(ex.prose);
     if (!pieceProse.trim()) return { status: 'gated' };
-    sharedState.fixTargetProse = pieceProse;
-    sharedState.fixExtraKeep = ex.keepBlocks;
+    setFixTargetProse(pieceProse);
+    setFixExtraKeep(ex.keepBlocks);
     const messages = (fixUsePresetFor(s, 'auto') && presetCurationActive(s))
         ? buildFixPresetMessages(s, directive)
         : maybeWrapJb([{ role: 'system', content: buildFixPrompt(ctx, s) }, { role: 'user', content: directive }], 'fixAuto', s);
@@ -1713,17 +1716,17 @@ export async function fixPieceCall(ctx, s, a, directive, piece, signal, onDelta)
 export async function fixJoinCall(ctx, s, directive, join, signal, onDelta) {
     const pieceProse = (join && join.raw) ? join.core : stripMechanismBlocks(join.core);   // 📋 整条 raw 表：不剥 MVU
     if (!pieceProse.trim()) return { status: 'gated' };
-    sharedState.fixTargetProse = pieceProse;
-    sharedState.fixExtraKeep = join.keepBlocks;
+    setFixTargetProse(pieceProse);
+    setFixExtraKeep(join.keepBlocks);
     // 📋 自定义模板任务：预设 / 破限走自定义档自己的开关（fixC_usePreset），提示词由 buildFixPrompt 的 custom 分支给。
-    const custom = (ENABLE_FIX_CUSTOM_TASK && sharedState.fixActiveMode === 'custom');
+    const custom = (ENABLE_FIX_CUSTOM_TASK && fixActiveMode === 'custom');
     // 📋 单块守卫（MVU 地雷 ②）的判据，本函数与 fixRunJoin 共用一份（owed-wave fix round 2）。
     // **不能**用 join.raw：沿用识别但阶梯没建出分段表的 raw:false 退路同样是 fixCustomRawTable 出的表，
     // 契约行又点名了 <UpdateVariable>，模型伪造 / 回声一个块时若走原实参，composeFixedReply 会把原块也接回
     // = 一条消息两个更新区块。**也不能**去掉这层判据只留 fixOutputHasMvuBlock：那会把守卫装到校正路上，
     // 破掉不变量 2（校正路径零行为变化）。判据 =「自定义任务 且 这次的表来自 fixCustomRawTable」；
     // 校正 / 手动路 fixActiveMode 不是 'custom' ⇒ 恒假 ⇒ composeAgainst = join.core、skipBlock 恒 false。
-    const customRawTable = (ENABLE_FIX_CUSTOM_TASK && sharedState.fixActiveMode === 'custom' && !!sharedState.fixCustomJoin);
+    const customRawTable = (ENABLE_FIX_CUSTOM_TASK && fixActiveMode === 'custom' && !!fixCustomJoin);
     const jbMode = custom ? 'fixCustom' : 'fixAuto';
     const messages = (fixUsePresetFor(s, custom ? 'custom' : 'auto') && presetCurationActive(s))
         ? buildFixPresetMessages(s, directive)

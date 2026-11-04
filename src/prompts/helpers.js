@@ -1,10 +1,11 @@
 import { getSettings } from '../core/settings.js';
-import { sharedState } from '../core/state.js';
+
 import { stripReasoningTags } from '../modes/chat/context.js';
 import { builderVariantKey } from '../modes/lorebook/core.js';
 import { CUSTOM_PERSONA_CAPS, ENABLE_BUILDER_PERSONA_STYLES, ENABLE_CUSTOM_PERSONAS, FIXSEL_MAP_MAX_HITS, FIXSEL_MD_JUNK, FIXSEL_SCROLL_QUIET_MS, FIXSEL_SOFT_CUT, FIXSEL_TAP_MAX_MS, FIXSEL_TAP_MAX_PX, FIX_PREFILTER_PATTERNS, FIX_SAMPLE_TEMPLATES, FIX_TARGET_MODULES, MVU_BLOCK_DIALECTS, PERSONAS, fixSelClosers, fixSelDigit, fixSelSofts, fixSelTerms, fixSelWs } from './builtins.js';
 import { P } from './registry.js';
 import { locateTagOpen } from '../ui/messages.js';
+import { fixSelSegmenterCache, setFixSelSegmenterCache } from '../modes/fix/state.js';
 
 // 变体 → 访谈提示词（card 回冻结原件）。
 export function builderInterviewPromptFor(key) {
@@ -466,9 +467,9 @@ export function fixSelGraphemes(raw, s, e) {
     const text = String(raw || '');
     const from = Math.max(0, Math.min(Number(s) || 0, text.length));
     const to = Math.max(from, Math.min(Number(e) || 0, text.length));
-    if (!sharedState.fixSelSegmenterCache) sharedState.fixSelSegmenterCache = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+    if (!fixSelSegmenterCache) setFixSelSegmenterCache(new Intl.Segmenter(undefined, { granularity: 'grapheme' }));
     const cells = [];
-    for (const seg of sharedState.fixSelSegmenterCache.segment(text.slice(from, to))) {
+    for (const seg of fixSelSegmenterCache.segment(text.slice(from, to))) {
         cells.push({ start: from + seg.index, end: from + seg.index + seg.segment.length, g: seg.segment });
     }
     return cells;

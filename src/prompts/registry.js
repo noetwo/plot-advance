@@ -1,11 +1,13 @@
 import { getSummary } from '../core/chat-metadata.js';
 import { getCtx, getSettings } from '../core/settings.js';
-import { sharedState } from '../core/state.js';
+
 import { buildAdvisorPrompt, buildBbsHistorySection, buildCardSection, buildChatWorldSection, buildDiagnosePrompt, buildFixPrompt, buildLorebookPrompt, buildLwbHistorySection, buildSummarySection, buildTranscript, getBbsHistoryText, getLwbSummaryText } from '../modes/chat/context.js';
-import { BUILDER_LOOK_MUSTASK, LB_SMART_SELECT_PROMPT, buildBuilderPrompt } from '../modes/lorebook/core.js';
+import { buildBuilderPrompt } from '../modes/lorebook/core.js';
 import { BUILTIN_JB_CORE, BUILTIN_JB_TAIL } from '../presets/builtin-jailbreak.js';
-import { ADVISOR_FORMAT_SECTION, ADVISOR_NODE_ASK, ADVISOR_SPEEDS, ADVISOR_SYSTEM_PROMPT, BUILDER_FORGE_PROMPT, BUILDER_FORGE_PROMPT_NOSTEAL, BUILDER_FORGE_PROMPT_STEAL, BUILDER_INTERVIEW_PROMPT, BUILDER_INTERVIEW_PROMPT_NOSTEAL, BUILDER_INTERVIEW_PROMPT_STEAL, BUILDER_PROTOCOL, CONDENSE_OPS_PROMPT, CONDENSE_SECT_PROMPT, DEFAULT_SYSTEM_PROMPT, DIAGNOSE_SYSTEM_PROMPT, DLG_RICH_RIDER, DRAFT_CONDENSE_PROMPT, ENABLE_OFFSTAGE_GUARD, FIX_CUSTOM_FOOTER, FIX_CUSTOM_LEAD, FIX_CUSTOM_RAW_NOTE, FIX_PROMPT_JINGXIAO_DEEPSEEK, FIX_PROMPT_JINGXIAO_OPUS, FIX_SPAN_PROMPT, FIX_SYSTEM_PROMPT_MANUAL, FIX_SYSTEM_PROMPT_TIGHTEN, FIX_TARGETS_LEAD, FIX_TARGET_MODULES, LOREBOOK_SYSTEM_PROMPT, PERSONAS, PERSONA_FLESH_PROMPT, PERSONA_FRAME, PERSONA_FRAME_CUSTOM, PERSONA_MODE_OVERRIDES, PERSONA_STRUCT_GUARD, PERSONA_STRUCT_GUARD_WI } from './builtins.js';
+import { ADVISOR_FORMAT_SECTION, ADVISOR_NODE_ASK, ADVISOR_SPEEDS, ADVISOR_SYSTEM_PROMPT, BUILDER_FORGE_PROMPT, BUILDER_FORGE_PROMPT_NOSTEAL, BUILDER_FORGE_PROMPT_STEAL, BUILDER_INTERVIEW_PROMPT, BUILDER_INTERVIEW_PROMPT_NOSTEAL, BUILDER_INTERVIEW_PROMPT_STEAL, BUILDER_LOOK_MUSTASK, BUILDER_PROTOCOL, CONDENSE_OPS_PROMPT, CONDENSE_SECT_PROMPT, DEFAULT_SYSTEM_PROMPT, DIAGNOSE_SYSTEM_PROMPT, DLG_RICH_RIDER, DRAFT_CONDENSE_PROMPT, ENABLE_OFFSTAGE_GUARD, FIX_CUSTOM_FOOTER, FIX_CUSTOM_LEAD, FIX_CUSTOM_RAW_NOTE, FIX_PROMPT_JINGXIAO_DEEPSEEK, FIX_PROMPT_JINGXIAO_OPUS, FIX_SPAN_PROMPT, FIX_SYSTEM_PROMPT_MANUAL, FIX_SYSTEM_PROMPT_TIGHTEN, FIX_TARGETS_LEAD, FIX_TARGET_MODULES, LB_SMART_SELECT_PROMPT, LOREBOOK_SYSTEM_PROMPT, PERSONAS, PERSONA_FLESH_PROMPT, PERSONA_FRAME, PERSONA_FRAME_CUSTOM, PERSONA_MODE_OVERRIDES, PERSONA_STRUCT_GUARD, PERSONA_STRUCT_GUARD_WI } from './builtins.js';
 import { buildPersonaBlock } from './helpers.js';
+import { advisorMode, builderMode, diagnoseMode, fixMode, lorebookMode } from '../core/runtime-state.js';
+import { chatStatData, worldInfoBlock } from '../modes/chat/state.js';
 
 /* ------------------------------------------------------------------ *
  * Context assembly
@@ -629,11 +631,11 @@ export function buildSystemPrompt() {
     const ctx = getCtx();
     const s = getSettings();
 
-    if (sharedState.diagnoseMode) return buildDiagnosePrompt(ctx, s);
-    if (sharedState.lorebookMode) return buildLorebookPrompt(ctx, s);
-    if (sharedState.advisorMode) return buildAdvisorPrompt(ctx, s);
-    if (sharedState.fixMode) return buildFixPrompt(ctx, s);
-    if (sharedState.builderMode) return buildBuilderPrompt(ctx, s);
+    if (diagnoseMode) return buildDiagnosePrompt(ctx, s);
+    if (lorebookMode) return buildLorebookPrompt(ctx, s);
+    if (advisorMode) return buildAdvisorPrompt(ctx, s);
+    if (fixMode) return buildFixPrompt(ctx, s);
+    if (builderMode) return buildBuilderPrompt(ctx, s);
 
     const parts = [P('chat.system', null, s)];
 
@@ -644,8 +646,8 @@ export function buildSystemPrompt() {
         parts.push(buildCardSection(ctx));
     }
 
-    if (sharedState.worldInfoBlock) {
-        parts.push(P('ctx.wi', { wi: sharedState.worldInfoBlock }, s));
+    if (worldInfoBlock) {
+        parts.push(P('ctx.wi', { wi: worldInfoBlock }, s));
     }
 
     parts.push(buildChatStatSection());
@@ -682,5 +684,5 @@ export function buildSystemPrompt() {
 // 无权威状态 -> 明令如实拒答具体数值。LLM 被问数值时默认编一个像样的，
 // 这一段就是把「编」这条路堵死。
 export function buildChatStatSection() {
-    return sharedState.chatStatData ? P('chat.statOn', { stat: sharedState.chatStatData }) : P('chat.statOff');
+    return chatStatData ? P('chat.statOn', { stat: chatStatData }) : P('chat.statOff');
 }

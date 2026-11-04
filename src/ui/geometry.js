@@ -1,6 +1,7 @@
 import { getSettings, save } from '../core/settings.js';
-import { sharedState } from '../core/state.js';
+
 import { autoGrowInput } from '../modes/chat/history.js';
+import { _ensureInViewPending, _soPreFsGeom, setEnsureInViewPending, setSoPreFsGeom, win } from './state.js';
 
 /* ------------------------------------------------------------------ *
  * Window dragging + resize persistence
@@ -12,24 +13,24 @@ export function applyInitialGeometry(s) {
     const margin = 8;
     const w = Math.max(300, Math.min(s.winWidth || 380, window.innerWidth - margin * 2));
     const h = Math.max(320, Math.min(s.winHeight || 540, window.innerHeight - margin * 2));
-    sharedState.win.style.width = `${w}px`;
-    sharedState.win.style.height = `${h}px`;
+    win.style.width = `${w}px`;
+    win.style.height = `${h}px`;
     if (s.winLeft != null && s.winTop != null) {
         // 与拖动共用 clampDragPos：存档里若是旧版拖出去的坏坐标（只保 60×40），这里一并纠回「至少留 140×48」。
         const p = clampDragPos({ left: s.winLeft, top: s.winTop, width: w, height: h },
             { w: window.innerWidth, h: window.innerHeight });
-        sharedState.win.style.left = `${p.left}px`;
-        sharedState.win.style.top = `${p.top}px`;
-        sharedState.win.style.right = 'auto';
+        win.style.left = `${p.left}px`;
+        win.style.top = `${p.top}px`;
+        win.style.right = 'auto';
     } else if (window.innerWidth < 600) {
         // 手机首次开窗（无存档几何）：居中（含纵向），标题栏不再贴顶被状态栏 / 刘海挡住
         //（用户反馈：手机版按钮挤在最顶上、不好戳）。仅无存档几何时；用户拖过就尊重其位置。
         const c = centeredWindowBox(currentView(), { width: w, height: h });
-        sharedState.win.style.left = `${c.left}px`;
-        sharedState.win.style.top = `${c.top}px`;
-        sharedState.win.style.width = `${c.width}px`;
-        sharedState.win.style.height = `${c.height}px`;
-        sharedState.win.style.right = 'auto';
+        win.style.left = `${c.left}px`;
+        win.style.top = `${c.top}px`;
+        win.style.width = `${c.width}px`;
+        win.style.height = `${c.height}px`;
+        win.style.right = 'auto';
     } // else: desktop keeps the CSS default (top:70px right:20px)
 }
 
@@ -80,12 +81,12 @@ function fullscreenEscShouldExit(state) {
 // applyInitialGeometry 一致的默认（380×540），这样键盘压扁后收起还能长回原尺寸。【不 save()】——
 // 这只是临时贴合显示，不覆盖用户拖 / 拽存下来的几何。
 export function ensureWindowInView() {
-    if (!sharedState.win || sharedState.win.style.display === 'none') return;
-    if (sharedState.win.classList.contains('so-fullscreen')) { fitFullscreen(); autoGrowInput(); return; }   // 全屏：铺满可见视口，跳过夹取
+    if (!win || win.style.display === 'none') return;
+    if (win.classList.contains('so-fullscreen')) { fitFullscreen(); autoGrowInput(); return; }   // 全屏：铺满可见视口，跳过夹取
     autoGrowInput();                                        // #4 窗口尺寸变化时重算输入框高度上限（上限=窗口高度一半）
     const s = getSettings();
     const view = currentView();
-    const r = sharedState.win.getBoundingClientRect();
+    const r = win.getBoundingClientRect();
     const box = {
         left: (s.winLeft != null) ? s.winLeft : r.left,
         top: (s.winTop != null) ? s.winTop : r.top,
@@ -93,11 +94,11 @@ export function ensureWindowInView() {
         height: s.winHeight || 540,
     };
     const c = clampWindowBox(box, view);
-    sharedState.win.style.width = `${c.width}px`;
-    sharedState.win.style.height = `${c.height}px`;
-    sharedState.win.style.left = `${c.left}px`;
-    sharedState.win.style.top = `${c.top}px`;
-    sharedState.win.style.right = 'auto';
+    win.style.width = `${c.width}px`;
+    win.style.height = `${c.height}px`;
+    win.style.left = `${c.left}px`;
+    win.style.top = `${c.top}px`;
+    win.style.right = 'auto';
 }
 
 // 全屏阅读模式的尺寸器：把 #so-window 铺满【可见】视口（visualViewport-aware，故手机软键盘弹出时
@@ -105,7 +106,7 @@ export function ensureWindowInView() {
 // （winLeft/winTop/winWidth/winHeight）原样保留，退出全屏即复原。经 ensureWindowInView 的全屏分支
 // 触达，故 resize/旋屏/键盘等视口变化都会自动保持铺满。单测 fullscreen.test.mjs。
 function fitFullscreen() {
-    const el = sharedState.win || document.getElementById('so-window');
+    const el = win || document.getElementById('so-window');
     if (!el) return;
     const vv = window.visualViewport;
     const box = fullscreenBox({
@@ -138,30 +139,30 @@ function updateFullscreenBtn(on) {
 // 进入全屏前的内联几何快照（仅内存 module 变量、【绝不落盘】）：退出时逐字还原它才能复原【从未拖过】的窗口
 // —— 那种窗口 winLeft/winTop=null、靠 CSS `top:70px right:20px` 定位，若走 ensureWindowInView 的
 // `s.winLeft ?? r.left` 复原路径，退出时 r.left 还是全屏的 0 → 窗口被算到左上角(8,8)而非原位（真机 smoke 逮到）。
-sharedState._soPreFsGeom = null;
+
 
 // 全屏阅读模式的唯一写入口。on 省略=切换。显示级切换、会话内瞬态、【绝不落盘】。
 export function setFullscreen(on) {
-    const el = sharedState.win || document.getElementById('so-window');
+    const el = win || document.getElementById('so-window');
     if (!el) return;
     const cur = el.classList.contains('so-fullscreen');
     const next = (on === undefined) ? !cur : !!on;
     if (next === cur) { updateFullscreenBtn(next); return; }   // 已是该态：别重复快照（否则会把全屏几何存成"悬浮"快照）
     if (next) {
-        sharedState._soPreFsGeom = { left: el.style.left, top: el.style.top, right: el.style.right, width: el.style.width, height: el.style.height };
+        setSoPreFsGeom({ left: el.style.left, top: el.style.top, right: el.style.right, width: el.style.width, height: el.style.height });
         el.classList.add('so-fullscreen');
         updateFullscreenBtn(true);
         fitFullscreen();                                       // 铺满可见视口
     } else {
         el.classList.remove('so-fullscreen');
         updateFullscreenBtn(false);
-        if (sharedState._soPreFsGeom) {                                    // 逐字还原进入前的内联样式（含"无 left/top、纯 CSS 定位"的默认态）
-            el.style.left = sharedState._soPreFsGeom.left;
-            el.style.top = sharedState._soPreFsGeom.top;
-            el.style.right = sharedState._soPreFsGeom.right;
-            el.style.width = sharedState._soPreFsGeom.width;
-            el.style.height = sharedState._soPreFsGeom.height;
-            sharedState._soPreFsGeom = null;
+        if (_soPreFsGeom) {                                    // 逐字还原进入前的内联样式（含"无 left/top、纯 CSS 定位"的默认态）
+            el.style.left = _soPreFsGeom.left;
+            el.style.top = _soPreFsGeom.top;
+            el.style.right = _soPreFsGeom.right;
+            el.style.width = _soPreFsGeom.width;
+            el.style.height = _soPreFsGeom.height;
+            setSoPreFsGeom(null);
         }
         ensureWindowInView();   // 还原后再夹一次：旋屏/键盘期间几何若变把窗口收回可见区（此刻 r 已是还原后的原位）；仍不 save
     }
@@ -173,25 +174,25 @@ export function setFullscreen(on) {
 // 绝不 preventDefault/stopPropagation——ST 自己的 ESC 照常收到。#so-input 主输入框不算编辑框（在里面按 ESC 也退出）。
 export function onFullscreenEscKeydown(e) {
     if (e.key !== 'Escape') return;
-    if (!sharedState.win || sharedState.win.style.display === 'none') return;
-    if (!sharedState.win.classList.contains('so-fullscreen')) return;   // 非全屏流：立即 no-op（零回归的结构性保证）
+    if (!win || win.style.display === 'none') return;
+    if (!win.classList.contains('so-fullscreen')) return;   // 非全屏流：立即 no-op（零回归的结构性保证）
     const ae = document.activeElement;
-    const editorFocused = !!(ae && ae !== sharedState.win && sharedState.win.contains(ae) && ae.id !== 'so-input'
+    const editorFocused = !!(ae && ae !== win && win.contains(ae) && ae.id !== 'so-input'
         && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT' || ae.isContentEditable));
     if (fullscreenEscShouldExit({
         fullscreen: true,
-        toolsMenuOpen: !!sharedState.win.querySelector('#so-tools-menu.open'),
-        fixselOpen: !!sharedState.win.querySelector('#so-fixsel.open'),
+        toolsMenuOpen: !!win.querySelector('#so-tools-menu.open'),
+        fixselOpen: !!win.querySelector('#so-fixsel.open'),
         editorFocused,
     })) setFullscreen(false);
 }
 
 // 视口变化会连发很多次（键盘动画 / 旋屏过渡）——合并到下一帧只夹一次，避免抖动。
-sharedState._ensureInViewPending = false;
+
 export function scheduleEnsureInView() {
-    if (sharedState._ensureInViewPending) return;
-    sharedState._ensureInViewPending = true;
-    requestAnimationFrame(() => { sharedState._ensureInViewPending = false; ensureWindowInView(); });
+    if (_ensureInViewPending) return;
+    setEnsureInViewPending(true);
+    requestAnimationFrame(() => { setEnsureInViewPending(false); ensureWindowInView(); });
 }
 
 // Drag the window by its header. Pointer events cover mouse + touch + pen in one
@@ -262,8 +263,8 @@ export function currentView() {
 }
 // 窗口现在是否还有够得着的一块留在可见视口里。
 export function windowIsReachable() {
-    if (!sharedState.win) return false;
-    const r = sharedState.win.getBoundingClientRect();
+    if (!win) return false;
+    const r = win.getBoundingClientRect();
     return boxIsReachable({ left: r.left, top: r.top, width: r.width, height: r.height }, currentView());
 }
 // 一次性吞掉「拖动后浏览器仍会补发的那一下 click」—— 否则在按钮上拖完会顺带触发它

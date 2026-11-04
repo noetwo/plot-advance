@@ -1,6 +1,6 @@
 import { buildConvoExportFileName, buildConvoExportMd, convoExportAllowed, convoForPrompt, convoMetaKeyFor, getSummary, parseConvoExportMd, persistConvo, saveChatMetadata, soExportTimeParts } from '../../core/chat-metadata.js';
 import { getCtx, uiConfirm } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { addNoteMessage, loadConvoForChat, registerNoteOpts } from '../advisor/cards.js';
 import { getChatMetadataSafe } from '../advisor/metadata.js';
 import { chatIdentityKey } from './send.js';
@@ -8,6 +8,9 @@ import { fixFingerprint } from '../fix/capture.js';
 import { ENABLE_MODE_ROOMS, MODULE } from '../../prompts/builtins.js';
 import { addFixApplyControls } from '../../ui/messages.js';
 import { currentOracleMode } from '../../ui/mode-shell.js';
+import { convo, convoStreamKey, isGenerating, nextCid } from '../../core/runtime-state.js';
+import { setSoConvoImportInputEl, soConvoImportInputEl } from './state.js';
+import { decrementSoBulkRenderDepth, incrementSoBulkRenderDepth, inputEl, messagesEl, soBulkRenderDepth, win } from '../../ui/state.js';
 
 /* ------------------------------------------------------------------ *
  * 持久「已应用」标记（1.33.2）。applied/撤销 一直只活在按钮闭包里——1.33.1 重挂动作卡后，
@@ -56,7 +59,7 @@ export function isRecordApplied(roomKey, entry) {
 // 仅【最新一条 AI 回复】凭 id+内容取回重挂（Prince 定案 2026-07-16）。材料从不落盘：重载后注册表
 // 为空 = 记录只读（与 1.31.1 同一契约）。noteText = 卡下「发现并修正 / 整体校正…」说明的原文。
 export function registerFixApply(entry, parsed, originalReply, targetIdx, keepSections, scope, captured, finalOverride, noteText) {
-    registerNoteOpts(sharedState.convoStreamKey, entry, {
+    registerNoteOpts(convoStreamKey, entry, {
         fixApply: { parsed, originalReply, targetIdx, keepSections, scope, captured, finalOverride, noteText: String(noteText || '') },
     });
 }
@@ -78,10 +81,10 @@ export function rehangFixApply(assistantEl, fa, entry) {
 export function appendNoteToRoom(roomKey, entry, opts) {
     const key = ENABLE_MODE_ROOMS ? (roomKey || 'main') : 'main';
     registerNoteOpts(key, entry, opts);
-    if (key === sharedState.convoStreamKey) {
-        sharedState.convo.push(entry);
+    if (key === convoStreamKey) {
+        convo.push(entry);
         persistConvo();
-        if (sharedState.messagesEl) entry._el = addNoteMessage(entry, opts);
+        if (messagesEl) entry._el = addNoteMessage(entry, opts);
         return;
     }
     const md = getChatMetadataSafe();
@@ -147,7 +150,7 @@ export function exportConvo() {
     const modeLabel = mode === 'advisor' ? '剧情参谋' : '普通聊天';
     const chatName = soExportChatName();
     const t = soExportTimeParts(new Date());
-    const md = buildConvoExportMd(sharedState.convo, { modeLabel, chatName, when: t.when });
+    const md = buildConvoExportMd(convo, { modeLabel, chatName, when: t.when });
     if (!md) {
         window.toastr && window.toastr.info && window.toastr.info('本页还没有对话，先聊两句再导出～', '剧情推进');
         return;
@@ -167,7 +170,7 @@ export function exportConvo() {
    空态入口另有 render-time 判定（空态本就每次切模式重画）。
    root 传具体气泡 = 只定它的初值（addMessage 用）；传 null = 扫整个消息区（切模式用）。 */
 export function soApplyConvoIoVisual(root) {
-    const scope = root || (sharedState.win && sharedState.win.querySelector('#so-messages'));
+    const scope = root || (win && win.querySelector('#so-messages'));
     if (!scope || typeof scope.querySelectorAll !== 'function') return;
     const on = convoExportAllowed(currentOracleMode());
     for (const b of scope.querySelectorAll('.so-convio-btn')) b.style.display = on ? '' : 'none';
@@ -178,7 +181,7 @@ export function soApplyConvoIoVisual(root) {
    （与自己聊出来的没有区别）：进 convo → 进元数据 → 之后照常作为历史发给模型（convoForPrompt 只挑
    user/assistant，导入轮天然在内）。当前页非空时先问一声，永远是【追加】、绝不覆盖。 */
 
-sharedState.soConvoImportInputEl = null;   // 隐藏的 <input type="file">：建一次、反复用（每次用前清 value 才能重选同一个文件）
+   // 隐藏的 <input type="file">：建一次、反复用（每次用前清 value 才能重选同一个文件）
 
 // 把 File 读成文本。现代浏览器有 file.text()；老环境回退 FileReader（顺带给 jsdom 单测留条路）。
 function soReadTextFile(file) {
@@ -195,7 +198,7 @@ function soReadTextFile(file) {
 
 // 隐藏文件选择器（仓内此前没有任何文件选择器；ST 核心自己也是这个形状的隐藏 input）。
 function soConvoImportInput() {
-    if (sharedState.soConvoImportInputEl && sharedState.soConvoImportInputEl.isConnected) return sharedState.soConvoImportInputEl;
+    if (soConvoImportInputEl && soConvoImportInputEl.isConnected) return soConvoImportInputEl;
     const inp = document.createElement('input');
     inp.type = 'file';
     inp.accept = '.md,.txt,text/markdown';
@@ -207,7 +210,7 @@ function soConvoImportInput() {
         if (f) soImportConvoFile(f);
     });
     document.body.appendChild(inp);
-    sharedState.soConvoImportInputEl = inp;
+    setSoConvoImportInputEl(inp);
     return inp;
 }
 
@@ -218,7 +221,7 @@ export function importConvo() {
         window.toastr && window.toastr.info && window.toastr.info('导入对话只在普通聊天和剧情参谋里可用。', '剧情推进');
         return;
     }
-    if (sharedState.isGenerating) {
+    if (isGenerating) {
         window.toastr && window.toastr.info && window.toastr.info('还有回复正在生成，等它跑完再导入～', '剧情推进');
         return;
     }
@@ -237,10 +240,10 @@ export function importConvo() {
 // ⚠ 两处 await 之间用户完全可能切模式 / 切房 / 切聊天 —— 每次 await 之后都重核一遍（跨聊天守卫，
 // 与仓内 chatIdentityKey 同一路数），否则会把一整页对话写进别人的房间。
 async function soImportConvoFile(file) {
-    const roomAtStart = sharedState.convoStreamKey;
+    const roomAtStart = convoStreamKey;
     const chatAtStart = chatIdentityKey();
     const stillHere = () => convoExportAllowed(currentOracleMode())
-        && sharedState.convoStreamKey === roomAtStart && chatIdentityKey() === chatAtStart;
+        && convoStreamKey === roomAtStart && chatIdentityKey() === chatAtStart;
 
     let text = '';
     try { text = await soReadTextFile(file); }
@@ -258,7 +261,7 @@ async function soImportConvoFile(file) {
         window.toastr && window.toastr.error && window.toastr.error('这不是剧情推进导出的对话文件——一条对话都没读到。', '剧情推进');
         return;
     }
-    const have = convoForPrompt(sharedState.convo).length;
+    const have = convoForPrompt(convo).length;
     if (have) {
         const ok = await uiConfirm(`当前页已有 ${have} 条对话：导入的 ${parsed.turns.length} 条会接在后面（不会覆盖）。继续吗？`);
         if (!ok) return;
@@ -285,12 +288,12 @@ function appendImportedConvoTurns(turns) {
     let n = 0;
     for (const t of list) {
         if (!t || (t.role !== 'user' && t.role !== 'assistant') || typeof t.content !== 'string') continue;
-        sharedState.convo.push({ id: ++sharedState.cidSeq, role: t.role, content: t.content });
+        convo.push({ id: nextCid(), role: t.role, content: t.content });
         n++;
     }
     if (!n) return 0;
     if (!persistConvo()) {           // 元数据写不进去（没打开聊天）→ 撤回，绝不留下只在屏幕上的假历史
-        sharedState.convo.splice(sharedState.convo.length - n, n);
+        convo.splice(convo.length - n, n);
         window.toastr && window.toastr.error && window.toastr.error('无法保存到本聊天，导入已撤销。', '剧情推进');
         return 0;
     }
@@ -300,18 +303,18 @@ function appendImportedConvoTurns(turns) {
 
 // 打开运行概要编辑器（叠层，仿 openDebug）。
 export function openSummary() {
-    if (!sharedState.win) return;
-    const ta = sharedState.win.querySelector('#so-summary-text');
+    if (!win) return;
+    const ta = win.querySelector('#so-summary-text');
     if (ta) ta.value = getSummary();
     updateSummaryIndicator(ta ? ta.value : getSummary());
-    sharedState.win.querySelector('#so-summary').classList.add('open');
+    win.querySelector('#so-summary').classList.add('open');
     if (ta) ta.focus();
 }
 
 // 把本聊天的运行概要载入文本框 + 刷新字数 / 图标小红点。切换聊天 / 首次载入时调用。
 export function refreshSummaryUI() {
-    if (!sharedState.win) return;
-    const ta = sharedState.win.querySelector('#so-summary-text');
+    if (!win) return;
+    const ta = win.querySelector('#so-summary-text');
     const text = getSummary();
     if (ta && document.activeElement !== ta) ta.value = text;   // 别在用户正打字时覆盖
     updateSummaryIndicator(text);
@@ -319,42 +322,42 @@ export function refreshSummaryUI() {
 
 // 概要图标的「有内容」小红点 + 编辑器底部字数。text 传 null 时现读元数据。
 export function updateSummaryIndicator(text) {
-    if (!sharedState.win) return;
+    if (!win) return;
     const t = String(text == null ? getSummary() : text);
-    const btn = sharedState.win.querySelector('#so-summary-btn');
+    const btn = win.querySelector('#so-summary-btn');
     if (btn) btn.classList.toggle('so-has-summary', !!t.trim());
-    const count = sharedState.win.querySelector('#so-summary-count');
+    const count = win.querySelector('#so-summary-count');
     if (count) count.textContent = t.trim() ? `${t.length} 字` : '（空——不会注入）';
 }
 
 // 流式滚动策略（用户反馈：流式时被一直拽到底、读不了开头）：新回复气泡出现时把它的【顶部】对到可视区顶部，
 // 让用户从头读；流式过程中默认【不】跟随，只有当用户自己滚到底部（soFollowStream=true）时才跟随最新输出。
-sharedState.soFollowStream = false;
+
 // 1.85.3 批量重画（开窗卡顿调查 2026-09-24）：整页重画（loadConvoForChat / 参谋导入普通聊天讨论）逐条 addMessage 时，
 // 每条都 scrollToBottom = 读一次 scrollHeight = 整页强制样式+布局（200 轮 13s → 去掉后 0.6s）。
 // soBulkRender(fn) 只包【同步】的批量段：段内 scrollToBottom / scrollBubbleToTop 静默不滚、新气泡不挂入场动画，
 // 段尾由调用方照旧滚一次。深度计数 + finally 归零，抛错也不会漏成全局静默；流式回调是异步的，
 // 不可能落在同步段内，所以直播路径（发送 / 流式 / 定稿）一律照旧。
-sharedState.soBulkRenderDepth = 0;
+
 export function soBulkRender(fn) {
-    sharedState.soBulkRenderDepth++;
-    try { return fn(); } finally { sharedState.soBulkRenderDepth--; }
+    incrementSoBulkRenderDepth();
+    try { return fn(); } finally { decrementSoBulkRenderDepth(); }
 }
 export function nearBottom() {
-    return sharedState.messagesEl.scrollHeight - sharedState.messagesEl.scrollTop - sharedState.messagesEl.clientHeight < 40;
+    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 40;
 }
 export function scrollToBottom() {
-    if (!sharedState.messagesEl) return;   // 窗口还没建好（极早期 / 单测里直接调控件函数）——没有可滚的容器就什么都不做
-    if (sharedState.soBulkRenderDepth > 0) return;   // 1.85.3 批量重画段内不逐条滚（段尾统一滚一次）
-    sharedState.messagesEl.scrollTop = sharedState.messagesEl.scrollHeight;
+    if (!messagesEl) return;   // 窗口还没建好（极早期 / 单测里直接调控件函数）——没有可滚的容器就什么都不做
+    if (soBulkRenderDepth > 0) return;   // 1.85.3 批量重画段内不逐条滚（段尾统一滚一次）
+    messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 // 把某条气泡的顶部对到消息区顶部（留 6px），让流式回复从开头开始读。
 export function scrollBubbleToTop(el) {
     if (!el) return;
-    if (sharedState.soBulkRenderDepth > 0) return;   // 1.85.3 批量重画段内不滚（段尾的 scrollToBottom 反正会覆盖它）
-    const cRect = sharedState.messagesEl.getBoundingClientRect();
+    if (soBulkRenderDepth > 0) return;   // 1.85.3 批量重画段内不滚（段尾的 scrollToBottom 反正会覆盖它）
+    const cRect = messagesEl.getBoundingClientRect();
     const eRect = el.getBoundingClientRect();
-    sharedState.messagesEl.scrollTop = Math.max(0, sharedState.messagesEl.scrollTop + (eRect.top - cRect.top) - 6);
+    messagesEl.scrollTop = Math.max(0, messagesEl.scrollTop + (eRect.top - cRect.top) - 6);
 }
 // 输入框自动增高（用户反馈：粘贴大段文字时输入框太小）：高度随内容增长，最多到神谕窗口高度的一半，再内部滚动。
 function computeInputHeight(scrollH, winH, minH = 46) {
@@ -362,8 +365,8 @@ function computeInputHeight(scrollH, winH, minH = 46) {
     return Math.max(minH, Math.min(Number(scrollH) || minH, cap));
 }
 export function autoGrowInput() {
-    if (!sharedState.inputEl) return;
-    sharedState.inputEl.style.height = 'auto';
-    const winH = (sharedState.win && sharedState.win.clientHeight) || window.innerHeight || 540;
-    sharedState.inputEl.style.height = computeInputHeight(sharedState.inputEl.scrollHeight, winH) + 'px';
+    if (!inputEl) return;
+    inputEl.style.height = 'auto';
+    const winH = (win && win.clientHeight) || window.innerHeight || 540;
+    inputEl.style.height = computeInputHeight(inputEl.scrollHeight, winH) + 'px';
 }

@@ -1,5 +1,5 @@
 import { getSettings, save } from '../../core/settings.js';
-import { sharedState } from '../../core/state.js';
+
 import { getPath, setPath } from './metadata.js';
 import { guidePaused, nodeDetailWriting, pathSkipNodeUi, setPathSpeed, wantAutoDetail, writePathNodeDetail } from './story-path.js';
 import { chatIdentityKey } from '../chat/send.js';
@@ -7,6 +7,8 @@ import { applyPlanInjection, nodeTargetText, pathActiveNode, pathInjectionText, 
 import { ADVISOR_SPEEDS } from '../../prompts/builtins.js';
 import { makeDraggable } from '../../ui/geometry.js';
 import { toggleWindow } from '../../ui/mode-shell.js';
+import { pathEditDraft, planBarEl, planFloat, planFloatSlot, setPathEditDraft, setPlanFloat, setPlanFloatSlot } from './state.js';
+import { win } from '../../ui/state.js';
 
 /* ------------------------------------------------------------------ *
  * 方案条（active plan strip）。只要当前聊天存在已采用的方案就显示——
@@ -18,35 +20,35 @@ import { toggleWindow } from '../../ui/mode-shell.js';
  * 展开器、完成/放弃在两处都是同一批监听器，无需任何同步。
  * ------------------------------------------------------------------ */
 export function renderPlanBar() {
-    if (!sharedState.planBarEl) return;
+    if (!planBarEl) return;
     const path = getPath();
-    if (sharedState.win) sharedState.win.classList.toggle('so-plan-on', !!path);
-    const pre = sharedState.planBarEl.querySelector('#so-plan-directive');
+    if (win) win.classList.toggle('so-plan-on', !!path);
+    const pre = planBarEl.querySelector('#so-plan-directive');
     if (!path) {
-        sharedState.pathEditDraft = null;
+        setPathEditDraft(null);
         pre.classList.remove('open');
-        sharedState.planBarEl.querySelector('#so-plan-show').textContent = '▸ 查看注入内容';
-        sharedState.planBarEl.querySelector('#so-seq-list').innerHTML = '';
+        planBarEl.querySelector('#so-plan-show').textContent = '▸ 查看注入内容';
+        planBarEl.querySelector('#so-seq-list').innerHTML = '';
         placePlanBar();
         return;
     }
     const multi = pathIsMulti(path);
     const node = pathActiveNode(path);
-    const label = sharedState.planBarEl.querySelector('#so-plan-label');
+    const label = planBarEl.querySelector('#so-plan-label');
     label.textContent = multi ? `剧情脉络 · ${pathProgressLabel(path)}` : '方案';
-    sharedState.planBarEl.querySelector('#so-plan-goal').textContent = multi ? (node ? node.name : '') : (path.title || nodeTargetText(path.nodes[0]));
+    planBarEl.querySelector('#so-plan-goal').textContent = multi ? (node ? node.name : '') : (path.title || nodeTargetText(path.nodes[0]));
     const speed = pathSpeedKey(path);
     renderIntensitySegments(speed, setPathSpeed);
-    sharedState.planBarEl.querySelector('#so-plan-caption').textContent = ADVISOR_SPEEDS[speed].caption;
-    const doneBtn = sharedState.planBarEl.querySelector('#so-plan-done');
+    planBarEl.querySelector('#so-plan-caption').textContent = ADVISOR_SPEEDS[speed].caption;
+    const doneBtn = planBarEl.querySelector('#so-plan-done');
     doneBtn.textContent = multi ? '完成这个节点' : '完成';
     doneBtn.title = multi ? '当前节点走完了，进入下一个' : '目标已达成，停止引导';
     renderPathList(path);
     // 暂停引导：条头补「已暂停」、目标变淡、按钮换成「继续」
     const paused = guidePaused(path);
-    sharedState.planBarEl.classList.toggle('so-plan-paused', paused);
+    planBarEl.classList.toggle('so-plan-paused', paused);
     if (paused) label.textContent += ' · 已暂停';
-    const pauseBtn = sharedState.planBarEl.querySelector('#so-plan-pause');
+    const pauseBtn = planBarEl.querySelector('#so-plan-pause');
     pauseBtn.innerHTML = paused ? '<i class="fa-solid fa-play"></i> 继续' : '<i class="fa-solid fa-pause"></i> 暂停';
     pauseBtn.title = paused ? '继续引导：从现在起重新往主聊天注入' : '暂停引导：主聊天先不注入，进度都保留，随时继续';
     if (pre.classList.contains('open')) pre.textContent = currentInjectionPreview();
@@ -57,16 +59,16 @@ export function renderPlanBar() {
 // 引导条收起态同步：切 .so-plan-collapsed 类 + 箭头方向（收起 = ▾ 可展开 / 展开 = ▴ 可收起）。
 // 停靠在窗口内时靠 CSS 只留标题行省纵向空间；renderPlanBar 与收起箭头点击共用本函数（DRY）。
 export function syncPlanBarCollapsed() {
-    if (!sharedState.planBarEl) return;
+    if (!planBarEl) return;
     const collapsed = !!getSettings().planBarCollapsed;
-    sharedState.planBarEl.classList.toggle('so-plan-collapsed', collapsed);
-    const i = sharedState.planBarEl.querySelector('#so-plan-collapse i');
+    planBarEl.classList.toggle('so-plan-collapsed', collapsed);
+    const i = planBarEl.querySelector('#so-plan-collapse i');
     if (i) i.className = collapsed ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-up';
 }
 
 // 推进速度三档按钮，点哪档调 onPick(key)。
 function renderIntensitySegments(current, onPick) {
-    const seg = sharedState.planBarEl.querySelector('#so-plan-intensity');
+    const seg = planBarEl.querySelector('#so-plan-intensity');
     seg.innerHTML = '';
     for (const [key, I] of Object.entries(ADVISOR_SPEEDS)) {
         const b = document.createElement('button');
@@ -82,7 +84,7 @@ function renderIntensitySegments(current, onPick) {
  * 一行「目标」。当前和未开始的节点可以 ✏️ 改关键词和详细，未开始的可以跳过；当前节点还没有详细时可以「让参谋写」。
  * 正在改的那一项存在 pathEditDraft（只认同一聊天、同一条脉络），方案条重画也不会冲掉。 */
 function pathDraftFor(path) {
-    const d = sharedState.pathEditDraft;
+    const d = pathEditDraft;
     return (d && path && d.chatKey === chatIdentityKey() && d.adoptedAt === path.adoptedAt) ? d : null;
 }
 export function startPathEdit(target) {
@@ -98,15 +100,15 @@ export function startPathEdit(target) {
         detail = n.detail || '';
         if (pathIsMulti(path)) keywords = n.keywords || '';
     }
-    sharedState.pathEditDraft = { chatKey: chatIdentityKey(), adoptedAt: path.adoptedAt, target, detail, keywords };
+    setPathEditDraft({ chatKey: chatIdentityKey(), adoptedAt: path.adoptedAt, target, detail, keywords });
     renderPathList(path);
-    const box = sharedState.planBarEl.querySelector('#so-seq-list textarea');
+    const box = planBarEl.querySelector('#so-seq-list textarea');
     if (box) { box.focus(); box.setSelectionRange(0, 0); box.scrollTop = 0; }
 }
 function savePathEdit() {
     const path = getPath();
     const d = pathDraftFor(path);
-    sharedState.pathEditDraft = null;
+    setPathEditDraft(null);
     if (!d) { renderPlanBar(); return; }
     if (d.target === 'overall') {
         path.overall = String(d.detail || '').trim();
@@ -122,7 +124,7 @@ function savePathEdit() {
     renderPlanBar();
 }
 function renderPathList(path) {
-    const list = sharedState.planBarEl.querySelector('#so-seq-list');
+    const list = planBarEl.querySelector('#so-seq-list');
     if (!list) return;
     list.innerHTML = '';
     const draft = pathDraftFor(path);
@@ -190,7 +192,7 @@ function renderPathList(path) {
                 actions.appendChild(b);
             };
             mk('保存', 'so-plan-done', savePathEdit);
-            mk('取消', '', () => { sharedState.pathEditDraft = null; renderPathList(path); });
+            mk('取消', '', () => { setPathEditDraft(null); renderPathList(path); });
             bodyEl.appendChild(actions);
         }
         row.appendChild(bodyEl);
@@ -253,10 +255,10 @@ function activeConstructLabel() {
 
 // Lazy-build the floating home for the strip.
 function ensurePlanFloat() {
-    if (sharedState.planFloat) return;
-    sharedState.planFloat = document.createElement('div');
-    sharedState.planFloat.id = 'so-plan-float';
-    sharedState.planFloat.innerHTML = `
+    if (planFloat) return;
+    setPlanFloat(document.createElement('div'));
+    planFloat.id = 'so-plan-float';
+    planFloat.innerHTML = `
         <div id="so-plan-float-head">
             <i class="fa-solid fa-compass"></i>
             <span class="so-plan-float-title">剧情引导</span>
@@ -265,25 +267,25 @@ function ensurePlanFloat() {
             <div class="so-iconbtn" id="so-plan-float-open" title="打开剧情推进"><i class="fa-solid fa-moon"></i></div>
         </div>
         <div id="so-plan-float-slot"></div>`;
-    document.body.appendChild(sharedState.planFloat);
-    sharedState.planFloatSlot = sharedState.planFloat.querySelector('#so-plan-float-slot');
-    sharedState.planFloat.querySelector('#so-plan-float-open').addEventListener('click', () => toggleWindow(true));
-    sharedState.planFloat.querySelector('#so-plan-float-collapse').addEventListener('click', () => {
+    document.body.appendChild(planFloat);
+    setPlanFloatSlot(planFloat.querySelector('#so-plan-float-slot'));
+    planFloat.querySelector('#so-plan-float-open').addEventListener('click', () => toggleWindow(true));
+    planFloat.querySelector('#so-plan-float-collapse').addEventListener('click', () => {
         const s2 = getSettings();
         s2.planFloatCollapsed = !s2.planFloatCollapsed;
         save();
         applyPlanFloatCollapsed();
     });
     // 折叠成罗盘药丸后，整张可点面就是那颗按钮 —— 放行「从按钮起拖」，否则手机上只剩 3px 外圈可拖（拖不动）。
-    makeDraggable(sharedState.planFloat, sharedState.planFloat.querySelector('#so-plan-float-head'),
+    makeDraggable(planFloat, planFloat.querySelector('#so-plan-float-head'),
         { left: 'planFloatLeft', top: 'planFloatTop' },
-        { dragFromButtons: () => sharedState.planFloat.classList.contains('so-collapsed') });
+        { dragFromButtons: () => planFloat.classList.contains('so-collapsed') });
     // Restore the saved position, clamped to the current viewport.
     const s = getSettings();
     if (Number.isFinite(s.planFloatLeft) && Number.isFinite(s.planFloatTop)) {
-        sharedState.planFloat.style.left = Math.max(0, Math.min(window.innerWidth - 60, s.planFloatLeft)) + 'px';
-        sharedState.planFloat.style.top = Math.max(0, Math.min(window.innerHeight - 40, s.planFloatTop)) + 'px';
-        sharedState.planFloat.style.right = 'auto';
+        planFloat.style.left = Math.max(0, Math.min(window.innerWidth - 60, s.planFloatLeft)) + 'px';
+        planFloat.style.top = Math.max(0, Math.min(window.innerHeight - 40, s.planFloatTop)) + 'px';
+        planFloat.style.right = 'auto';
     }
     applyPlanFloatCollapsed(); // restore persisted collapsed state
 }
@@ -294,35 +296,35 @@ function ensurePlanFloat() {
 // decorative compass + title + open(moon) are hidden via CSS. Strip stays parented
 // in the hidden slot, so expanding is pure CSS — no re-render, no listener churn.
 function applyPlanFloatCollapsed() {
-    if (!sharedState.planFloat) return;
+    if (!planFloat) return;
     const collapsed = !!getSettings().planFloatCollapsed;
-    sharedState.planFloat.classList.toggle('so-collapsed', collapsed);
-    const btn = sharedState.planFloat.querySelector('#so-plan-float-collapse');
+    planFloat.classList.toggle('so-collapsed', collapsed);
+    const btn = planFloat.querySelector('#so-plan-float-collapse');
     btn.querySelector('i').className = collapsed ? 'fa-solid fa-compass' : 'fa-solid fa-chevron-up';
-    sharedState.planFloat.querySelector('.so-plan-float-title').textContent = collapsed ? (guidePaused() ? '已暂停' : '引导中') : '剧情引导';
+    planFloat.querySelector('.so-plan-float-title').textContent = collapsed ? (guidePaused() ? '已暂停' : '引导中') : '剧情引导';
     // 标签只挂在 compass 按钮上（activeConstructLabel），可 hover 的 head 上不挂任何内容
     // （原版为盲盒防剧透定的规矩，精简版沿用）。
     const label = activeConstructLabel();
     btn.title = collapsed ? (label ? `展开 · ${label}` : '展开剧情引导') : '收起成指南针（不挡屏）';
-    sharedState.planFloat.querySelector('#so-plan-float-head').title = '';
+    planFloat.querySelector('#so-plan-float-head').title = '';
 }
 
 // Decide where the strip lives right now. Rules: no plan -> hidden (and parked
 // back in the window); plan + window visible -> inside the window (the float
 // hides); plan + window closed -> inside the float, always on screen.
 export function placePlanBar() {
-    if (!sharedState.planBarEl || !sharedState.win) return;
+    if (!planBarEl || !win) return;
     const active = getPath();
-    const winVisible = sharedState.win.style.display !== 'none';
+    const winVisible = win.style.display !== 'none';
     if (active && !winVisible) {
         ensurePlanFloat();
-        if (sharedState.planBarEl.parentElement !== sharedState.planFloatSlot) sharedState.planFloatSlot.appendChild(sharedState.planBarEl);
-        sharedState.planFloat.style.display = 'flex';
+        if (planBarEl.parentElement !== planFloatSlot) planFloatSlot.appendChild(planBarEl);
+        planFloat.style.display = 'flex';
         applyPlanFloatCollapsed(); // refresh pill tooltip (plan may have changed)
     } else {
-        if (sharedState.planFloat) sharedState.planFloat.style.display = 'none';
-        if (sharedState.planBarEl.parentElement !== sharedState.win) {
-            sharedState.win.insertBefore(sharedState.planBarEl, sharedState.win.querySelector('#so-messages'));
+        if (planFloat) planFloat.style.display = 'none';
+        if (planBarEl.parentElement !== win) {
+            win.insertBefore(planBarEl, win.querySelector('#so-messages'));
         }
     }
 }

@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const manifest = JSON.parse(fs.readFileSync(new URL('./module-bindings.json', import.meta.url), 'utf8'));
 
 function jsFiles(dir, prefix = '') {
     return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -16,19 +15,18 @@ function jsFiles(dir, prefix = '') {
     });
 }
 
-function sha256(text) {
-    return crypto.createHash('sha256').update(text).digest('hex');
-}
-
-test('每个模块的自由变量仅为许可的浏览器／酒馆全局', () => {
-    const current = ['index.js', ...jsFiles(path.join(root, 'src'), 'src').sort()];
-    assert.deepEqual(Object.keys(manifest.modules).sort(), current.sort(), '静态绑定清单应覆盖全部模块');
-    assert.equal(manifest.assignedExactlyOnce, true);
-    const allowed = new Set(manifest.allowedGlobals);
-    for (const [file, item] of Object.entries(manifest.modules)) {
-        const text = fs.readFileSync(path.join(root, file), 'utf8');
-        assert.equal(sha256(text), item.sha256, `${file} 已变化，需重新运行作用域分析`);
-        assert.deepEqual(item.free.filter((name) => !allowed.has(name)), [], `${file} 有未绑定的非全局名字`);
+test('每个 src 模块无需浏览器／酒馆全局即可单独导入', async (t) => {
+    const modules = jsFiles(path.join(root, 'src'), 'src').sort();
+    for (const relative of modules) {
+        await t.test(relative, () => {
+            const url = pathToFileURL(path.join(root, relative));
+            const result = spawnSync(
+                process.execPath,
+                ['--input-type=module', '--eval', `await import(${JSON.stringify(url.href)})`],
+                { cwd: root, encoding: 'utf8' },
+            );
+            assert.equal(result.status, 0, result.stderr || result.stdout);
+        });
     }
 });
 

@@ -1,5 +1,5 @@
 import { toggleSettings } from '../bootstrap.js';
-import { sharedState } from './state.js';
+
 import { autoGrowInput } from '../modes/chat/history.js';
 import { onSend } from '../modes/chat/send.js';
 import { normalizeFixTemplates } from '../modes/fix/templates.js';
@@ -9,9 +9,12 @@ import { normalizeCustomPersonas } from '../prompts/helpers.js';
 import { promptDef } from '../prompts/registry.js';
 import { currentOracleMode } from '../ui/mode-shell.js';
 import { applyConnPreset, connPresetIsCurrent, connPresetState, getProfiles, saveToActiveConnPreset, shortModelName, switchConnPreset } from '../ui/settings.js';
+import { isGenerating } from './runtime-state.js';
+import { connPickerOpen, connPickerQuery, inputEl, modelMenuOpen, qpManageMode, qpMenuOpen, setConnPickerOpen, setConnPickerQuery, setModelMenuOpen, setQpManageMode, setQpMenuOpen, win } from '../ui/state.js';
+import { getHostContext } from '../st/host.js';
 
 // 设置里「提示词」编辑器当前正在编辑哪一条（注册表 id；仅 UI 状态、不持久化，每次会话默认普通聊天系统提示词）。
-sharedState.promptEditId = 'chat.system';
+
 
 // 校正 / 诊断的后台 LLM 调用超时（毫秒）：到点 abortCtl.abort() → 气泡「(已停止)」。覆盖按目标校正
 // （runFixByTargets/Pieces）、自动校正（runAutoFix/Pieces）、自动诊断（runAutoDiagnose，共用 beginPostReplyCall）。
@@ -325,70 +328,70 @@ const defaults = {
 // In-memory side-chat history (cleared on page reload or via the Clear button).
 // Each entry: { id, role, content, _el }. _el links it to its DOM bubble so
 // edit / delete / regenerate can operate by identity (indices shift on splice).
-sharedState.convo = [];
-sharedState.cidSeq = 0;             // monotonic message-id source
-sharedState.isGenerating = false;
-sharedState.abortCtl = null;
+
+             // monotonic message-id source
+
+
 // 后台锻造（keep-forging，2026-07-20）：锻造是一次昂贵的重活，切换模式时不该被中断/丢弃。runForge 起跑时
 // 把这次锻造登记进 liveForge —— 记住它属于哪个工坊房间(streamKey)、气泡 entry、累积文本(text)。切模式时
 // loadConvoForChat 见它便【不中断】、回到工坊时据它重挂流式气泡；完成/失败由 runForge 按原始房间归位落盘
 // (routeForgeReply)。切聊天 / 清空由 onChatChanged / clearConversation 显式清空它（那属于旧聊天）。同一时刻
 // 只有一次生成，故 liveForge 至多一条。
-sharedState.liveForge = null;
+
 // 深度精简保活（1.36.0，keep-forging 同款）：深度精简与锻造同级昂贵（多分钟串行流式管线），切模式同样
 // 不中断——runCondenseDepth 起跑登记进 liveCondense（同形描述子 {streamKey, entry, text}），守卫/重挂/
 // 归位与 liveForge 并列走同一套路径。同一时刻只有一次生成，故 liveForge / liveCondense 至多一条非空。
-sharedState.liveCondense = null;
+
 // Cached ST regex engine module: null = not tried, false = unavailable, object = loaded.
-sharedState.regexEngine = null;
+
 // Cached ST world-info module (for "all entries" mode).
-sharedState.worldInfoModule = null;
+
 // World-info text computed (async) in onSend, read (sync) in buildSystemPrompt.
-sharedState.worldInfoBlock = '';
+
 // World-info split by insertion position, for the faithful marker fill
 // (worldInfoBefore / worldInfoAfter slots). Computed in onSend when a curated
 // preset is active.
-sharedState.wiBefore = '';
-sharedState.wiAfter = '';
+
+
 // Diagnose mode state.
-sharedState.diagnoseMode = false;
-sharedState.diagStatData = '';      // stringified current stat_data, computed in onSend
-sharedState.diagLatestUpdate = '';  // raw <UpdateVariable> block from the latest AI reply
-sharedState.mvuApi = null;          // cached window.Mvu
+
+      // stringified current stat_data, computed in onSend
+  // raw <UpdateVariable> block from the latest AI reply
+          // cached window.Mvu
 // Lorebook mode state.
-sharedState.lorebookMode = false;
-sharedState.lbContextText = '';     // structured "book -> entries" listing, built in onSend
-sharedState.lbBookNames = [];       // names of the books included in the current context
+
+     // structured "book -> entries" listing, built in onSend
+       // names of the books included in the current context
 // Advisor mode state (experimental). The ACTIVE PLAN itself is NOT module state —
 // it lives in per-chat metadata (single source of truth); the injection text is
 // always derived from it at registration time, so clearing the metadata provably
 // kills the steering.
-sharedState.advisorMode = false;
+
 // Reply-fix mode state (校正). Plain on/off mode like lorebook — no AUTO sub-state.
-sharedState.fixMode = false;
+
 // Builder mode state (角色工坊). Plain on/off mode like fix.
-sharedState.builderMode = false;
-sharedState.bldContextText = '';   // structured "book -> selected entries" listing, built in generateReply
-sharedState.bldScanWiText = '';    // 关键词扫描命中的补充条目块（opt-in bldScanWi；buildBuilderContext 同步刷新）
-sharedState.bldBookNames = [];     // names of the books included in the current builder context
-sharedState.bldStatData = '';      // stringified current MVU stat_data for builder sends ('' when off / no MVU)
+
+   // structured "book -> selected entries" listing, built in generateReply
+    // 关键词扫描命中的补充条目块（opt-in bldScanWi；buildBuilderContext 同步刷新）
+     // names of the books included in the current builder context
+      // stringified current MVU stat_data for builder sends ('' when off / no MVU)
 // 退出参谋时回到「进来之前」的模式，而不是写死掉回普通聊天（精简版里进来之前只可能是普通聊天）。'chat' = 默认。
-sharedState.priorOracleMode = 'chat';
-sharedState.fixTargetIdx = -1;        // 待校正回复在 ctx.chat 中的下标（捕获时记下）
-sharedState.fixOriginalReply = '';    // 待校正回复的【完整】原文（含机制块，应用时再接回）
-sharedState.fixTargetProse = '';      // 剥掉机制块 + CoT 后的正文（喂给校正模型）
-sharedState.fixCardBlock = '';     // 校正：角色卡块（送 prompt 前在异步 prep 里填）
-sharedState.fixContextBlock = '';  // 校正：前文上下文块
-sharedState.fixWorldBlock = '';    // 校正：激活世界书块
-sharedState.fixSummaryBlock = '';  // 校正：📜剧情概要块（手动默认带 / 自动可选；buildFixEnvelope 包成 <story_summary>）
-sharedState.fixExtraKeep = [];      // 排除·保留区抠出的块数组（composeFixedReply 据 ⟦SO_KEEP_n⟧ 标记按位置还原回原位）
-sharedState.fixThinkProtected = 0;  // ✨ 思考块保护（W1）：本次捕获经 fixThinkKeepSpec 抠走的思考块数（captureFixContext 设；renderFixCard 出回执；0 = 无回执）
-sharedState.fixScope = { active: false };   // ✨ 作用域信封（splitContentScope）：active 时只校正 <content> 内层，应用时把校正稿原位回插（wrapContentScope）
-sharedState.fixScopeDecision = null;   // ✨ Phase 5 D+E：resolveFixScope 的决策快照（captureFixContext 设，仅自动模式；runAutoFix/runFixByTargets 消费，决定 detected/suggest/skip 该做什么、提示什么）
-sharedState.fixPieceDecision = null;   // ✨ 分段校正（1.18.0）：resolveFixPieces 决策快照（captureFixContext 设，仅自动+开关开；runAutoFix / runFixByTargets / updateFixVerdict 消费）
-sharedState.fixPieceTable = null;      // ✨ 分段校正：fixSegmentReply 的分段表（多段 run 时非空；bypass / whole / ask / suggest / skip 时 null）
-sharedState.fixCustomJoin = null;      // 📋 自定义模板任务：「整条」/ 无分段表时的 head/core/tail 表（captureFixContext mode:'custom' 设；其它模式恒 null）
-sharedState.fixCaptured = null;   // ✨ Phase 4 目标完整性：校正触发时抓下的快照 {chatId,targetIdx,swipeId,fingerprint,prose}；应用前用 fixTargetStale 比对（P-CORRUPT 切聊天 / 换 swipe / 内容变更守卫）
+
+        // 待校正回复在 ctx.chat 中的下标（捕获时记下）
+    // 待校正回复的【完整】原文（含机制块，应用时再接回）
+      // 剥掉机制块 + CoT 后的正文（喂给校正模型）
+     // 校正：角色卡块（送 prompt 前在异步 prep 里填）
+  // 校正：前文上下文块
+    // 校正：激活世界书块
+  // 校正：📜剧情概要块（手动默认带 / 自动可选；buildFixEnvelope 包成 <story_summary>）
+      // 排除·保留区抠出的块数组（composeFixedReply 据 ⟦SO_KEEP_n⟧ 标记按位置还原回原位）
+  // ✨ 思考块保护（W1）：本次捕获经 fixThinkKeepSpec 抠走的思考块数（captureFixContext 设；renderFixCard 出回执；0 = 无回执）
+   // ✨ 作用域信封（splitContentScope）：active 时只校正 <content> 内层，应用时把校正稿原位回插（wrapContentScope）
+   // ✨ Phase 5 D+E：resolveFixScope 的决策快照（captureFixContext 设，仅自动模式；runAutoFix/runFixByTargets 消费，决定 detected/suggest/skip 该做什么、提示什么）
+   // ✨ 分段校正（1.18.0）：resolveFixPieces 决策快照（captureFixContext 设，仅自动+开关开；runAutoFix / runFixByTargets / updateFixVerdict 消费）
+      // ✨ 分段校正：fixSegmentReply 的分段表（多段 run 时非空；bypass / whole / ask / suggest / skip 时 null）
+      // 📋 自定义模板任务：「整条」/ 无分段表时的 head/core/tail 表（captureFixContext mode:'custom' 设；其它模式恒 null）
+   // ✨ Phase 4 目标完整性：校正触发时抓下的快照 {chatId,targetIdx,swipeId,fingerprint,prose}；应用前用 fixTargetStale 比对（P-CORRUPT 切聊天 / 换 swipe / 内容变更守卫）
 // ✨/📋 切聊天不取消：结果【暂存】，回到原聊天时自动落地（1.77.0，Prince 亲裁 2026-09-04）。
 // 此前切一次聊天 = onChatChanged 无条件 cancelPostReply()，把在途那一轮连同已经买单的模型回复一起扔掉。
 // 现在校正 / 模板任务照跑完，只是落地时若发现聊天已切走（fixTargetStale 判 'chatSwitched'）就把成品放进
@@ -398,55 +401,55 @@ sharedState.fixCaptured = null;   // ✨ Phase 4 目标完整性：校正触发�
 export const fixParked = new Map();   // chatKey → { captured, joined, targetIdx, status, problems, before, after, meta, at }
 export const FIX_PARK_TTL_MS = 30 * 60 * 1000;   // 暂存的保质期：半小时后那条回复的处理结果再落地已离用户心智太远
 export const FIX_PARK_MAX = 8;                   // 槽位上限（按 at 淘汰最旧的）——Map 不封顶会随「切了 N 个聊天」一路长
-sharedState.fixActiveMode = 'manual';  // 当前校正调用是哪套（captureFixContext 设）：'manual' → buildFixPrompt 用 FIX_SYSTEM_PROMPT_MANUAL；'auto' → 轻校恒 FIX_SYSTEM_PROMPT_TIGHTEN / 精校按侧重
-sharedState.fixCustomTemplateText = '';   // 📋 自定义模板任务：本次调用的模板正文（runCustomTask 设；buildFixPrompt 自定义分支读）
+  // 当前校正调用是哪套（captureFixContext 设）：'manual' → buildFixPrompt 用 FIX_SYSTEM_PROMPT_MANUAL；'auto' → 轻校恒 FIX_SYSTEM_PROMPT_TIGHTEN / 精校按侧重
+   // 📋 自定义模板任务：本次调用的模板正文（runCustomTask 设；buildFixPrompt 自定义分支读）
 // 📋 自定义模板任务：#so-fixc-prompt 里有【未保存】的改动（spec §4.3 防误覆盖）。必须是模块级而不是
 // 处理器闭包里的局部量——seedFixControls 会从别处被调（切聊天、两个自动勾选），它得看得见这个旗才能
 // 「脏就不要覆盖用户正在写的正文」；旗留在闭包里时，重种子会静默吃掉用户的字，而旗还赖着 true，
 // 下一次切模板还会弹一个假的「有未保存的改动」。回填 / 保存 / 删除后一律清旗。
-sharedState.fixTplDirty = false;
+
 // 📋 未保存正文的【归属】——它是哪一份模板的正文。脏着的时候下拉和文本框必须一起钉在这个名字上：
 // 程序化写 select.value 不发 change，所以切聊天 / 加载套餐会把下拉悄悄挪到别的模板 B 上，而框里还是
 // A 的未保存文字，再按保存就把 A 的文字写进了 B（与第一轮「删除后错位」同一类事故的另一扇门）。
-sharedState.fixTplDirtyFor = '';
-sharedState.fixAutoPromptVersion = 'light';    // ✨ 自动校正提示词选择器（captureFixContext 经 resolveFixModeCfg 设，仅自动有意义）：'thorough' → buildFixPrompt 用精校提示（resolveFixAutoPrompt）；'light' → 轻校（现行）
-sharedState.fixAutoPromptFlavor = 'deepseek';  // ✨ 精校侧重：'opus' → FIX_PROMPT_JINGXIAO_OPUS，否则 FIX_PROMPT_JINGXIAO_DEEPSEEK
-sharedState.advStatData = '';       // stringified current MVU stat_data for advisor sends
+
+    // ✨ 自动校正提示词选择器（captureFixContext 经 resolveFixModeCfg 设，仅自动有意义）：'thorough' → buildFixPrompt 用精校提示（resolveFixAutoPrompt）；'light' → 轻校（现行）
+  // ✨ 精校侧重：'opus' → FIX_PROMPT_JINGXIAO_OPUS，否则 FIX_PROMPT_JINGXIAO_DEEPSEEK
+       // stringified current MVU stat_data for advisor sends
                             // (computed fresh in generateReply, '' when no MVU)
-sharedState.chatStatData = '';      // same, for NORMAL mode (gated by s.chatIncludeStat)
-sharedState.chatWorldData = '';     // 外部扩展（世界引擎等）世界信息，普通 / 参谋模式附带（gated by s.chatIncludeWorld）
-sharedState.lwbSummaryCache = '';   // 小白X 记忆桥：当前聊天镜像到的剧情总结（抓拍 / metadata 回填 / 冷启动暖 三源写入）
-sharedState.planBarEl = null;       // the ONE plan strip element — lives inside the window
+      // same, for NORMAL mode (gated by s.chatIncludeStat)
+     // 外部扩展（世界引擎等）世界信息，普通 / 参谋模式附带（gated by s.chatIncludeWorld）
+   // 小白X 记忆桥：当前聊天镜像到的剧情总结（抓拍 / metadata 回填 / 冷启动暖 三源写入）
+       // the ONE plan strip element — lives inside the window
                             // OR reparented into the floating container (never both)
-sharedState.pathEditDraft = null;   // 方案条上正在改的那一项（剧情脉络 2.5.0）：{ chatKey, adoptedAt, target, detail, keywords }
-sharedState.nodeDetailJob = null;   // 「到了再写」正在进行的那次参谋调用：{ key, ctl }
-sharedState.planFloat = null;       // floating container shown when window closed + plan active
-sharedState.planFloatSlot = null;
+   // 方案条上正在改的那一项（剧情脉络 2.5.0）：{ chatKey, adoptedAt, target, detail, keywords }
+   // 「到了再写」正在进行的那次参谋调用：{ key, ctl }
+       // floating container shown when window closed + plan active
+
 // Per-entry selection for a single targeted book: { [bookName]: Set<uid> }.
 // A book absent here (or null) means "send every entry" (the default).
 // 1.40.1：内存镜像，但每次改动都镜像进 lbEntrySel 设置、跨重载保留
 // （见 serializeEntrySel / persistLbEntrySel；水合见 populateLorebookEntries 顶部）。
-sharedState.lbEntryFilter = {};
+
 // 本会话是否已把 lbEntrySel 设置水合进 lbEntryFilter（每会话一次，同 bldSelHydrated）。
-sharedState.lbSelHydrated = false;
+
 // 角色工坊选条目器的每本书条目选择（与 lbEntryFilter 同形同义）：{ [书名]: Set<uid> | null }。
 // 书名缺席（或 null）= 发送整本；Set = 只发送这些 uid。内存镜像，随选书重建、剪除失效 uid。
 // T12：现随每次改动镜像进 bldEntrySel 设置、跨重载保留（见 serializeEntrySel / persistBldEntrySel）。
-sharedState.bldEntryFilter = {};
+
 // 本会话是否已把 bldEntrySel 设置水合进 bldEntryFilter（每会话一次，见 populateBuilderBooks 顶部）。
-sharedState.bldSelHydrated = false;
+
 // 诊断模式「精选条目」的当前选择（内存镜像，随聊天从元数据载入 / 回写）：{ [书名]: Set<uid> }。
 // 与 lbEntryFilter 同形，但【按聊天持久化】（见 DIAG_WI_META_KEY / loadDiagSelForChat / persistDiagSel）。
-sharedState.diagEntrySel = {};
+
 // Last prompt actually sent (for the debug viewer), captured in onSend.
-sharedState.lastPrompt = null;
-sharedState.lastPromptMeta = null;
+
+
 // Gemini 加固（2026-09-15，FIX 4）：本轮生成最后见到的 finish_reason（供空回复判据 isEmptyLengthReply）。
 // 每轮 generateReply 开头复位；由 callDirect / streamDirect 写。配置文件路读不到、恒空。
-sharedState.soLastFinishReason = '';
+
 
 export function getCtx() {
-    return SillyTavern.getContext();
+    return getHostContext();
 }
 
 // 统一「确定吗？」弹窗：优先用 ST 自带的主题化弹窗（手机 / PC 一致，在 PWA / 应用内浏览器里也可靠），
@@ -620,15 +623,15 @@ function connPresetRemove(list, name) {
     return (Array.isArray(list) ? list : []).filter((p) => p && p.name !== name);
 }
 export function renderConnPresets() {
-    if (!sharedState.win) return;
-    const box = sharedState.win.querySelector('#so-conn-preset-list');
+    if (!win) return;
+    const box = win.querySelector('#so-conn-preset-list');
     if (!box) return;
     const s = getSettings();
     const presets = s.connPresets || [];
     box.innerHTML = '';
     if (!presets.length) {
-        sharedState.connPickerOpen = false;
-        sharedState.connPickerQuery = '';
+        setConnPickerOpen(false);
+        setConnPickerQuery('');
         const empty = document.createElement('div');
         empty.className = 'so-hint';
         empty.textContent = '还没有存档。填好下面的端点、密钥和模型后，在这里起个名字存起来，以后一键切换。';
@@ -640,8 +643,8 @@ export function renderConnPresets() {
     head.type = 'button';
     head.className = 'so-preset-head';
     head.setAttribute('aria-haspopup', 'listbox');
-    head.setAttribute('aria-expanded', sharedState.connPickerOpen ? 'true' : 'false');
-    head.title = sharedState.connPickerOpen ? '收起存档列表' : '展开存档列表，点哪个就用哪个';
+    head.setAttribute('aria-expanded', connPickerOpen ? 'true' : 'false');
+    head.title = connPickerOpen ? '收起存档列表' : '展开存档列表，点哪个就用哪个';
     head.innerHTML = '<span class="so-preset-main"><span class="so-preset-name"></span><span class="so-preset-sub"></span></span>'
         + `<span class="so-preset-count">${presets.length} 个存档</span><i class="fa-solid fa-chevron-down"></i>`;
     const nameEl = head.querySelector('.so-preset-name');
@@ -659,8 +662,8 @@ export function renderConnPresets() {
     head.addEventListener('click', (e) => {
         // 头部会被重画成新节点：别让 document 上的「点别处收起」把刚打开的弹出框又关掉
         e.stopPropagation();
-        if (sharedState.connPickerOpen) { closeConnPicker(); return; }
-        sharedState.connPickerOpen = true;
+        if (connPickerOpen) { closeConnPicker(); return; }
+        setConnPickerOpen(true);
         renderConnPresets();
     });
     // 弹出框挂在 anchor 上（紧贴存档栏下沿），盖住下面的「已修改」提示条和设置，不挤压它们
@@ -669,7 +672,7 @@ export function renderConnPresets() {
     anchor.appendChild(head);
     box.appendChild(anchor);
     if (st && st.modified) box.appendChild(buildConnDirtyBar(st.preset));
-    if (!sharedState.connPickerOpen) return;
+    if (!connPickerOpen) return;
 
     const pop = document.createElement('div');
     pop.className = 'so-preset-dropdown';
@@ -677,7 +680,7 @@ export function renderConnPresets() {
     search.type = 'search';
     search.className = 'so-preset-search';
     search.placeholder = '搜索名称或模型…';
-    search.value = sharedState.connPickerQuery;
+    search.value = connPickerQuery;
     const rows = document.createElement('div');
     rows.className = 'so-preset-rows';
     rows.setAttribute('role', 'listbox');
@@ -701,8 +704,8 @@ export function renderConnPresets() {
         sub.textContent = [p.model || '（未填模型）', p.endpoint].filter(Boolean).join(' · ');
         sub.title = sub.textContent;
         pick.addEventListener('click', () => {
-            sharedState.connPickerOpen = false;
-            sharedState.connPickerQuery = '';
+            setConnPickerOpen(false);
+            setConnPickerQuery('');
             renderConnPresets();                 // 先收起；切换（可能先弹确认）成功后经 updateBadge 再重画
             if (!on) switchConnPreset(p.name);
         });
@@ -727,7 +730,7 @@ export function renderConnPresets() {
     none.textContent = '没有匹配的存档';
     rows.appendChild(none);
     const filter = () => {
-        sharedState.connPickerQuery = search.value;
+        setConnPickerQuery(search.value);
         const q = search.value.trim().toLowerCase();
         let shown = 0;
         for (const row of rows.querySelectorAll('.so-preset-opt')) {
@@ -775,9 +778,9 @@ function buildConnDirtyBar(p) {
     return bar;
 }
 export function closeConnPicker() {
-    if (!sharedState.connPickerOpen) return;
-    sharedState.connPickerOpen = false;
-    sharedState.connPickerQuery = '';
+    if (!connPickerOpen) return;
+    setConnPickerOpen(false);
+    setConnPickerQuery('');
     renderConnPresets();
 }
 
@@ -809,8 +812,8 @@ const QP_DEFAULT_OLD_TEXTS = {
         '杀古风：按当前所在的世界（看正文里的地名、人名、风物判断），一次改完这条回复。\n- 不动：{{user}} 和系统的对白与内心活动；{{user}} 从别的世界带来的能力、法宝、功法名（写在旁白里也一样）；当前世界自己的专有名词；设定里本来就有的东方元素。\n- 要改：本地人物的对白和旁白里混进来的中式自称与称谓（妾身、奴婢、小的、老爷、公子、姑娘、掌柜、客官……）、宫廷奴仆腔（谨遵、请缨、听凭发落、差遣、恩典、谢恩……）、古白话语气词（罢了、也罢、莫要、休得……）、中式计时货币度量（时辰、一炷香、银两、尺、丈……）、中式宗教用语（老天爷、菩萨、阎王……）、带中国历史典故的成语，换成这个世界的人会用的说法；原作自带的说法优先（比如被遗忘的国度用金币、英尺、费伦诸神的名字）。\n- 只换词，剧情、动作、语气和句子结构不变；拿不准的保留原样。当前世界本来就是东方 / 古风背景的话，原样返回。',   // 2.2.0 测试期
     ],
 };
-sharedState.qpMenuOpen = false;
-sharedState.qpManageMode = null;   // 设置「快捷指令」页当前在看哪个模式；null = 跟随当前模式
+
+   // 设置「快捷指令」页当前在看哪个模式；null = 跟随当前模式
 
 function qpModeLabel(mode) {
     const m = QP_MODES.find((x) => x[0] === mode);
@@ -830,45 +833,45 @@ function qpText(q) {
     try { return getCtx().substituteParams(raw); } catch (e) { return raw; }
 }
 export function closeQpMenu() {
-    if (!sharedState.qpMenuOpen) return;
-    sharedState.qpMenuOpen = false;
+    if (!qpMenuOpen) return;
+    setQpMenuOpen(false);
     renderModelBar();
 }
 // 点名字：直接发送。输入框里原来写了一半的话先让开、发完放回去（onSend 的同步段就读走并清空输入框）。
 // 正在生成时不发——此时按发送键的语义是「停止生成」，快捷指令绝不能顺手把它停掉。
 async function qpSend(q) {
-    sharedState.qpMenuOpen = false;
+    setQpMenuOpen(false);
     renderModelBar();
-    if (!sharedState.inputEl) return;
-    if (sharedState.isGenerating) {
+    if (!inputEl) return;
+    if (isGenerating) {
         try { toastr.info('剧情推进还在回复，等它说完再点。', '快捷指令'); } catch (e) { /* toastr 缺席 */ }
         return;
     }
     const text = qpText(q);
     if (!text) return;
-    const draft = sharedState.inputEl.value;
-    sharedState.inputEl.value = text;
+    const draft = inputEl.value;
+    inputEl.value = text;
     const sending = onSend();
-    if (draft.trim() && !sharedState.inputEl.value) { sharedState.inputEl.value = draft; autoGrowInput(); }
+    if (draft.trim() && !inputEl.value) { inputEl.value = draft; autoGrowInput(); }
     await sending;
 }
 // 点 ✎：填进输入框（已有文字时另起一行接在后面），改一改再发。
 function qpFill(q) {
-    sharedState.qpMenuOpen = false;
+    setQpMenuOpen(false);
     renderModelBar();
-    if (!sharedState.inputEl) return;
+    if (!inputEl) return;
     const text = qpText(q);
-    const cur = sharedState.inputEl.value;
-    sharedState.inputEl.value = cur.trim() ? cur.replace(/\s+$/, '') + '\n' + text : text;
+    const cur = inputEl.value;
+    inputEl.value = cur.trim() ? cur.replace(/\s+$/, '') + '\n' + text : text;
     autoGrowInput();
-    sharedState.inputEl.focus();
-    try { sharedState.inputEl.setSelectionRange(sharedState.inputEl.value.length, sharedState.inputEl.value.length); } catch (e) { /* ignore */ }
+    inputEl.focus();
+    try { inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length); } catch (e) { /* ignore */ }
 }
 // 把输入框里的话存成当前模式的一条快捷指令。
 async function qpSaveFromInput() {
-    sharedState.qpMenuOpen = false;
+    setQpMenuOpen(false);
     renderModelBar();
-    const text = sharedState.inputEl ? sharedState.inputEl.value.trim() : '';
+    const text = inputEl ? inputEl.value.trim() : '';
     if (!text) {
         try { toastr.info('先在输入框里写好要存的话，再点这里。', '快捷指令'); } catch (e) { /* ignore */ }
         return;
@@ -880,7 +883,7 @@ async function qpSaveFromInput() {
     s.quickPrompts.push({ id: qpNewId(), mode, label: name.trim() || text.slice(0, 12), text });
     save();
     renderModelBar();
-    if (sharedState.win && sharedState.win.querySelector('#so-settings.open')) renderQpManager();
+    if (win && win.querySelector('#so-settings.open')) renderQpManager();
     try { toastr.success(`已存为「${qpModeLabel(mode)}」模式的快捷指令。`, '快捷指令'); } catch (e) { /* ignore */ }
 }
 // 模型栏右侧：宽 = 一排名字 + ⋯；窄 = 一个「⚡ 快捷指令」按钮（两套都渲染，CSS 容器查询决定显示哪套）。
@@ -901,8 +904,8 @@ function renderQuickPrompts(bar) {
     }
     const toggleMenu = (e) => {
         e.stopPropagation();
-        sharedState.qpMenuOpen = !sharedState.qpMenuOpen;
-        sharedState.modelMenuOpen = false;
+        setQpMenuOpen(!qpMenuOpen);
+        setModelMenuOpen(false);
         renderModelBar();
     };
     const more = document.createElement('button');
@@ -910,18 +913,18 @@ function renderQuickPrompts(bar) {
     more.className = 'so-qp-more';
     more.title = items.length ? '全部快捷指令 / 存新的 / 管理' : '快捷指令：把常说的话存起来，一键发送';
     more.setAttribute('aria-haspopup', 'true');
-    more.setAttribute('aria-expanded', sharedState.qpMenuOpen ? 'true' : 'false');
+    more.setAttribute('aria-expanded', qpMenuOpen ? 'true' : 'false');
     more.innerHTML = items.length ? '<i class="fa-solid fa-ellipsis"></i>' : '<i class="fa-solid fa-bolt"></i>';
     more.addEventListener('click', toggleMenu);
     const tog = document.createElement('button');
     tog.type = 'button';
     tog.className = 'so-qp-toggle';
     tog.setAttribute('aria-haspopup', 'true');
-    tog.setAttribute('aria-expanded', sharedState.qpMenuOpen ? 'true' : 'false');
+    tog.setAttribute('aria-expanded', qpMenuOpen ? 'true' : 'false');
     tog.innerHTML = '<i class="fa-solid fa-bolt"></i><span>快捷指令</span>' + (items.length ? `<span class="so-qp-count">${items.length}</span>` : '') + '<i class="fa-solid fa-chevron-up"></i>';
     tog.addEventListener('click', toggleMenu);
     bar.append(chips, more, tog);
-    if (!sharedState.qpMenuOpen) return;
+    if (!qpMenuOpen) return;
 
     const menu = document.createElement('div');
     menu.className = 'so-model-menu so-qp-menu';
@@ -972,19 +975,19 @@ function renderQuickPrompts(bar) {
         menu.appendChild(b);
     };
     action('fa-plus', '把输入框里的话存成快捷指令', qpSaveFromInput);
-    action('fa-gear', '管理快捷指令…', () => { sharedState.qpMenuOpen = false; sharedState.qpManageMode = mode; toggleSettings(true, 'qp'); });
+    action('fa-gear', '管理快捷指令…', () => { setQpMenuOpen(false); setQpManageMode(mode); toggleSettings(true, 'qp'); });
     bar.appendChild(menu);
 }
 
 // 设置「快捷指令」页：按模式分开管理（名字 / 内容 / 所属模式 / 顺序 / 删除）。改动即存、模型栏即时跟着变。
 export function renderQpManager() {
-    if (!sharedState.win) return;
-    const segEl = sharedState.win.querySelector('#so-qp-modes');
-    const listEl = sharedState.win.querySelector('#so-qp-list');
+    if (!win) return;
+    const segEl = win.querySelector('#so-qp-modes');
+    const listEl = win.querySelector('#so-qp-list');
     if (!segEl || !listEl) return;
     const s = getSettings();
     const all = s.quickPrompts;
-    const mode = sharedState.qpManageMode || currentOracleMode();
+    const mode = qpManageMode || currentOracleMode();
     segEl.innerHTML = '';
     for (const [m, label] of QP_MODES) {
         const b = document.createElement('button');
@@ -998,10 +1001,10 @@ export function renderQpManager() {
             c.textContent = String(n);
             b.appendChild(c);
         }
-        b.addEventListener('click', () => { sharedState.qpManageMode = m; renderQpManager(); });
+        b.addEventListener('click', () => { setQpManageMode(m); renderQpManager(); });
         segEl.appendChild(b);
     }
-    const sum = sharedState.win.querySelector('#so-qp-summary');
+    const sum = win.querySelector('#so-qp-summary');
     if (sum) sum.textContent = all.length ? `共 ${all.length} 条` : '';
     listEl.innerHTML = '';
     const items = all.filter((q) => q && q.mode === mode);
@@ -1062,9 +1065,9 @@ export function renderQpManager() {
     });
 }
 
-sharedState.modelMenuOpen = false;
+
 export function renderModelBar() {
-    const bar = sharedState.win && sharedState.win.querySelector('#so-model-bar');
+    const bar = win && win.querySelector('#so-model-bar');
     if (!bar) return;
     const s = getSettings();
     const st = connPresetState(s);
@@ -1087,14 +1090,14 @@ export function renderModelBar() {
     pill.className = 'so-model-pill';
     pill.title = st && st.modified ? `切换连接存档（当前连接改过，还没保存到「${st.preset.name}」）` : '切换连接存档';
     pill.setAttribute('aria-haspopup', 'true');
-    pill.setAttribute('aria-expanded', sharedState.modelMenuOpen ? 'true' : 'false');
+    pill.setAttribute('aria-expanded', modelMenuOpen ? 'true' : 'false');
     pill.innerHTML = '<i class="fa-solid fa-plug"></i><span class="so-model-pill-name"></span><span class="so-model-pill-sub"></span><i class="fa-solid fa-chevron-up"></i>';
     pill.querySelector('.so-model-pill-name').textContent = name;
     pill.querySelector('.so-model-pill-sub').textContent = sub;
-    pill.addEventListener('click', (e) => { e.stopPropagation(); sharedState.modelMenuOpen = !sharedState.modelMenuOpen; sharedState.qpMenuOpen = false; renderModelBar(); });
+    pill.addEventListener('click', (e) => { e.stopPropagation(); setModelMenuOpen(!modelMenuOpen); setQpMenuOpen(false); renderModelBar(); });
     bar.appendChild(pill);
     renderQuickPrompts(bar);   // ⚡ 二创版 2.2：模型右边的快捷指令
-    if (!sharedState.modelMenuOpen) return;
+    if (!modelMenuOpen) return;
 
     const menu = document.createElement('div');
     menu.className = 'so-model-menu';
@@ -1120,7 +1123,7 @@ export function renderModelBar() {
         opt.querySelector('.so-model-opt-name').textContent = label;
         const subEl = opt.querySelector('.so-model-opt-sub');
         if (subText) subEl.textContent = subText; else subEl.remove();
-        opt.addEventListener('click', (e) => { e.stopPropagation(); sharedState.modelMenuOpen = false; onPick(); renderModelBar(); });
+        opt.addEventListener('click', (e) => { e.stopPropagation(); setModelMenuOpen(false); onPick(); renderModelBar(); });
         menu.appendChild(opt);
     };
     for (const p of presets) {
@@ -1136,7 +1139,7 @@ export function renderModelBar() {
     bar.appendChild(menu);
 }
 export function closeModelMenu() {
-    if (!sharedState.modelMenuOpen) return;
-    sharedState.modelMenuOpen = false;
+    if (!modelMenuOpen) return;
+    setModelMenuOpen(false);
     renderModelBar();
 }

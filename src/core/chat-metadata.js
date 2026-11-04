@@ -1,9 +1,11 @@
 import { getCtx, getSettings, uiConfirm } from './settings.js';
-import { sharedState } from './state.js';
+
 import { CONVO_META_KEY, DIAG_WI_META_KEY, SUMMARY_META_KEY, WI_CUSTOM_META_KEY, getChatMetadataSafe } from '../modes/advisor/metadata.js';
 import { BUILDER_VARIANTS, builderVariantKey } from '../modes/lorebook/core.js';
 import { ENABLE_BUILDER_PERSONA_STYLES, ENABLE_MODE_ROOMS } from '../prompts/builtins.js';
 import { builderTargetLabel } from '../prompts/helpers.js';
+import { abortCtl, convo, convoStreamKey, isGenerating, liveCondense, liveForge } from './runtime-state.js';
+import { diagEntrySel } from '../modes/diagnose/state.js';
 
 /* ------------------------------------------------------------------ *
  * 用户功能请求：按【当前聊天】持久化侧聊历史 + 运行概要（与剧情脉络同风格——
@@ -39,7 +41,7 @@ export function serializeConvo(list) {
 // 发往模型的对话历史：只取真正的问答轮（user/assistant）。导入分隔线等 note 条目只在侧聊框里
 // 展示 + 持久化，绝不能作为一轮对话回灌给模型（否则会污染问答上下文，甚至把非法 role 发出去）。
 // 默认取当前全局 convo；传显式数组即可单测。所有「把 convo 拼进 messages」的地方都改走这里。
-export function convoForPrompt(list = sharedState.convo) {
+export function convoForPrompt(list = convo) {
     return (Array.isArray(list) ? list : [])
         .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
         // 出站净化——convo 条目带 id / _el 等内部字段，绝不能进请求体。裸路径（buildMessages
@@ -170,7 +172,7 @@ export function parseConvoExportMd(text) {
 // ==== 侧聊流（1.25.0 用户角色分家；1.28.0 推广为每模式独立房间）====
 // 主流 = 普通聊天，旧键原样（旧档零迁移）；参谋配一间独立房（per-chat metadata，随聊天走）。
 // 房间之间绝不混入无关记录（ENABLE_MODE_ROOMS 关则统回主流）。
-sharedState.convoStreamKey = 'main';
+
 // 每模式独立房间的流键解析（推广自旧 convoStreamKeyFor(isBuilder,...)，1.28.0 起替代它）。mode 由调用端传
 // currentOracleMode()——纯函数、便于单测（沿用旧函数「把模式/标志当参数传入」的约定）。
 // 工坊 → 变体房间（受 ENABLE_BUILDER_PERSONA_STYLES 管辖，逻辑不变）；
@@ -197,7 +199,7 @@ function roomSwapWouldAbort(generating, hasLiveRun, targetKey, currentKey) {
 // 有非保活生成在途且目标房不同 → 先问一声，取消 = 留在原模式。uiConfirm 自身不抛；再包一层 fail-open
 // —— 万一弹窗环节出错，按「确定」放行（维持 1.28.0 起「照常切换中止」的旧行为，绝不把模式切换卡死）。
 export async function confirmConvoSwap(targetKey) {
-    if (!roomSwapWouldAbort(sharedState.isGenerating && !!sharedState.abortCtl, !!(sharedState.liveForge || sharedState.liveCondense), targetKey, sharedState.convoStreamKey)) return true;
+    if (!roomSwapWouldAbort(isGenerating && !!abortCtl, !!(liveForge || liveCondense), targetKey, convoStreamKey)) return true;
     try {
         return await uiConfirm('当前还有回复正在生成——现在切换会中止它，未完成的内容将丢弃。仍要切换吗？');
     } catch (e) { return true; }
@@ -233,7 +235,7 @@ export function convoMetaKeyFor(streamKey) {
 }
 
 // 读取某侧聊流保存的历史（始终回数组）。默认当前流。
-export function getConvoMeta(streamKey = sharedState.convoStreamKey) {
+export function getConvoMeta(streamKey = convoStreamKey) {
     const md = getChatMetadataSafe();
     const arr = md ? md[convoMetaKeyFor(streamKey)] : null;
     return Array.isArray(arr) ? arr : [];
@@ -241,10 +243,10 @@ export function getConvoMeta(streamKey = sharedState.convoStreamKey) {
 
 // 把当前 convo 写回某侧聊流的元数据（空则删键）。⚠ 只能用【全局 convo 当前所属的那个 key】调用
 // ——绝不传外流 key（那会把当前 convo 写进别的房间）。
-export function persistConvo(streamKey = sharedState.convoStreamKey) {
+export function persistConvo(streamKey = convoStreamKey) {
     const md = getChatMetadataSafe();
     if (!md) return false;
-    const arr = serializeConvo(sharedState.convo);
+    const arr = serializeConvo(convo);
     const key = convoMetaKeyFor(streamKey);
     if (arr.length) md[key] = arr; else delete md[key];
     saveChatMetadata();
@@ -380,5 +382,5 @@ export function setWiCustomMeta(obj) {
 // 把内存选择 diagEntrySel 回写元数据，保留 use/hybrid/target。每次勾选 / 快捷按钮后调用。
 export function persistDiagSel() {
     const cur = getDiagWiMeta();
-    setDiagWiMeta({ use: cur.use, hybrid: cur.hybrid, target: cur.target, sel: serializeDiagSel(sharedState.diagEntrySel) });
+    setDiagWiMeta({ use: cur.use, hybrid: cur.hybrid, target: cur.target, sel: serializeDiagSel(diagEntrySel) });
 }
