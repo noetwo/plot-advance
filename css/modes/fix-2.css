@@ -1,0 +1,264 @@
+/* ✂️ 选段校正卡（1.27.0，Part C）：复用 #so-fixwarn 的 inset:0 骨架（手机遮罩防锁死：卡片 max-height 封顶、
+   正文内滚、.so-warn-x 逃生 + 点遮罩关闭）。只读回复 textarea 划选定位字符偏移；失焦后 overlay 画持久黄高亮。
+   1.27.1：卡片底色改走主题 var(--SmartThemeBlurTintColor)（同主窗口）+ backdrop blur，不再用警告卡那种固定
+   #1b1d23——固定深底叠主题文字色（--SmartThemeBodyColor）在浅色主题下＝深字压深底＝什么都看不见（PC 用户
+   报「界面好黑」）；作业卡跟主窗口保持一致，警告卡（autowarn/fixwarn/curate）才保留刻意的实心深色。 */
+#so-fixsel {
+    display: none; position: absolute; inset: 0; z-index: 60;
+    align-items: center; justify-content: center; padding: 16px; box-sizing: border-box;
+    background: var(--so-scrim); backdrop-filter: blur(4px);
+}
+#so-fixsel.open { display: flex; }
+#so-fixsel-card {
+    display: flex; flex-direction: column; width: 100%; max-width: 560px; max-height: 100%; min-height: 0;
+    box-sizing: border-box; border-radius: 12px; border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+    background-color: var(--SmartThemeBlurTintColor, #1b1d23); backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 4px)); box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.7); padding: 16px 18px;
+}
+#so-fixsel-head {
+    font-weight: 700; font-size: 1.0em; display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 10px; flex: 0 0 auto;   /* 标题行含逃生 ✕，不被压缩、始终在屏内 */
+}
+#so-fixsel-body { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+/* 只读回复文本 + 高亮 overlay：两层严格同样式同位置叠放（GG 式），划选在 textarea、失焦后 overlay 画持久高亮 */
+.so-fixsel-wrap { position: relative; }
+.so-fixsel-text, .so-fixsel-overlay {
+    width: 100%; box-sizing: border-box; margin: 0; border-radius: 8px; padding: 8px 10px;
+    font: inherit; font-size: 0.86em; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+    min-height: 180px; max-height: 42vh;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+}
+.so-fixsel-text { position: relative; resize: vertical; overflow-y: auto; background: var(--so-field); color: var(--SmartThemeBodyColor, #e6e6e6); }
+.so-fixsel-overlay { position: absolute; inset: 0; z-index: 1; overflow-y: auto; pointer-events: none; color: transparent; background: transparent; display: none; }
+.so-fixsel-hl { background: rgba(224, 162, 58, 0.42); border-radius: 2px; color: transparent; }
+.so-fixsel-info { flex: 0 0 auto; }
+.so-fixsel-instr {
+    width: 100%; box-sizing: border-box; border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 0.86em;
+    background: var(--so-field); color: var(--SmartThemeBodyColor, #e6e6e6); resize: vertical;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+}
+#so-fixsel-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex: 0 0 auto; }
+#so-fixsel-btns button {
+    padding: 7px 14px; border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    background: rgba(var(--so-ink), 0.06); color: var(--SmartThemeBodyColor, #ddd); cursor: pointer; font-size: 0.86em;
+}
+#so-fixsel-btns button:hover { background: rgba(var(--so-ink), 0.12); }
+.so-fixsel-go:not(:disabled) { background: var(--so-auto-red, #d9534f) !important; border-color: transparent !important; color: #fff !important; font-weight: 600; }
+.so-fixsel-go:disabled { opacity: 0.45; cursor: not-allowed; }
+/* 多段选段（1.37.0）——手机优先：钉按钮 ≥32px 点区；chips 行 flex-wrap，输入框挤不下换整行；
+   全部住在已滚动的 #so-fixsel-body 里，软键盘弹起也困不住控件 */
+.so-fixsel-inforow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 0 0 auto; }
+.so-fixsel-inforow .so-fixsel-info { flex: 1 1 auto; }
+.so-fixsel-pin-btn {
+    flex: 0 0 auto; min-height: 32px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    background: rgba(var(--so-ink), 0.06); color: inherit;
+}
+.so-fixsel-pin-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.so-fixsel-pins { display: none; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+.so-fixsel-pinrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.so-fixsel-pintag {
+    flex: 0 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    background: rgba(90, 160, 255, 0.18); border: 1px solid rgba(90, 160, 255, 0.4);
+    border-radius: 10px; padding: 2px 8px; font-size: 0.85em;
+}
+.so-fixsel-pininstr {
+    flex: 1 1 160px; min-width: 160px; min-height: 30px; padding: 4px 8px; border-radius: 6px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    background: var(--so-field); color: var(--SmartThemeBodyColor, #e6e6e6);
+}
+.so-fixsel-pinrm {
+    flex: 0 0 auto; min-width: 32px; min-height: 30px; border-radius: 6px; border: none;
+    background: transparent; color: inherit; cursor: pointer; opacity: 0.7;
+}
+.so-fixsel-pinrm:hover { opacity: 1; background: rgba(var(--so-ink), 0.1); }
+.so-fixsel-hl-pin { background: rgba(90, 160, 255, 0.35); border-radius: 2px; color: transparent; }
+/* ✂️ 点选模式（tap-selection，ENABLE_FIX_TAP_SELECT）——手机：一层可点的流式正文顶替只读 textarea。
+   点选模式下 .so-fixsel-wrap 整个 display:none（textarea 必须是真死的，不是透明/挪走的——§5 opus），
+   点选层自己【不设】max-height/overflow，所以 #so-fixsel-body 是唯一的滚动器；贴底操作条住在滚动器
+   外面，软键盘弹起时正文照旧可见（裁定 0.2）。颜色一律走主题变量，浅色皮同样可读。 */
+#so-fixsel.so-fixsel-tap .so-fixsel-wrap { display: none; }
+.so-fixsel-picker {
+    display: none; font-size: 1em; line-height: 1.9; white-space: pre-wrap; word-break: break-word;
+    padding: 6px 8px; border-radius: 8px; background: var(--so-field); color: var(--SmartThemeBodyColor, #e6e6e6);
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    touch-action: manipulation; cursor: pointer;
+}
+#so-fixsel.so-fixsel-tap .so-fixsel-picker { display: block; }
+.so-fixsel-u { border-radius: 3px; }
+/* 与 .so-fixsel-hl / .so-fixsel-hl-pin 同色，但【不】带 color: transparent —— 这里的字要看得见 */
+.so-fixsel-u-hl { background: rgba(224, 162, 58, 0.42); }
+.so-fixsel-u-pin { background: rgba(90, 160, 255, 0.35); }
+.so-fixsel-u-pin[data-badge]::before {
+    content: attr(data-badge); display: inline-block; min-width: 14px; margin-right: 3px; padding: 0 3px;
+    border-radius: 7px; background: rgba(90, 160, 255, 0.8); color: #0d1117;   /* 底色是钉死的亮蓝 → 字色也钉死深墨（1.27.1 同理：固定底配固定字） */
+    font-size: 0.72em; line-height: 1.5; text-align: center; vertical-align: 0.1em;
+}
+@keyframes so-fixsel-flash {
+    0%, 100% { outline: 2px solid rgba(224, 162, 58, 0); outline-offset: 1px; }
+    50% { outline: 2px solid rgba(224, 162, 58, 0.9); outline-offset: 1px; }
+}
+.so-fixsel-flash { animation: so-fixsel-flash 0.6s ease-in-out 2; }
+.so-fixsel-tapstrip {
+    display: none; flex-direction: column; gap: 6px; flex: 0 0 auto; margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+}
+#so-fixsel.so-fixsel-tap .so-fixsel-tapstrip { display: flex; }
+.so-fixsel-tapbtns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.so-fixsel-tapbtns button {
+    flex: 1 1 auto; min-height: 40px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    background: rgba(var(--so-ink), 0.06); color: inherit;
+}
+.so-fixsel-tapbtns button:disabled { opacity: 0.45; cursor: not-allowed; }
+.so-fixsel-expand.on { background: rgba(224, 162, 58, 0.32); border-color: rgba(224, 162, 58, 0.6); }
+/* 搬进贴底条的 chips 与「整体要求」框（1.79 Prince 实报）。贴底条恒 flex: 0 0 auto（Task 3 真机定案，
+   它一被压就等于裁定 0.2 破），所以【只有】chips 那一格允许长高、且自己封顶自己滚：
+   15vh ≈ 桌面四行 chip / 手机两行。为什么不是 30vh：390×844 的高度账（卡内高 653 = 头 42 + 贴底条
+   固定部分 197 + 按钮排 43 + 正文地板 96）只剩 275px 给「chips + 微调窗」，而微调窗要保住页签+导航+
+   第一排格子需要 143px —— chips 超过 ~132px 就把那排格子挤没了。手机上一条 chip 会折成两行（约 60px），
+   所以「30vh」与「4 行」在 390 宽下几乎同值（253/258px），两者都不满足这条件；15vh(=127px) 才满足。 */
+#so-fixsel.so-fixsel-tap .so-fixsel-pins { max-height: 15vh; overflow: auto; }
+#so-fixsel.so-fixsel-tap .so-fixsel-instr { flex: 0 0 auto; }
+#so-fixsel.so-fixsel-tap .so-fixsel-tapbtns { flex: 0 0 auto; }
+/* 「清除」两地通用：点选时在贴底操作条里（上面那条 40px 大点区规则更具体，赢）；拖选时被搬进信息行、
+   挨着 📌，那里按 📌 的尺码走。拖选也必须有它 —— 撞上「与钉段重叠 / 满 8 段」的草稿既钉不进又清不掉，
+   裁定 0.4 会一直拦着开始校正（复审 #1）。 */
+.so-fixsel-clear {
+    flex: 0 0 auto; min-height: 32px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    background: rgba(var(--so-ink), 0.06); color: inherit;
+}
+.so-fixsel-clear:disabled { opacity: 0.45; cursor: not-allowed; }
+/* 头部两段切换：挨着逃生 ✕。标题让位：外层只管「可以缩 + 不外溢」，省略号必须落在里面那个文字 span 上
+   —— .so-warn-title 是 display:flex，text-overflow 对 flex 容器本身无效（复审 #2）。1.74.1 教训：
+   窄屏上 CJK 的 min-content 是一个字，不给收缩保护就会塌成一字一行。 */
+.so-fixsel-modes { display: inline-flex; flex: 0 0 auto; margin-left: auto; margin-right: 6px; }
+#so-fixsel.so-fixsel-modes-on .so-warn-title { min-width: 0; overflow: hidden; }
+.so-fixsel-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.so-fixsel-mode-btn {
+    flex: 0 0 auto; min-height: 32px; padding: 3px 10px; cursor: pointer; font-size: 0.82em;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    background: rgba(var(--so-ink), 0.06); color: inherit;
+}
+.so-fixsel-mode-btn:first-child { border-radius: 6px 0 0 6px; }
+.so-fixsel-mode-btn:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.so-fixsel-mode-btn.on { background: rgba(138, 180, 248, 0.25); font-weight: 600; }
+/* 裁定 0.3 的调试日志：只读但【可选中】，用户全选复制即可（不碰剪贴板 API，手机上不需要授权） */
+.so-fixsel-debug { flex: 0 0 auto; font-size: 0.82em; }
+.so-fixsel-debuglog {
+    user-select: text; -webkit-user-select: text; width: 100%; min-height: 120px; box-sizing: border-box;
+    margin-top: 4px; padding: 6px 8px; border-radius: 6px; resize: vertical;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+    background: var(--so-field); color: var(--SmartThemeBodyColor, #e6e6e6);
+    font: 11px/1.35 ui-monospace, Menlo, Consolas, monospace;
+}
+/* ✂️ 点选·微调选择器（停靠式字素格）：住在 #so-fixsel-body 【下面】、贴底操作条【上面】——正文永远
+   不被它替换（共识 1.9）。开合只切 open 类。
+   高度分工（1.79 手机实测修）：卡是 flex 列，高度不确定 → 百分比 max-height 会解析成 none，于是
+   这块按内容撑到 381px、把唯一可压缩的 #so-fixsel-body 压成 0（裁定 0.2 破）、再把贴底条与
+   「开始校正」挤出卡外。改法 = ① 用 vh（与拖选那块只读文本 max-height: 42vh 同一把尺）；
+   ② 让【它】做那个可压缩的孩子（flex: 0 1 auto + min-height: 0 + 自己内部滚）；
+   ③ 正文在点选模式下拿 flex: 1 1 auto + 6em 地板。贴底条与按钮排恒 flex: 0 0 auto，永远不被挤。 */
+.so-fixsel-chooser {
+    display: none; flex: 0 1 auto; min-height: 0; max-height: 42vh; overflow: auto;
+    margin-top: 6px; padding-top: 8px;
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+}
+#so-fixsel.so-fixsel-tap .so-fixsel-chooser.open { display: block; }
+/* 开着微调窗时，贴底条里的钉选 chips 与整体要求框让位（信息行留着——「已选中 N 字」要实时看得见）：
+   540px 高的手机窗里贴底条本身就吃掉约 227px，不让位微调窗只剩约 51px = 只看得见两个页签。
+   微调与写要求从来不是同时用的两件事。注意只藏【显示】，从不清值。
+   .so-fixsel-pins 这条压不住——renderFixSelPins 写的是内联 display（内联恒压过类规则，1.45.0 同族
+   地雷），它由 openChooser/closeChooser 记值改 none 再放回；这里留着是为了语义完整与浅色皮审查。 */
+#so-fixsel.so-fixsel-tap.so-fixsel-ch-open .so-fixsel-pins,
+#so-fixsel.so-fixsel-tap.so-fixsel-ch-open .so-fixsel-instr { display: none; }
+/* 1.79 命中测试（elementFromPoint）：真手机上 #so-window 就是默认的 540px 高（手机档只写了
+   max-height: 85vh，没把它撑高），微调窗只有 190px，而页签约 80 + 导航约 90 + 一排格子 44 +
+   页脚 42 = 256 —— 粘底页脚正好盖在【唯一】那排格子上，24 个格子零个点得到。必须有人让高度。
+   让的是整条贴底条：挑边界的时候信息行 / 📌 / 扩选 / 微调 / 清除 全都用不上（微调窗自己的预览
+   实时显示当前选区；完成 / 取消 / 新轻点 / 换模式本来就都会先落定再收窗）。正文地板 6em 不动，
+   裁定 0.2「正文照旧可见」照旧成立。上面那两条 chips / 要求框的规则与内联记值留着——它们已经
+   被这一条包住，但留着无害，且换模式那一路仍靠记值把 chips 放回去。 */
+#so-fixsel.so-fixsel-tap.so-fixsel-ch-open .so-fixsel-tapstrip { display: none; }
+/* 点选模式下正文既能长也有地板：微调窗再高，也总留得下六行字（拖选那边一个字节不动）。
+   basis 写 6em 而【不是】auto —— 收缩是按 basis 成比例分的，auto 会把整条回复（约 700px）当基数，
+   于是正文按 700 : 404 的比例几乎不缩、微调窗被压到只剩页签加一排导航（格子/预览/完成都掉进折叠线
+   以下）。basis = 地板之后，多出来的高先归微调窗（直到它自己的 42vh 顶），正文再用 grow 吃掉余量。
+   但 grow 要能吃到东西，卡就得有【确定】高度：卡原本只有 max-height:100%、高度随内容走，于是
+   自由空间恒为 0、flex-grow 形同虚设，basis 摇身变成固定高——正文在任何状态下都死钉 6em（手机上
+   只剩三行上下文，连微调窗都没开也一样）。所以点选模式给卡一个确定高：遮罩是 inset:0 + 16px 内边距，
+   height:100% 正好等于窗口内高。拖选模式一个字节不动。 */
+#so-fixsel.so-fixsel-tap #so-fixsel-card { height: 100%; }
+#so-fixsel.so-fixsel-tap #so-fixsel-body { flex: 1 1 6em; min-height: 6em; }
+.so-fixsel-ch-tabs { display: flex; gap: 6px; margin-bottom: 6px; }
+.so-fixsel-ch-nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+/* 完成 / 取消 粘在微调窗自己的滚动器底上（1.79 实拍：它落在可见底边下方约 155px，用户没有任何线索
+   知道要在窗【内部】再滚一次）。底色必须【不透明】，否则滚过去的格子会从字底下透出来——用的是
+   #so-fixsel-card 自己那句同款 var(--SmartThemeBlurTintColor)：它由 body.so-skin-dark/light #so-window
+   逐档重定义（style.css 内 --SmartThemeBlurTintColor 两处），所以页脚跟卡一样自动随皮肤翻色，
+   浅色皮上绝不会留一块深条（1.27.1 那条「固定底必须钉字色」在这里不适用：底色本就是跟皮的）。
+   margin-top 加到 8px：页脚上面紧挨的是预览块，滚到底时 sticky 归位、两者之间仍留得下一道缝。 */
+.so-fixsel-ch-foot {
+    display: flex; gap: 6px; margin-top: 8px;
+    position: sticky; bottom: 0; z-index: 1; padding-top: 6px;
+    background: var(--SmartThemeBlurTintColor, #1b1d23);
+}
+.so-fixsel-ch-spacer { flex: 1 1 auto; }
+/* 只管页签 / 导航 / 页脚这三排【小】按钮——故意不写成 .so-fixsel-chooser button，那样它的权重
+   (0,1,1) 会压过字素格自己的 .so-fixsel-ch-cell (0,1,0)，44px 点区会被 36px 悄悄吃掉。 */
+.so-fixsel-ch-tabs button, .so-fixsel-ch-nav button, .so-fixsel-ch-foot button {
+    min-height: 36px; padding: 4px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    background: rgba(var(--so-ink), 0.06); color: inherit;
+}
+.so-fixsel-ch-tabs button:disabled, .so-fixsel-ch-nav button:disabled, .so-fixsel-ch-foot button:disabled {
+    opacity: 0.45; cursor: not-allowed;
+}
+.so-fixsel-ch-tab { flex: 1 1 auto; }
+.so-fixsel-ch-tab.on { background: rgba(138, 180, 248, 0.25); border-color: rgba(138, 180, 248, 0.9); }
+.so-fixsel-ch-foot .so-fixsel-ch-done { flex: 1 1 auto; background: rgba(138, 180, 248, 0.22); border-color: rgba(138, 180, 248, 0.9); }
+.so-fixsel-ch-cells { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+.so-fixsel-ch-cell {
+    min-height: 44px; font-size: 18px; padding: 0; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+    background: rgba(var(--so-ink), 0.06); color: inherit;
+}
+.so-fixsel-ch-cell.on { background: rgba(224, 162, 58, 0.42); }
+.so-fixsel-ch-cell.inpin { background: rgba(90, 160, 255, 0.35); opacity: 0.6; }
+.so-fixsel-ch-cell:disabled { opacity: 0.3; cursor: not-allowed; }
+.so-fixsel-ch-ws { opacity: 0.55; }
+.so-fixsel-ch-preview {
+    font-size: 0.9em; margin-top: 6px; padding: 6px 8px; border-radius: 6px;
+    background: rgba(224, 162, 58, 0.15); white-space: pre-wrap; word-break: break-word;
+    max-height: 4.6em; overflow: auto;
+}
+/* 拆不了字素的老 WebView：微调一直灰着，title 写明原因（§2「No Intl.Segmenter」） */
+.so-fixsel-adjust-na { opacity: 0.45; }
+
+/* 多段评审卡（侧聊气泡内）：行卡 + 复选框大点区 + 按钮条可换行（窄屏不挤爆） */
+.so-multifix-box { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.so-multifix-row {
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15));
+    border-radius: 8px; padding: 6px 8px;
+}
+.so-multifix-rowhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.so-multifix-rowhead label { display: flex; align-items: center; gap: 6px; min-height: 30px; cursor: pointer; flex: 1 1 auto; }
+.so-multifix-accept { width: 18px; height: 18px; flex: 0 0 auto; }
+.so-multifix-diffbtn { flex: 0 0 auto; }
+.so-multifix-bar { flex-wrap: wrap; }
+.so-multifix-nochange .so-multifix-rowhead,
+.so-multifix-failed .so-multifix-rowhead,
+.so-multifix-truncated .so-multifix-rowhead,
+.so-multifix-unparseable .so-multifix-rowhead,
+.so-multifix-aborted .so-multifix-rowhead { opacity: 0.75; }
+#so-autowarn-ok {
+    background: var(--so-auto-red, #d9534f) !important;
+    border-color: var(--so-auto-red, #d9534f) !important;
+    color: #fff !important;
+    font-weight: 600;
+}
+
+/* ✨ 1.18.3 新手优先重排：校正目标两列排布（手机窄屏回落单列）；进阶折叠沿用 so-mode-collapse。 */
+.so-fix-tgt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+@media (max-width: 600px) { .so-fix-tgt-grid { grid-template-columns: 1fr; } }
+

@@ -1,0 +1,14 @@
+/* ---------- 无障碍：尊重「减少动态效果」系统偏好 ---------- */
+/* 对动效敏感（晕动症等）的用户开启 prefers-reduced-motion 后，停用面板内所有动画 / 过渡。
+   用 .001ms 让动画直接跳到终态（而非 animation:none —— 那可能把元素停在首帧的 opacity:0）。
+   罗盘旋转等「正在生成」动效旁边本就有文字版的耗时进度行，停掉旋转不影响可用性。
+   浮动方案条 / 实时输出窗在 #so-window 之外，单独列出一并覆盖。 */
+@media (prefers-reduced-motion: reduce) {
+    #so-window, #so-window *, #so-plan-float, #so-plan-float * {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+

@@ -1,0 +1,38 @@
+/* 角色工坊模式（第 6 模式）配置栏 —— 校正块的拷贝，s/fix/bld/。本任务只搭空壳，内容由后续任务填充。 */
+#so-window { --so-bld-accent: color-mix(in srgb, var(--so-accent) 45%, #b07cc6 55%); }
+#so-builder-btn.so-bld-active { color: var(--so-bld-accent); background-color: color-mix(in srgb, var(--so-bld-accent) 16%, transparent); opacity: 1; }
+#so-window.so-bld-on #so-header { background: linear-gradient(180deg, color-mix(in srgb, var(--so-bld-accent) 22%, transparent), transparent); }
+#so-bld-bar { --so-lb-accent: var(--so-bld-accent); display: none; flex: 0 0 auto; flex-direction: column; gap: 6px; padding: 9px 12px; border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.1)); background: color-mix(in srgb, var(--so-bld-accent) 7%, transparent); max-height: 50%; overflow-y: auto; }
+#so-window.so-bld-on #so-bld-bar { display: flex; }
+#so-window.so-settings-open #so-bld-bar { display: none; }
+/* 草稿部分 chips 行：一排可点亮的部分标签（BUILDER_SECTIONS）。 */
+.so-stream-cue { font-size: 11px; opacity: .55; padding: 2px 8px 6px; text-align: center; }
+.so-bld-chips-row { display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.so-bld-chips-label { flex: 0 0 auto; opacity: 0.7; padding-top: 2px; }
+#so-bld-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.so-bld-chip { border: 1px solid color-mix(in srgb, var(--so-bld-accent) 55%, transparent); border-radius: 10px; padding: 1px 8px; cursor: pointer; opacity: .55; background: transparent; color: inherit; font-size: 12px; }
+.so-bld-chip.on { opacity: 1; background: color-mix(in srgb, var(--so-bld-accent) 18%, transparent); }
+.so-bld-chip.adv { border-style: dashed; }   /* #2：进阶三件——虚线边示意「按需勾选」，与图例虚线呼应 */
+#so-bld-chips .so-bld-chips-advtag { flex-basis: 100%; opacity: .6; font-size: 11px; margin-top: 3px; }   /* #2：进阶三件前的分组标签，另起一行 */
+/* 角色工坊选书 / 选条目器用原生 <details>（非世界书那套 .so-lb-entries.open 机制），故显式补：
+   给 details 一层与 .so-lb-bookpick 一致的边框 / summary 去三角，并在展开时恢复被
+   .so-lb-entries-tools 默认 display:none 藏掉的工具行。 */
+.so-lb-books { border: 1px solid var(--SmartThemeBorderColor, #444); border-radius: var(--so-r-md, 6px); padding: 2px 6px; }
+.so-lb-books > summary { cursor: pointer; list-style: none; padding: 2px 0; font-size: 0.9em; }
+.so-lb-books > summary::-webkit-details-marker { display: none; }
+.so-lb-books[open] .so-lb-entries-tools { display: flex; }
+#so-bld-book-list { max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+#so-bld-entry-list { display: flex; flex-direction: column; max-height: 168px; overflow-y: auto; gap: 1px; margin-top: 4px; }
+#so-bld-ent-filter { flex: 1 1 100%; margin-top: 2px; }
+/* 草稿常驻卡（Task 6）——遮罩卡地雷模式：flex 列 + 可滚动正文，防止移动端两端裁切。 */
+#so-bld-card { display: flex; flex-direction: column; max-height: 40vh; border: 1px solid color-mix(in srgb, var(--so-bld-accent) 55%, transparent); border-radius: 8px; padding: 6px 8px; gap: 4px; }
+#so-bld-card .so-bld-card-body { overflow-y: auto; white-space: pre-wrap; font-size: 12px; }
+#so-bld-card .so-bld-card-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 角色工坊：章节说明（? 按钮 + 移动端可用的图例面板） */
+#so-bld-chips-help { border: 1px solid color-mix(in srgb, var(--so-bld-accent) 55%, transparent); border-radius: 50%; width: 16px; height: 16px; line-height: 13px; padding: 0; font-size: 11px; cursor: pointer; background: transparent; color: inherit; opacity: .7; vertical-align: 1px; }
+#so-bld-chips-help:hover { opacity: 1; background: color-mix(in srgb, var(--so-bld-accent) 18%, transparent); }
+#so-bld-chips-legend { font-size: 12px; line-height: 1.5; padding: 6px 8px; border: 1px dashed color-mix(in srgb, var(--so-bld-accent) 45%, transparent); border-radius: 8px; max-height: 30vh; overflow-y: auto; }
+#so-bld-chips-legend .so-bld-legend-row b { color: var(--so-bld-accent); }
+#so-bld-chips-legend .so-bld-legend-guide { opacity: .9; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px dashed color-mix(in srgb, var(--so-bld-accent) 30%, transparent); }
+

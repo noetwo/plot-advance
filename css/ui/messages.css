@@ -1,0 +1,292 @@
+/* ---------- messages ---------- */
+#so-messages {
+    flex: 1 1 0;
+    min-height: 0;           /* allow shrinking so the input/footer is never clipped */
+    overflow-y: auto;
+    padding: 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--so-gap);
+    scroll-behavior: smooth;
+}
+
+@keyframes so-msg-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.so-msg {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    max-width: 100%;
+}
+/* 1.85.3：入场淡入只给直播新到的气泡（JS 在 addMessage 非批量时挂 .so-msg-new、放完即摘）。
+   挂在 .so-msg 本体上时，每次开窗 display:none→flex 都会让几百条历史一起重播。 */
+.so-msg.so-msg-new {
+    animation: so-msg-in 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.so-user { flex-direction: row-reverse; }
+
+.so-avatar {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    margin-top: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 0.8em;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.14));
+}
+.so-assistant .so-avatar {
+    color: var(--so-accent);
+    background-color: rgba(var(--so-ink), 0.06);
+    background: radial-gradient(circle at 30% 30%,
+        color-mix(in srgb, var(--so-accent) 30%, transparent),
+        color-mix(in srgb, var(--so-accent) 8%, transparent));
+    box-shadow: 0 0 10px -2px color-mix(in srgb, var(--so-accent) 45%, transparent);
+}
+.so-user .so-avatar {
+    opacity: 0.75;
+    background: rgba(var(--so-ink), 0.06);
+}
+
+.so-bubble { min-width: 0; display: flex; flex-direction: column; gap: 3px; max-width: 84%; }
+
+.so-role {
+    font-size: 0.66em;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.5;
+    padding: 0 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.so-user .so-role { justify-content: flex-end; opacity: 1; }
+.so-user .so-role-label { opacity: 0.5; }
+
+.so-content {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+    padding: 9px 12px;
+    border-radius: var(--so-r-md);
+    border: 1px solid transparent;
+}
+.so-assistant .so-content {
+    background: var(--SmartThemeBotMesBlurTintColor, rgba(255, 255, 255, 0.05));
+    border-color: var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.08));
+    border-top-left-radius: 4px;
+}
+.so-user .so-content {
+    background-color: var(--SmartThemeUserMesBlurTintColor, rgba(90, 120, 170, 0.28));
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--so-accent) 26%, transparent),
+        color-mix(in srgb, var(--so-accent) 16%, transparent));
+    border-color: color-mix(in srgb, var(--so-accent) 30%, transparent);
+    border-top-right-radius: 4px;
+}
+
+.so-content.so-streaming::after {
+    content: '';
+    display: inline-block;
+    width: 7px;
+    height: 1.05em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    border-radius: 2px;
+    background: var(--so-accent);
+    animation: so-blink 1s steps(2, start) infinite;
+}
+@keyframes so-blink { 50% { opacity: 0; } }
+
+.so-content.so-error { color: var(--crimson70a, #e07c7c); }
+
+/* Replies rendered as HTML (markdown / regex widgets) need normal flow, not the
+   pre-wrap used for plain text, or block elements get stray gaps. */
+.so-content.so-rendered { white-space: normal; }
+.so-content.so-rendered img { max-width: 100%; height: auto; }
+
+/* 参谋 Markdown 渲染时的 <StoryPlan> 原样块（1.18.2）：安静的等宽小块——方案正文在下方的采纳卡里
+   有结构化展示，这里只是让原始块保持可读、不被 Markdown 搅碎。 */
+.so-content .so-plan-raw {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--monoFontFamily, ui-monospace, monospace);
+    font-size: 11px;
+    line-height: 1.45;
+    opacity: 0.72;
+    background: rgba(0, 0, 0, 0.18);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.08));
+    border-radius: 6px;
+    padding: 6px 9px;
+    margin: 6px 0;
+}
+
+/* Markdown 表格（1.18.4）：showdown 现在开启 tables（此前恒 false = 表格显示成原始 |竖线| 文本）。
+   ST 自带的表格样式只作用于 .mes_text/.mes_reasoning，够不到神谕窗口的 .so-content，故这里自带一套：
+   主题描边 + 表头淡染（--so-accent）+ 斑马纹。表格自身 display:block + overflow-x:auto，宽表在窄窗口
+   （尤其手机）里横向滚动、绝不把气泡撑破。普通聊天关正则 + 参谋散文两条渲染路径共用（都落在 .so-content）。 */
+.so-content table {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    margin: 6px 0;
+    font-size: 0.92em;
+}
+.so-content th,
+.so-content td {
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.15));
+    padding: 4px 9px;
+    text-align: left;
+    vertical-align: top;
+}
+.so-content th {
+    background: color-mix(in srgb, var(--so-accent) 16%, transparent);
+    font-weight: 600;
+}
+.so-content tbody tr:nth-child(even) td {
+    background: rgba(var(--so-ink), 0.03);
+}
+
+#so-sysprompt:disabled { opacity: 0.45; cursor: not-allowed; }
+
+
+/* assistant message header: label on the left, quick-copy button on the right */
+.so-assistant .so-role {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    opacity: 1;
+}
+.so-assistant .so-role-label { opacity: 0.5; }
+
+.so-actions { display: flex; align-items: center; gap: 1px; flex: 0 0 auto; }
+/* A2：消息操作按钮（复制 / 重生 / 编辑 / 删除）默认渲染在气泡【底部】而非挤在角色行——
+   底部一行右对齐，桌面仍靠 .so-msg-btn 的 hover 显影。原生化自二创 actions-bottom（用户已在用）。 */
+/* 1.61.0 起 AI 气泡这行最多有 复制/重生/删除/导出/导入 五枚 + 插件注册的动作钮 —— 窄屏放不下时
+   换行而不是溢出（.so-msg-btn 本就 flex:0 0 auto，不换行会顶出气泡）。 */
+.so-bubble > .so-actions { justify-content: flex-end; margin-top: 5px; flex-wrap: wrap; }
+/* A6：连接预设 UI —— 下拉 + 加载 / 删除 / 保存图标钮成一行；下拉 / 名称输入撑满。 */
+
+.so-msg-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.4;
+    font-size: 12px;            /* fixed: independent of the tiny .so-role em */
+    line-height: 1;
+    padding: 6px 7px;           /* generous tap target for mobile */
+    border-radius: 7px;
+    text-transform: none;
+    flex: 0 0 auto;
+    transition: opacity 0.15s, background-color 0.15s, transform 0.1s, color 0.15s;
+}
+.so-msg:hover .so-msg-btn { opacity: 0.62; }
+.so-msg-btn:hover { opacity: 1 !important; background-color: rgba(var(--so-ink), 0.09); }
+.so-msg-btn:active { transform: scale(0.9); }
+.so-del-btn:hover { color: var(--crimson70a, #e07c7c); }
+.so-copy-btn.so-copied { color: var(--so-accent); opacity: 1 !important; }
+
+/* inline edit-in-place box on a user message */
+.so-edit-box { display: flex; flex-direction: column; gap: 6px; }
+.so-edit-ta {
+    width: 100%; box-sizing: border-box; resize: vertical;
+    font: inherit; line-height: 1.5; color: inherit;
+    background: var(--SmartThemeBlurTintColor, rgba(0, 0, 0, 0.25));
+    border: 1px solid color-mix(in srgb, var(--so-accent) 40%, transparent);
+    border-radius: 10px; padding: 8px 10px;
+}
+.so-edit-ta:focus { outline: none; border-color: var(--so-accent); }
+.so-edit-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.so-edit-save, .so-edit-cancel {
+    appearance: none; -webkit-appearance: none; cursor: pointer;
+    font-size: 0.82em; padding: 5px 11px; border-radius: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.14));
+    background: transparent; color: inherit; transition: background-color 0.15s, opacity 0.15s;
+}
+.so-edit-save { border-color: color-mix(in srgb, var(--so-accent) 55%, transparent); background: color-mix(in srgb, var(--so-accent) 18%, transparent); }
+.so-edit-save:hover { background: color-mix(in srgb, var(--so-accent) 30%, transparent); }
+.so-edit-cancel:hover { background: rgba(var(--so-ink), 0.08); }
+
+/* typing dots */
+.so-typing { display: inline-flex; gap: 4px; align-items: center; padding: 2px 0; }
+.so-typing i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--so-accent);
+    opacity: 0.5;
+    animation: so-bounce 1.2s infinite ease-in-out;
+}
+.so-typing i:nth-child(2) { animation-delay: 0.18s; }
+.so-typing i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes so-bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-4px); opacity: 1; }
+}
+
+.so-note {
+    font-size: 0.82em;
+    opacity: 0.65;
+    text-align: center;
+    padding: 6px 12px;
+    line-height: 1.4;
+}
+
+/* empty state */
+.so-empty {
+    margin: auto;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 20px;
+    line-height: 1.4;
+}
+.so-empty-line { opacity: 0.7; }
+.so-empty-icon {
+    font-size: 2em;
+    color: var(--so-accent);
+    opacity: 0.5;
+    margin-bottom: 4px;
+    filter: drop-shadow(0 0 12px color-mix(in srgb, var(--so-accent) 40%, transparent));
+}
+.so-empty-sub { font-size: 0.82em; opacity: 0.55; }
+/* 示例问题 chip：点一下把问题填进输入框（见 renderEmptyState）。真正的 <button>，键盘可达。 */
+.so-empty-chips { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; width: 100%; max-width: 280px; }
+.so-empty-chip {
+    appearance: none; -webkit-appearance: none; cursor: pointer;
+    font-family: inherit; font-size: 0.82em; line-height: 1.4; text-align: left;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    padding: 7px 13px; border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--so-accent) 38%, transparent);
+    background: color-mix(in srgb, var(--so-accent) 9%, transparent);
+    transition: background-color 0.15s, transform 0.1s;
+}
+.so-empty-chip:hover { background: color-mix(in srgb, var(--so-accent) 20%, transparent); }
+.so-empty-chip:active { transform: scale(0.97); }
+.so-empty-chip:focus-visible { outline: 2px solid var(--so-accent); outline-offset: 2px; }
+/* 📤 空态导入入口（1.61.0）：气泡行上那对导出/导入按钮在【空页】够不着 —— 空态补一枚。
+   同属 chip 家族，只是更低调（虚线 + 居中 + 与示例 chip 拉开距离），别喧宾夺主。 */
+.so-empty-io { margin-top: 14px; margin-inline: auto; }
+.so-empty-import-btn {
+    text-align: center;
+    border-style: dashed;
+    background: transparent;
+    opacity: 0.72;
+}
+.so-empty-import-btn:hover { opacity: 1; }
+.so-empty-import-btn > i { margin-right: 5px; }
+

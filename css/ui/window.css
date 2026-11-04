@@ -1,0 +1,69 @@
+/* 用户功能请求：ST 聊天输入栏（#leftSendForm）里的神谕快捷按钮 🌙。尺寸 / 悬停沿用 ST 原生图标
+   （.interactable + fa-）；只着主题强调色以便一眼认出。它在 #so-window 之外，故直接用主题色而非 --so-accent。 */
+#so-chatbar-button { color: var(--SmartThemeQuoteColor, #8ab4f8); }
+
+#so-window {
+    --so-accent: var(--SmartThemeQuoteColor, #8ab4f8);
+    --so-radius: 14px;          /* 大圆角：窗口 / 叠层 */
+    --so-r-md: 12px;            /* 中圆角：聊天气泡 / 输入框 / 发送键统一同一圆角，消除 11/12/13 的细微抖动 */
+    --so-gap: 12px;
+
+    /* 1.45.0 窗口配色三档：这三个变量把原先硬编码的蒙层 / 输入框底 / 遮罩底参数化，
+       固定皮肤只需重新声明它们（见文件末尾 so-skin-* 块）。此处的取值 = 参数化之前的
+       字面量，故「跟随酒馆主题」档渲染逐值不变。
+       注意 --so-field 的兜底值来自酒馆 :root 的常量（rgba(0,0,0,.3)），不随主题变 ——
+       浅色皮肤下必须换掉，否则浅底卡片上是个深色输入框。 */
+    --so-ink: 255, 255, 255;                          /* hover / 淡填充蒙层基色；用法 rgba(var(--so-ink), α) */
+    --so-field: var(--black30a, rgba(0, 0, 0, 0.3));  /* 输入框 / 文本域底色 */
+    --so-scrim: rgba(8, 9, 12, 0.84);                 /* 覆盖卡遮罩底 */
+
+    position: fixed;
+    top: 70px;
+    right: 20px;
+    z-index: 3000;
+    display: flex;
+    flex-direction: column;
+    min-width: min(320px, 96vw);   /* 超窄屏（折叠屏外屏/高缩放）：min-width 会压过 max-width，别把窗口撑出屏外——右缘住着 ✕ */
+    min-height: 340px;
+    max-width: 96vw;
+    max-height: 90vh;
+    overflow: hidden;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    font-size: calc(var(--mainFontSize, 15px) * 0.95);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+    border-radius: var(--so-radius);
+    background:
+        radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, var(--so-accent) 10%, transparent), transparent 60%),
+        var(--SmartThemeBlurTintColor, rgba(20, 20, 22, 0.94));
+    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 4px));
+    box-shadow:
+        0 18px 50px -12px rgba(0, 0, 0, 0.6),
+        0 2px 8px rgba(0, 0, 0, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* open animation (replayed via .so-opening in JS) */
+@keyframes so-open {
+    from { opacity: 0; transform: translateY(8px) scale(0.985); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+#so-window.so-opening {
+    animation: so-open 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* 全屏阅读模式（1.51.0，用户功能请求·手机）：JS 把 #so-window 尺寸设为可见视口，这里只去掉悬浮窗的
+   圆角 / 尺寸上限 / 阴影，让它铺满到屏幕边缘（max-width/height:none 是必须的——否则 96vw/90vh 上限会
+   把 JS 设的满屏尺寸夹小）。几何全由 JS 掌管，故不需要 !important。皮肤 / 主题 / 各模式强调色照常生效。 */
+#so-window.so-fullscreen {
+    border-radius: 0;
+    max-width: none;
+    max-height: none;
+    box-shadow: none;
+    /* 悬浮态窗口(3000)在酒馆固定顶栏 #top-bar(3005) 之下——悬浮时窗口贴 top:70px 不重叠故无碍，但全屏铺到顶
+       就被顶栏盖住标题栏（⛶/✕ 够不着）。全屏抬到 20000：盖过顶栏 + 抽屉(10000) 等所有固定 chrome，真正覆盖
+       酒馆；仍低于酒馆弹窗 / 菜单(29999) 与 toast(≈999999)——中断提示条、确认框照常在最上层。 */
+    z-index: 20000;
+}
+#so-window.so-fullscreen #so-resize-grip { display: none; }   /* 全屏无从缩放 */
+#so-window.so-fullscreen #so-header { cursor: default; }       /* 全屏不可拖动 */
+

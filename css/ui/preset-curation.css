@@ -1,0 +1,154 @@
+/* ---------- preset curation modal ---------- */
+#so-curate {
+    display: none;
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    box-sizing: border-box;
+    background: var(--so-scrim);
+    backdrop-filter: blur(4px);
+}
+#so-curate.open { display: flex; }
+
+/* Solid, theme-independent panel so it's never see-through; bounded height with
+   an internally scrolling list so the footer stays on-screen. */
+#so-cur-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 560px;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+    border-radius: 12px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+    background-color: #1b1d23;
+    color: #e6e6e6;   /* 1.27.1: 恒深色策展卡 → 钉死浅色文字（同 autowarn/fixwarn），浅色主题防深字压深底 */
+    background-image: linear-gradient(180deg, color-mix(in srgb, var(--so-accent) 9%, transparent), transparent 140px);
+    box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.7);
+}
+
+#so-cur-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    background: linear-gradient(180deg, color-mix(in srgb, var(--so-accent) 14%, transparent), transparent);
+}
+#so-cur-title { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+#so-cur-title > i { color: var(--so-accent); }
+#so-cur-sub {
+    flex: 0 0 auto;
+    padding: 10px 14px 4px;
+    font-size: 0.78em;
+    opacity: 0.62;
+    line-height: 1.5;
+}
+
+#so-cur-list {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 6px 8px 6px 6px;
+}
+
+.so-cur-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    cursor: default;
+    font-size: 0.85em;
+}
+.so-cur-row:hover { background: rgba(var(--so-ink), 0.05); }
+.so-cur-row.so-cur-off { opacity: 0.45; }
+.so-cur-row.so-cur-marker { background: color-mix(in srgb, var(--so-accent) 8%, transparent); }
+.so-cur-row.so-cur-drag { opacity: 0.5; }
+.so-cur-row.so-cur-over { border-color: var(--so-accent); box-shadow: 0 -2px 0 var(--so-accent) inset; }
+
+.so-cur-handle { cursor: grab; opacity: 0.4; flex: 0 0 auto; }
+.so-cur-handle:active { cursor: grabbing; }
+.so-cur-cb { flex: 0 0 auto; width: 15px; height: 15px; cursor: pointer; accent-color: var(--so-accent); }
+.so-cur-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.so-cur-role {
+    flex: 0 0 auto;
+    font-size: 0.82em;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: rgba(var(--so-ink), 0.1);
+    opacity: 0.85;
+}
+.so-cur-disabled {
+    flex: 0 0 auto;
+    font-size: 0.74em;
+    padding: 1px 6px;
+    border-radius: 6px;
+    white-space: nowrap;
+    background: rgba(224, 124, 124, 0.22);
+    color: #e89a9a;
+}
+.so-cur-tag {
+    flex: 0 0 auto;
+    font-size: 0.76em;
+    padding: 1px 7px;
+    border-radius: 6px;
+    background: rgba(var(--so-ink), 0.08);
+    opacity: 0.9;
+    white-space: nowrap;
+}
+.so-cur-tag-marker { background: color-mix(in srgb, var(--so-accent) 24%, transparent); }
+.so-cur-tag-story { background: color-mix(in srgb, #6fcf97 26%, transparent); }
+.so-cur-tag-machinery,
+.so-cur-tag-wrapper { background: color-mix(in srgb, #b39ddb 24%, transparent); }
+.so-cur-tag-output,
+.so-cur-tag-prefill,
+.so-cur-tag-user-echo,
+.so-cur-tag-inert { background: rgba(var(--so-ink), 0.06); }
+.so-cur-tag-review { background: color-mix(in srgb, #f2c94c 26%, transparent); }
+.so-cur-chars { flex: 0 0 auto; font-size: 0.78em; opacity: 0.5; min-width: 48px; text-align: right; }
+
+#so-cur-foot {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+}
+#so-cur-count { flex: 1 1 auto; font-size: 0.8em; opacity: 0.75; }
+#so-cur-count b { opacity: 1; }
+#so-cur-foot-btns { display: flex; gap: 6px; flex: 0 0 auto; }
+.so-cur-btn {
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+    background: rgba(var(--so-ink), 0.04);
+    color: #e6e6e6;   /* 恒深色策展卡：钉死浅色文字，理由见 #so-cur-card */
+    font-family: inherit;
+    font-size: 0.82em;
+}
+.so-cur-btn:hover { background: rgba(var(--so-ink), 0.1); }
+.so-cur-btn:active { transform: scale(0.97); }
+.so-cur-btn.so-cur-save {
+    border-color: var(--so-accent);
+    background: color-mix(in srgb, var(--so-accent) 22%, transparent);
+}
+#so-sysprompt-preset-recurate { flex: 0 0 auto; width: 32px; height: 32px; }
+

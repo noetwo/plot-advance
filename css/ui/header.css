@@ -1,0 +1,107 @@
+/* ---------- header ---------- */
+#so-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    cursor: move;
+    flex: 0 0 auto;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--so-accent) 14%, transparent),
+        transparent);
+}
+
+#so-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;            /* shrink + ellipsis instead of pushing the buttons off-screen */
+    flex: 0 1 auto;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#so-title > .fa-moon {
+    color: var(--so-accent);
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--so-accent) 55%, transparent));
+}
+
+#so-mode-badge {
+    opacity: 0.55;
+    font-weight: 400;
+    font-size: 0.82em;
+}
+
+/* 装不下就换行、绝不裁掉 ✕：「工具移到标题栏」在手机上多塞 5 键，整排比窗口还宽时，尾部的 ✕ 会被
+   #so-window 的 overflow:hidden 裁出窗外＝关不掉窗口（kill 2026-07-23）。max-width 只在整排超出标题栏
+   时生效 → 装得下的布局（默认/桌面）逐像素不变；flex-end 让换行后的末行仍右对齐、✕ 留在右上角。
+   故意不用 flex:0 1 auto（可收缩会让默认手机布局在标题还有宽度时提早换行）。 */
+#so-header-btns { display: flex; align-items: center; justify-content: flex-end; gap: 2px; flex: 0 0 auto; flex-wrap: wrap; max-width: 100%; }
+/* 分组细线：把标题栏 8 个图标按用途分成 模式切换 | 工具 | 窗口 三组（纯装饰，aria-hidden）。 */
+.so-hdr-div {
+    flex: 0 0 auto;
+    align-self: stretch;
+    width: 1px;
+    margin: 5px 3px;
+    background: var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.22));
+}
+
+.so-iconbtn {
+    cursor: pointer;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    opacity: 0.7;
+    transition: opacity 0.15s, background-color 0.15s, color 0.15s, transform 0.1s;
+}
+.so-iconbtn:hover { opacity: 1; background-color: rgba(var(--so-ink), 0.09); }
+.so-iconbtn:active { transform: scale(0.92); }
+/* 键盘聚焦环：负 offset 让描边画在元素内侧，不会被 #so-window 的 overflow:hidden 裁掉。
+   :focus-visible 只在键盘聚焦时出现，鼠标点击不会留下边框。 */
+.so-iconbtn:focus-visible { outline: 2px solid var(--so-accent); outline-offset: -2px; opacity: 1; }
+#so-send:focus-visible { outline-color: #fff; }
+#so-clear-btn:hover { color: var(--crimson70a, #e08585); }
+.so-iconbtn.so-generating { color: var(--crimson70a, #e0685f); opacity: 1; }
+
+/* ---------- 标题栏「⋯」工具下拉（剧情概要 / 调试 / 设置 收进一处） ---------- */
+.so-tools-wrap { position: relative; flex: 0 0 auto; display: flex; align-items: center; }
+#so-tools-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 10;
+    min-width: 150px;
+    flex-direction: column;
+    gap: 2px;
+    padding: 5px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+    border-radius: var(--so-r-md, 12px);
+    background: var(--SmartThemeBlurTintColor, rgba(26, 26, 28, 0.98));
+    box-shadow: 0 12px 30px -8px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+    animation: so-open 0.16s ease;
+}
+#so-tools-menu.open { display: flex; }
+/* 菜单项：把 30×30 的方形图标块改成左对齐的「图标 + 文字」整行 */
+.so-tools-item {
+    width: auto;
+    height: auto;
+    justify-content: flex-start;
+    gap: 9px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    white-space: nowrap;
+    opacity: 0.9;
+}
+.so-tools-item > i { width: 16px; text-align: center; }
+/* 行变宽后，把「有概要」小红点改到整行右端竖直居中（默认 top/right:4px 会贴在右上角，显得脱离） */
+#so-tools-menu #so-summary-btn.so-has-summary::after { top: 50%; right: 9px; transform: translateY(-50%); }
+

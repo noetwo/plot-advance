@@ -4,8 +4,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-const source = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+function sourceFiles(dir) {
+    return fs.readdirSync(dir, { withFileTypes: true })
+        .flatMap((entry) => entry.isDirectory()
+            ? sourceFiles(path.join(dir, entry.name))
+            : entry.name.endsWith('.js') ? [path.join(dir, entry.name)] : []);
+}
+const source = [
+    fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8'),
+    ...sourceFiles(fileURLToPath(new URL('../src/', import.meta.url))).sort().map((file) => fs.readFileSync(file, 'utf8')),
+].join('\n');
 const stRoot = process.env.SILLYTAVERN_ROOT || 'F:/SillyTavern/Luker';
 const sseSource = fs.readFileSync(path.join(stRoot, 'public/scripts/sse-stream.js'), 'utf8');
 // 运行酒馆实际的基础解析器，省去只供平滑流式 UI 使用的浏览器模块依赖。
@@ -16,11 +26,13 @@ const EventSourceStream = vm.runInNewContext(parserSource + '\nEventSourceStream
 });
 
 function functions(names) {
-    return names.map((name) => {
-        const match = source.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\r?\\n\\}`));
+    const declarations = names.map((name) => {
+        const match = source.match(new RegExp(`(?:export\\s+)?(?:async\\s+)?function ${name}\\([^]*?\\r?\\n\\}`));
         assert.ok(match, `找不到函数 ${name}`);
-        return match[0];
+        return match[0].replace(/^export\s+/, '');
     }).join('\n');
+    // 拆分后模块级 let 统一落到 sharedState；VM 的 globalThis 就是各测试现成的依赖对象。
+    return 'const sharedState = globalThis;\n' + declarations;
 }
 
 function transport(response, settings = {}) {

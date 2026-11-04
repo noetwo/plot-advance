@@ -1,0 +1,365 @@
+/* ---------- lorebook mode ---------- */
+/* A warm "parchment" tint distinguishes lorebook mode from diagnose at a glance,
+ * while still blending with the theme accent. */
+#so-window { --so-lb-accent: color-mix(in srgb, var(--so-accent) 45%, #d8a657 55%); }
+
+#so-lorebook-btn.so-lb-active {
+    color: var(--so-lb-accent);
+    background-color: color-mix(in srgb, var(--so-lb-accent) 16%, transparent);
+    opacity: 1;
+}
+
+#so-lb-pill {
+    display: none;
+    margin-left: 4px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.6em;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    vertical-align: middle;
+    color: #fff;
+    background: linear-gradient(160deg,
+        color-mix(in srgb, var(--so-lb-accent) 95%, white 5%),
+        color-mix(in srgb, var(--so-lb-accent) 78%, black 6%));
+}
+#so-window.so-lb-on #so-lb-pill { display: inline-block; }
+
+#so-window.so-lb-on #so-header {
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--so-lb-accent) 22%, transparent),
+        transparent);
+}
+
+#so-lb-bar {
+    display: none;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    background: color-mix(in srgb, var(--so-lb-accent) 7%, transparent);
+}
+#so-window.so-lb-on #so-lb-bar { display: flex; }
+/* while configuring, hide the mode toolbar so the chat + input stay on screen */
+#so-window.so-settings-open #so-lb-bar { display: none; }
+
+/* 诊断模式「精选世界书条目」栏。复用世界书 .so-lb-* 选条目控件，但把 --so-lb-accent 局部改写成
+   诊断的淡红色调（--so-diag-accent），整套控件一并换肤，无需重复样式。 */
+#so-diag-bar {
+    --so-lb-accent: var(--so-diag-accent);
+    display: none;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    background: color-mix(in srgb, var(--so-diag-accent) 7%, transparent);
+    /* 自动诊断 / 外部解析等选项把本栏撑高后，桌面端也必须像校正栏一样封顶并在栏内滚动。
+       否则 flex:0 0 auto 不肯收缩，会把聊天区与输入框顶出父窗的 overflow:hidden 裁切边界。 */
+    max-height: 50%;
+    overflow-y: auto;
+}
+#so-window.so-diag-on #so-diag-bar { display: flex; }
+#so-window.so-settings-open #so-diag-bar { display: none; }
+/* 精选条目那一段的包裹层（1.43.0）：加它是为了让 ENABLE_DIAG_WI_PICKER 杀开关只隐藏这一段，
+   不必带走整条诊断栏（栏里现在还住着与精选无关的「套用我的补全预设」行）。父级
+   .so-mode-collapse-body 是 column flex + gap:6px，包一层普通 div 会让被包住的三行间距塌成 0
+   —— 故这里照抄同一套竖向间距，包裹前后逐像素一致。 */
+#so-diag-wisel { display: flex; flex-direction: column; gap: 6px; }
+/* L2 混合开关 + 选条目区只在 L1（用精选条目）开启后才出现 */
+#so-diag-picker { display: none; flex-direction: column; gap: 6px; }
+#so-diag-bar.so-diag-usesel-on #so-diag-picker { display: flex; }
+/* 🔁 失败自动重试（2026-08-28）：子选项（次数 + 三枚分类勾选）只在主开关开启后显示，
+   照抄 #so-diag-picker 的 class 切换法；竖向间距同 #so-diag-wisel 的理由（父级 gap 会被包裹层吃掉）。 */
+#so-diag-retry-opts { display: none; flex-direction: column; gap: 6px; }
+#so-diag-bar.so-diag-retry-on #so-diag-retry-opts { display: flex; }
+
+/* 校正模式配置栏。结构与诊断栏同构（默认隐藏 + 竖向 flex 布局），只在 .so-fix-on 时显示、
+   配置面板打开时让位。复用 --so-fix-accent（淡金）的局部换肤与共享的 .so-mode-collapse 折叠机制。 */
+#so-fix-bar {
+    --so-lb-accent: var(--so-fix-accent);
+    display: none;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    background: color-mix(in srgb, var(--so-fix-accent) 7%, transparent);
+    /* 校正栏内容多、且默认展开（不像诊断 / 世界书栏把大块内容默认折起）：桌面上它的自然高度
+       可达 ~680px，超过整窗（默认 540px）。因为是 flex:0 0 auto（绝不收缩）且桌面无高度上限，
+       它会撑爆窗口——把消息区与输入框整体顶到 overflow:hidden 边界之外、自身底部也被裁掉，
+       于是「进了校正模式就出不来 / 拖不动」。封顶到窗口一半 + 内部滚动：标题栏(✕/拖动)、聊天区、
+       输入框任何视口下都留在屏内，超出的选项在栏内滚动取用。按窗口百分比而非 vh——桌面窗口远小于
+       视口，vh 在大屏上仍会溢出。手机上本就自动折叠（见 bindControls 的 max-width:600 折叠）。 */
+    max-height: 50%;
+    overflow-y: auto;
+}
+#so-window.so-fix-on #so-fix-bar { display: flex; }
+#so-window.so-settings-open #so-fix-bar { display: none; }
+
+/* 校正配置：目标说明小字、可竖向拉伸的多行输入框、以及主题色描边的"开始校正"按钮。 */
+.so-fix-targets-head { font-size: 0.82em; opacity: 0.7; margin-top: 4px; }
+#so-fix-bar textarea { width: 100%; box-sizing: border-box; resize: vertical; font-family: inherit; font-size: 0.9em; }
+.so-fix-run-btn { margin-top: 4px; padding: 7px 10px; cursor: pointer; border-radius: var(--so-r-md, 8px);
+    border: 1px solid var(--so-accent); background: color-mix(in srgb, var(--so-accent) 16%, transparent); color: inherit; }
+.so-fix-run-btn:hover { background: color-mix(in srgb, var(--so-accent) 26%, transparent); }
+/* ✨ 校正 Phase 4：全局命名套餐库的一行控件（下拉 + 加载 / 保存为… / 删除）。 */
+.so-fix-bundle-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+.so-fix-bundle-row #so-fix-bundle { flex: 1 1 120px; min-width: 100px; }
+/* 📋 自定义任务的模板下拉同住一行——长模板名在手机上会把四件套撑出栏外，给同款收缩保护。 */
+.so-fix-bundle-row #so-fixc-template { flex: 1 1 120px; min-width: 100px; }
+.so-fix-bundle-row .so-fix-run-btn { margin-top: 0; padding: 5px 9px; flex: 0 0 auto; }
+
+/* ✨ 校正 Phase 6（B）：作用域判定预览行——命中(绿) / 会切标签·会跳过(琥珀) / 整条(中性淡)。 */
+.so-fix-verdict { font-size: 0.82em; line-height: 1.45; padding: 5px 8px; border-radius: var(--so-r-md, 8px);
+    border: 1px solid transparent; margin-top: 2px; }
+.so-fix-verdict-ok { background: color-mix(in srgb, #3fb950 15%, transparent); border-color: color-mix(in srgb, #3fb950 40%, transparent); }
+.so-fix-verdict-warn { background: color-mix(in srgb, #d29922 16%, transparent); border-color: color-mix(in srgb, #d29922 42%, transparent); }
+.so-fix-verdict-neutral { opacity: 0.7; }
+/* ✨ 校正 Phase 6（C）：扫描结果面板——检测到的标签 / 置信度徽标 / 候选 chip / 内层结构块勾选。 */
+.so-fix-scan-panel { display: flex; flex-direction: column; gap: 5px; padding: 8px; margin-top: 2px;
+    border: 1px dashed color-mix(in srgb, var(--so-accent) 45%, transparent); border-radius: var(--so-r-md, 8px);
+    background: color-mix(in srgb, var(--so-accent) 6%, transparent); font-size: 0.85em; }
+.so-scan-row { line-height: 1.5; }
+.so-scan-conf { font-size: 0.82em; padding: 1px 7px; border-radius: 999px; margin-left: 4px; }
+.so-scan-conf-high { background: color-mix(in srgb, #3fb950 22%, transparent); }
+.so-scan-conf-med { background: color-mix(in srgb, #d29922 22%, transparent); }
+.so-scan-conf-low { background: color-mix(in srgb, #f85149 20%, transparent); }
+.so-scan-cands, .so-scan-blocks { display: flex; flex-wrap: wrap; gap: 6px; }
+.so-scan-cand { padding: 3px 9px; cursor: pointer; border-radius: 999px; border: 1px solid var(--so-accent);
+    background: color-mix(in srgb, var(--so-accent) 12%, transparent); color: inherit; font-size: 0.92em; }
+.so-scan-cand:hover { background: color-mix(in srgb, var(--so-accent) 24%, transparent); }
+.so-scan-blocks .so-check { flex: 0 0 auto; }
+
+/* 模式工具栏折叠：诊断 / 世界书的配置栏整条可折叠成一行标题，给聊天区让出竖向空间（手机上尤其重要）。
+   复用设置分组的 <summary> ▸ 机制，染上当前模式的主题色（世界书=羊皮纸暖色；诊断里 --so-lb-accent 被改写为蓝）。 */
+.so-mode-collapse { width: 100%; }
+.so-mode-collapse > summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3px 2px;
+    font-size: 0.82em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--so-lb-accent);
+    opacity: 0.92;
+    transition: opacity 0.15s;
+}
+.so-mode-collapse > summary::-webkit-details-marker { display: none; }
+.so-mode-collapse > summary::before {
+    content: '▸';   /* 展开时转 90° 朝下 */
+    display: inline-block;
+    font-size: 0.9em;
+    opacity: 0.7;
+    transition: transform 0.15s;
+}
+.so-mode-collapse[open] > summary::before { transform: rotate(90deg); }
+.so-mode-collapse > summary:hover { opacity: 1; }
+.so-mode-collapse > summary:focus-visible { outline: 2px solid var(--so-lb-accent); outline-offset: 2px; }
+.so-mode-collapse-body { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
+
+.so-lb-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.so-lb-icon { color: var(--so-lb-accent); opacity: 0.85; flex: 0 0 auto; }
+#so-lb-book, #so-diag-book {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 6px 8px;
+    border-radius: 8px;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    background-color: var(--so-field);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+    font-family: inherit;
+    font-size: 0.9em;
+}
+#so-lb-book:focus, #so-diag-book:focus { outline: none; border-color: var(--so-lb-accent); }
+.so-lb-bookpick { flex: 1 1 auto; min-width: 0; border: 1px solid var(--SmartThemeBorderColor, #444); border-radius: var(--so-r-md, 6px); padding: 2px 6px; }
+.so-lb-bookpick > summary { cursor: pointer; list-style: none; padding: 2px 0; font-size: 0.9em; }
+.so-lb-bookpick > summary::-webkit-details-marker { display: none; }
+.so-lb-bookpick-tools { display: flex; gap: 4px; margin: 4px 0; }
+.so-lb-book-list { max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.so-lb-book-opt { display: flex; align-items: center; gap: 6px; font-size: 0.9em; padding: 2px 4px; cursor: pointer; }
+.so-lb-book-opt:hover { background: rgba(var(--so-ink), 0.08); border-radius: 4px; }
+@media (max-width: 600px) { .so-lb-book-list { max-height: 120px; } }
+.so-lb-book-filter {
+    display: block; width: 100%; box-sizing: border-box;
+    font: inherit; font-size: 0.82em; color: inherit;
+    padding: 5px 9px; border-radius: 8px; margin: 2px 0;
+    background: var(--SmartThemeBlurTintColor, rgba(0, 0, 0, 0.2));
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.16));
+}
+.so-lb-book-filter:focus { outline: none; border-color: var(--so-lb-accent); }
+.so-lb-book-empty { font-size: 0.82em; opacity: 0.7; padding: 4px; }
+/* 🌐 世界书范围「自定义」（1.81.0）：主设置面板里的选书 / 选条目块。hidden 属性必须压过 flex，否则永远可见。 */
+#so-wi-custom { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+#so-wi-custom[hidden] { display: none; }
+.so-lb-check {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+    font-size: 0.82em;
+    opacity: 0.8;
+}
+.so-lb-check:hover { opacity: 1; }
+.so-lb-check input { accent-color: var(--so-lb-accent); }
+
+/* per-entry picker (lorebook) — only shown for a single targeted book */
+.so-lb-entries { display: none; flex-direction: column; gap: 6px; }
+.so-lb-entries.shown { display: flex; }
+.so-lb-entries-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#so-lb-entries-summary { font-size: 0.8em; opacity: 0.75; }
+/* 体积读数（1.62.0）：过 10 万 token 标红。红字【绝不能】直接用裸 --crimson70a ——
+   那是酒馆 :root 的固定 rgba（不随主题变），压在亮皮上约 2.9:1。沿用 .so-smartsel-warn
+   立的写法把它往正文色里兑：--SmartThemeBodyColor 在 so-skin-light 档被重钉为 #1f2430，
+   跟随主题档则是酒馆自己的值，两档都成立。opacity 也要拉回 1 —— 汇总行自带 0.75。 */
+.so-lb-size-huge {
+    color: color-mix(in srgb, var(--crimson70a, #e07c7c) 78%, var(--SmartThemeBodyColor));
+    opacity: 1;
+}
+.so-lb-entries-tools { display: none; flex-wrap: wrap; align-items: center; gap: 4px; }
+.so-lb-mini {
+    appearance: none; -webkit-appearance: none; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 0.74em; padding: 3px 8px; border-radius: 7px; color: inherit;
+    border: 1px solid color-mix(in srgb, var(--so-lb-accent) 40%, transparent);
+    background: color-mix(in srgb, var(--so-lb-accent) 10%, transparent);
+    transition: background-color 0.15s;
+}
+.so-lb-mini:hover { background: color-mix(in srgb, var(--so-lb-accent) 22%, transparent); }
+/* 切换型 mini 按钮（如「👁 内容预览」）开启时的按下高亮——比 hover 更实，表示「正生效」。 */
+.so-lb-mini.active {
+    background: color-mix(in srgb, var(--so-lb-accent) 34%, transparent);
+    border-color: var(--so-lb-accent);
+}
+.so-lb-mini:disabled { opacity: 0.45; cursor: not-allowed; }
+.so-lb-mini:disabled:hover { background: color-mix(in srgb, var(--so-lb-accent) 10%, transparent); }
+.so-lb-mini-blue::before, .so-lb-mini-green::before, .so-lb-mini-off::before {
+    content: ''; width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+}
+.so-lb-mini-blue::before { background: #5aa9e6; }
+.so-lb-mini-green::before { background: #7bbf6a; }
+.so-lb-mini-off::before { background: #777; opacity: 0.6; }
+.so-lb-ent-toggle .fa-chevron-down { transition: transform 0.15s; }
+.so-lb-entries.open .so-lb-ent-toggle .fa-chevron-down { transform: rotate(180deg); }
+.so-lb-entries-filter {
+    display: none; width: 100%; box-sizing: border-box;
+    font: inherit; font-size: 0.82em; color: inherit;
+    padding: 5px 9px; border-radius: 8px;
+    background: var(--SmartThemeBlurTintColor, rgba(0, 0, 0, 0.2));
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.16));
+}
+.so-lb-entries-filter:focus { outline: none; border-color: var(--so-lb-accent); }
+.so-lb-entries-list { display: none; flex-direction: column; max-height: 168px; overflow-y: auto; gap: 1px; }
+.so-lb-entries.open .so-lb-entries-tools { display: flex; }
+.so-lb-entries.open .so-lb-entries-filter,
+.so-lb-entries.open .so-lb-entries-list { display: flex; }
+.so-lb-ent {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 7px; cursor: pointer;
+    font-size: 0.82em; padding: 3px 4px; border-radius: 6px;
+}
+.so-lb-ent:hover { background: rgba(var(--so-ink), 0.05); }
+.so-lb-ent input { accent-color: var(--so-lb-accent); flex: 0 0 auto; }
+.so-lb-ent-type { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: #888; }
+.so-lb-type-blue { background: #5aa9e6; }
+.so-lb-type-green { background: #7bbf6a; }
+.so-lb-type-off { background: #777; opacity: 0.5; }
+.so-lb-ent-uid { opacity: 0.5; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.so-lb-ent-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* 条目内容预览（用户功能请求）：默认隐藏；选条目器顶部「👁 内容预览」开关给整列加 .so-lb-show-preview
+   即显示。内容字面（含宏，与世界书模式逐字原则一致）、裁到 2 行、缩进落到标题下方独占一行。 */
+.so-lb-ent-preview {
+    display: none;
+    flex: 0 0 100%;                 /* 独占一行 -> 落到标题那行的下方 */
+    margin: 1px 0 1px 16px;         /* 缩进，对齐到复选框之后 */
+    font-size: 0.9em; opacity: 0.62; line-height: 1.3;
+    overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    word-break: break-word; white-space: normal;
+}
+#so-lb-entries-list.so-lb-show-preview .so-lb-ent-preview { display: -webkit-box; }
+.so-lb-ent-preview.is-empty { opacity: 0.4; font-style: italic; }
+.so-lb-ent-empty { font-size: 0.8em; opacity: 0.55; padding: 4px 2px; }
+/* per-book header shown when editing "all active books" (grouped entry picker) */
+.so-lb-book-head {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.78em; font-weight: 600; opacity: 0.85;
+    padding: 6px 3px 3px; margin-top: 3px;
+    border-top: 1px solid rgba(var(--so-ink), 0.08);
+}
+.so-lb-book-head:first-child { border-top: none; margin-top: 0; padding-top: 2px; }
+.so-lb-book-head .fa-book { opacity: 0.55; flex: 0 0 auto; color: var(--so-lb-accent); }
+.so-lb-book-name { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.so-lb-book-count {
+    flex: 0 0 auto; font-size: 0.92em; opacity: 0.7; font-variant-numeric: tabular-nums;
+    background: color-mix(in srgb, var(--so-lb-accent) 18%, transparent);
+    border-radius: 9px; padding: 0 7px;
+}
+.so-lb-ent-empty-sub { padding-left: 16px; opacity: 0.45; }
+
+/* per-op apply results + parse-error notice (lorebook) */
+.so-lb-results { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.so-lb-result { font-size: 0.8em; line-height: 1.4; }
+.so-lb-result.so-lb-ok { color: var(--so-lb-accent); opacity: 0.95; }
+.so-lb-result.so-lb-skip { color: var(--crimson70a, #e07c7c); opacity: 0.9; }
+.so-lb-parse-errors { font-size: 0.8em; line-height: 1.4; margin-top: 6px; }
+
+/* B5 应用前预检行（dry-run）：通过=强调色、未通过=灰显 + 内联原因、常驻/暗条目=琥珀警示。附注 note/warn 缩进小字。 */
+.so-lb-preview { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.so-lb-preview:empty { display: none; }
+.so-lb-preview-head { font-size: 0.76em; opacity: 0.65; }
+.so-lb-prow { font-size: 0.8em; line-height: 1.4; }
+.so-lb-prow.so-lb-ok .so-lb-prow-main { color: var(--so-lb-accent); opacity: 0.95; }
+.so-lb-prow.so-lb-warn .so-lb-prow-main { color: var(--so-lb-accent); opacity: 0.95; }
+.so-lb-prow.so-lb-skip { opacity: 0.6; }
+.so-lb-prow.so-lb-skip .so-lb-prow-main { color: var(--crimson70a, #e07c7c); }
+.so-lb-note { font-size: 0.74em; opacity: 0.7; padding-left: 1.2em; }
+.so-lb-warn-note { font-size: 0.74em; color: #b8791f; padding-left: 1.2em; }
+
+.so-apply-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.16));
+}
+
+.so-apply-btn {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    color: #fff;
+    font-family: inherit;
+    font-size: 0.86em;
+    background-color: var(--so-accent);
+    background: linear-gradient(160deg,
+        color-mix(in srgb, var(--so-accent) 95%, white 5%),
+        color-mix(in srgb, var(--so-accent) 78%, black 6%));
+    box-shadow: 0 3px 10px -3px color-mix(in srgb, var(--so-accent) 60%, transparent);
+    transition: filter 0.15s, transform 0.1s;
+}
+.so-apply-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.so-apply-btn:active:not(:disabled) { transform: scale(0.96); }
+.so-apply-btn:disabled { opacity: 0.6; cursor: default; }
+
+.so-apply-status {
+    font-size: 0.8em;
+    opacity: 0.75;
+    line-height: 1.4;
+    /* 诊断加固（2026-08-21）：逐 op 对账清单是用 \n 分行的（diagReportLines），默认 white-space 会把它们
+       压成一行。pre-line 只保留换行、照常折叠多余空格 —— 对既有的单行状态文案是零影响的空操作。 */
+    white-space: pre-line;
+}
+

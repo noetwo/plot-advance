@@ -1,0 +1,396 @@
+/* ---------- advisor mode (剧情参谋, experimental) ---------- */
+/* A cool teal tint distinguishes advisor mode from diagnose (theme accent) and
+ * lorebook (parchment gold) at a glance, while still blending with the theme. */
+#so-window { --so-adv-accent: color-mix(in srgb, var(--so-accent) 45%, #4fb0a5 55%); }
+
+#so-advisor-btn.so-adv-active {
+    color: var(--so-adv-accent);
+    background-color: color-mix(in srgb, var(--so-adv-accent) 16%, transparent);
+    opacity: 1;
+}
+
+#so-adv-pill {
+    display: none;
+    margin-left: 4px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.6em;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    vertical-align: middle;
+    color: #fff;
+    background: linear-gradient(160deg,
+        color-mix(in srgb, var(--so-adv-accent) 95%, white 5%),
+        color-mix(in srgb, var(--so-adv-accent) 78%, black 6%));
+}
+#so-window.so-adv-on #so-adv-pill { display: inline-block; }
+
+#so-window.so-adv-on #so-header {
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--so-adv-accent) 22%, transparent),
+        transparent);
+}
+
+#so-adv-bar {
+    display: none;
+    /* 0 1 auto + min-height:0 + overflow-y:auto: a tall arc form (esp. blind, ~9 fields)
+       scrolls inside the bar instead of overflowing the window's clipped edge — the
+       window itself never scrolls, so without this the lower fields were unreachable. */
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    background: color-mix(in srgb, var(--so-adv-accent) 7%, transparent);
+}
+#so-window.so-adv-on #so-adv-bar { display: flex; }
+#so-window.so-settings-open #so-adv-bar { display: none; }
+
+.so-adv-check {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+    font-size: 0.82em;
+    opacity: 0.8;
+}
+.so-adv-check:hover { opacity: 1; }
+.so-adv-preset-warn { line-height: 1.45; }
+
+/* ---------- active plan strip (visible in EVERY mode while a plan steers) ---------- */
+#so-plan-bar {
+    display: none;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--so-adv-accent) 45%, transparent);
+    background: color-mix(in srgb, var(--so-adv-accent) 10%, transparent);
+}
+#so-window.so-plan-on #so-plan-bar { display: flex; }
+#so-window.so-settings-open #so-plan-bar { display: none; }
+
+/* 引导条默认收起以省纵向空间（用户反馈：停靠时挡聊天视图）：收起态只留标题行
+   （罗盘 + 引导中 + 目标 + 箭头），其余行（进度 / 强度 / 说明 / 弧线节奏 / 动作 / 注入内容）隐藏。
+   仅在【停靠窗口内】(#so-window > …) 生效——浮窗版有自己的折叠成小药丸机制，并隐藏其停靠箭头。 */
+#so-window > #so-plan-bar.so-plan-collapsed > :not(.so-plan-head) { display: none !important; }
+#so-window > #so-plan-bar.so-plan-collapsed #so-plan-goal {
+    flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.so-plan-collapse-btn {
+    margin-left: auto; flex: 0 0 auto; align-self: center;
+    background: none; border: none; cursor: pointer; padding: 2px 5px;
+    color: var(--so-adv-accent); opacity: 0.7; font-size: 0.82em; line-height: 1;
+    border-radius: 6px; transition: opacity 0.15s, background-color 0.15s;
+}
+.so-plan-collapse-btn:hover { opacity: 1; background: rgba(var(--so-ink), 0.08); }
+#so-plan-float #so-plan-bar .so-plan-collapse-btn { display: none; }
+
+.so-plan-head {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    min-width: 0;
+    /* 1.74.1：hint 药丸（定宽单行）在场后，窄浮窗里定宽件可能装不下——换行而不是溢出窗外。
+       没有药丸时定宽件只有图标+标签，永远装得下 ⇒ 既有布局逐像素不变。 */
+    flex-wrap: wrap;
+}
+.so-plan-icon { color: var(--so-adv-accent); flex: 0 0 auto; align-self: center; }
+.so-plan-label {
+    flex: 0 0 auto;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.62em;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: #fff;
+    background: linear-gradient(160deg,
+        color-mix(in srgb, var(--so-adv-accent) 95%, white 5%),
+        color-mix(in srgb, var(--so-adv-accent) 78%, black 6%));
+}
+#so-plan-goal {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.85em;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.so-plan-intensity { display: flex; gap: 4px; flex-wrap: wrap; }
+.so-plan-int {
+    cursor: pointer;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: 0.78em;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    background-color: var(--so-field);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+    transition: filter 0.15s;
+}
+.so-plan-int:hover { filter: brightness(1.15); }
+.so-plan-int.active {
+    color: #fff;
+    border-color: transparent;
+    background: linear-gradient(160deg,
+        color-mix(in srgb, var(--so-adv-accent) 95%, white 5%),
+        color-mix(in srgb, var(--so-adv-accent) 78%, black 6%));
+}
+
+.so-plan-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.so-plan-spacer { flex: 1 1 auto; }
+.so-plan-mini {
+    cursor: pointer;
+    padding: 3px 9px;
+    border-radius: 7px;
+    font-family: inherit;
+    font-size: 0.76em;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    background-color: var(--so-field);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+}
+.so-plan-mini:hover { filter: brightness(1.15); }
+.so-plan-done { border-color: color-mix(in srgb, var(--so-adv-accent) 60%, transparent); }
+.so-plan-drop { border-color: color-mix(in srgb, var(--crimson70a, #e07c7c) 60%, transparent); }
+
+#so-plan-directive {
+    display: none;
+    margin: 2px 0 0;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 0.74em;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    background-color: var(--so-field);
+    border: 1px dashed var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+    max-height: 180px;
+    overflow-y: auto;
+}
+#so-plan-directive.open { display: block; }
+
+/* ---- 方案条的节点列表（2.5.0 剧情脉络；类名沿用 1.72.0 序列引导）+ 送回讨论钮。配色跟主题走（--so-field 底 + 主题正文/描边色，
+   与 .so-plan-mini / #so-plan-directive 同源），送回讨论钮本体直接复用 .so-plan-mini，
+   这里只管列表自己的排布。
+   高度上限取 min(40vh, 240px) 的保守值：条会被搬进 #so-plan-float，而浮窗【没有高度上限】
+   且 overflow:hidden —— 长序列按 40vh 能把浮窗顶出屏外。列表自带 overflow-y:auto，
+   两个家里都在自己内部滚。真机几何待眼检后再定死。 ---- */
+#so-seq-list { max-height: min(40vh, 240px); overflow-y: auto; margin-top: 4px; }
+.so-seq-row summary { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; }
+.so-seq-row-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.so-seq-row-done .so-seq-row-label, .so-seq-row-skipped .so-seq-row-label { opacity: 0.55; }
+.so-seq-row-active .so-seq-row-label { font-weight: 600; }
+.so-seq-row-btn {
+    flex: 0 0 auto;
+    cursor: pointer;
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.85em;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    background-color: var(--so-field);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+}
+.so-seq-row-btn:hover { filter: brightness(1.15); }
+.so-seq-row-body { white-space: pre-wrap; opacity: 0.85; padding: 2px 0 4px 20px; font-size: 0.8em; line-height: 1.5; }
+/* 列表首行（整体目标）+ 就地编辑框；参谋卡上节点详细的输入框也用 .so-seq-canon-box。 */
+.so-seq-canon > summary .so-seq-row-label { font-weight: 600; }
+.so-seq-canon-box {
+    width: 100%; box-sizing: border-box; resize: vertical; min-height: 5em; margin: 4px 0;
+    font-family: inherit; font-size: 0.85em; line-height: 1.45;
+    color: var(--SmartThemeBodyColor, #e6e6e6); background-color: var(--so-field);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18)); border-radius: 6px; padding: 6px 8px;
+}
+.so-seq-canon-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* 剧情脉络（2.5.0）：节点名后面的关键词（淡一点）、改关键词的输入框、参谋卡上的详细框。 */
+.so-path-kw { opacity: 0.6; font-weight: 400; }
+.so-path-kw-box {
+    width: 100%; box-sizing: border-box; margin: 4px 0 0;
+    font-family: inherit; font-size: 0.85em; line-height: 1.45;
+    color: var(--SmartThemeBodyColor, #e6e6e6); background-color: var(--so-field);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18)); border-radius: 6px; padding: 4px 8px;
+}
+.so-plan-card .so-seq-canon-box { font-size: 0.82em; min-height: 3em; }
+
+/* ---------- plan adopt cards (under an advisor reply) ---------- */
+.so-plan-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.16));
+}
+.so-plan-card {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 9px 11px;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--so-adv-accent) 40%, transparent);
+    background: color-mix(in srgb, var(--so-adv-accent) 8%, transparent);
+}
+.so-plan-card.so-plan-adopted {
+    border-color: var(--so-adv-accent);
+    box-shadow: 0 0 0 1px var(--so-adv-accent) inset;
+}
+.so-plan-card .so-apply-btn {
+    background: linear-gradient(160deg,
+        color-mix(in srgb, var(--so-adv-accent) 95%, white 5%),
+        color-mix(in srgb, var(--so-adv-accent) 78%, black 6%));
+    box-shadow: 0 3px 10px -3px color-mix(in srgb, var(--so-adv-accent) 60%, transparent);
+}
+.so-plan-card-title { font-size: 0.9em; font-weight: 600; line-height: 1.4; }
+.so-plan-card-line { font-size: 0.82em; line-height: 1.5; overflow-wrap: anywhere; }
+.so-plan-card-dim { opacity: 0.72; }
+.so-plan-card-caption { line-height: 1.4; }
+.so-plan-card-actions { display: flex; margin-top: 2px; }
+
+/* ---- 序列提案卡（1.72.0）：骑 .so-plan-card 骨架，只加序列特有件（标题行 + 逐拍折叠行）。
+   字号跟单拍卡同一套（标题 .so-plan-card-title 0.9em / 行 .so-plan-card-line 0.82em，
+   展开体再按 .so-plan-card-dim 压暗），采用钮也不另立门户 —— 沿用 .so-plan-card-actions +
+   .so-apply-btn。行距全交给 .so-plan-card 的 gap:5px，这里不再自带 margin（会叠加）。 ---- */
+.so-seq-card-title { font-size: 0.9em; font-weight: 600; line-height: 1.4; }
+.so-seq-card-beat summary { cursor: pointer; font-size: 0.82em; line-height: 1.5; color: var(--SmartThemeBodyColor); }
+.so-seq-card-beatbody {
+    white-space: pre-wrap;
+    font-size: 0.82em;
+    line-height: 1.5;
+    opacity: 0.72;
+    padding: 2px 0 4px 16px;
+    overflow-wrap: anywhere;
+}
+
+/* ---------- bridge chip (chat-mode discussion -> advisor plans) ---------- */
+.so-bridge { padding-top: 0; }
+.so-bridge-chip {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 13px;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: 0.95em;
+    color: #fff;
+    border: 1px solid transparent;
+    background: linear-gradient(160deg,
+        color-mix(in srgb, var(--so-adv-accent) 95%, white 5%),
+        color-mix(in srgb, var(--so-adv-accent) 78%, black 6%));
+    box-shadow: 0 3px 10px -3px color-mix(in srgb, var(--so-adv-accent) 60%, transparent);
+    transition: filter 0.15s, transform 0.1s;
+}
+.so-bridge-chip:hover { filter: brightness(1.08); }
+.so-bridge-chip:active { transform: scale(0.96); }
+
+/* ---------- floating plan strip (window closed, plan still steering) ---------- */
+#so-plan-float {
+    /* the accent vars are scoped to #so-window — re-declare for the float */
+    --so-accent: var(--SmartThemeQuoteColor, #8ab4f8);
+    --so-adv-accent: color-mix(in srgb, var(--so-accent) 45%, #4fb0a5 55%);
+    /* 1.45.0 皮肤变量，取值同 #so-window */
+    --so-ink: 255, 255, 255;
+    --so-field: var(--black30a, rgba(0, 0, 0, 0.3));
+    --so-scrim: rgba(8, 9, 12, 0.84);
+
+    position: fixed;
+    top: 64px;
+    right: 12px;
+    z-index: 2999;
+    display: none;
+    flex-direction: column;
+    width: min(420px, calc(100vw - 16px));
+    overflow: hidden;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    font-size: calc(var(--mainFontSize, 15px) * 0.95);
+    border: 1px solid color-mix(in srgb, var(--so-adv-accent) 50%, transparent);
+    border-radius: 12px;
+    background: var(--SmartThemeBlurTintColor, rgba(22, 24, 28, 0.96));
+    box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.6),
+        0 0 0 1px color-mix(in srgb, var(--so-adv-accent) 12%, transparent) inset;
+}
+
+#so-plan-float-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 10px;
+    cursor: grab;
+    user-select: none;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--so-adv-accent) 20%, transparent),
+        transparent);
+}
+#so-plan-float-head:active { cursor: grabbing; }
+#so-plan-float-head .fa-compass { color: var(--so-adv-accent); }
+.so-plan-float-title { font-weight: 600; font-size: 0.88em; letter-spacing: 0.04em; }
+#so-plan-float-open {
+    cursor: pointer;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    opacity: 0.75;
+}
+#so-plan-float-open:hover { opacity: 1; background: rgba(var(--so-ink), 0.08); }
+
+/* the strip's in-window display rule is scoped to #so-window — float version */
+#so-plan-float #so-plan-bar { display: flex; border-bottom: none; }
+
+/* ---------- collapsed float: a single 🧭 compass button (no words) ---------- */
+#so-plan-float.so-collapsed {
+    width: auto;
+    border-radius: 999px;
+    /* 用户反馈（白鳥三津枝）：折叠的罗盘小药丸会挡住下面的正文。静息时做成半透明，尽量不遮字；
+       一旦交互——桌面悬停 / 手机触摸按住 / 拖动——立刻回满不透明，看清在抓什么。过渡很短，
+       prefers-reduced-motion 下被上面的减动效块统一压成瞬时（不影响半透明本身）。 */
+    opacity: 0.5;
+    transition: opacity 0.18s ease;
+}
+#so-plan-float.so-collapsed:hover,
+#so-plan-float.so-collapsed:active { opacity: 1; }
+#so-plan-float.so-collapsed #so-plan-float-slot { display: none; }
+#so-plan-float.so-collapsed #so-plan-float-head {
+    border-bottom: none;
+    border-radius: 999px;
+    padding: 3px;
+    gap: 0;
+}
+/* fold to the compass alone: hide the decorative compass, the words, the spacer and
+   the open(moon) button — the collapse toggle now carries the compass icon and is the
+   whole pill (tap it to expand; the oracle opens from the full head once expanded). */
+#so-plan-float.so-collapsed #so-plan-float-head > .fa-compass,
+#so-plan-float.so-collapsed .so-plan-float-title,
+#so-plan-float.so-collapsed .so-plan-spacer,
+#so-plan-float.so-collapsed #so-plan-float-open { display: none; }
+#so-plan-float.so-collapsed #so-plan-float-collapse {
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 1;
+    color: var(--so-adv-accent);
+    font-size: 1.15em;
+}
+/* 1.77.5：参谋设置组里的普通字段行（剧情引导注入深度）——与弧线表单同一套字段皮，同处一条参谋条。 */
+.so-adv-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.82em; }
+.so-adv-field > span { opacity: 0.72; }
+.so-adv-field input {
+    width: 100%;
+    box-sizing: border-box;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    background-color: var(--so-field);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.16));
+    border-radius: 8px;
+    padding: 6px 9px;
+    font-family: inherit;
+}
+
