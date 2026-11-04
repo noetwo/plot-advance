@@ -5,7 +5,7 @@ import { POST_REPLY_CALL_TIMEOUT_MS, getCtx, getSettings, uiConfirm } from '../.
 
 import { addSystemNote, clearNoteOpts, loadConvoForChat } from './cards.js';
 import { ADVISOR_REMIND_AFTER, dropLegacyGuides, getPath, setPath } from './metadata.js';
-import { renderPlanBar } from './ui.js';
+import { discardPathEdit, renderPlanBar } from './ui.js';
 import { toggleAdvisor } from '../builder/ui.js';
 import { buildAdvisorPrompt, primeLwbFromMetadata, stripReasoningTags } from '../chat/context.js';
 import { refreshSummaryUI } from '../chat/history.js';
@@ -20,19 +20,22 @@ import { buildAdvisorPresetMessages } from '../../presets/messages.js';
 import { ADVISOR_SPEEDS, ENABLE_WI_CUSTOM_PICK, ENABLE_WI_EJS_RENDER } from '../../prompts/builtins.js';
 import { P } from '../../prompts/registry.js';
 import { buildWorldInfo } from '../../st/adapters.js';
+import { getHostGlobal } from '../../st/host.js';
 import { addMessage } from '../../ui/messages.js';
 import { currentOracleMode, refreshDraftCard, toggleWindow } from '../../ui/mode-shell.js';
 import { maybeWrapJb, presetCurationActive } from '../../ui/settings.js';
-import { abortCtl, advisorMode, convo, isGenerating, nextCid, setConvoStreamKey, setLiveCondense, setLiveForge } from '../../core/runtime-state.js';
-import { nodeDetailJob, setNodeDetailJob, setPathEditDraft } from './state.js';
-import { win } from '../../ui/state.js';
+import { abortCtl, clearLiveGenerations, isGenerating, stopGeneration } from '../../core/generation.js';
+import { appendConvo, nextCid, selectConvoStream } from '../../core/conversation-store.js';
+import { advisorMode } from '../../core/oracle-modes.js';
+import { win } from '../../ui/refs.js';
+let nodeDetailJob = null;
 
 /* ------------------------------------------------------------------ *
  * 剧情脉络（2.5.0）—— 纯函数层。时钟 now = 主聊天消息数，由调用方注入（chatMsgCount()）。
  * 参谋卡解析出来的 { title, overall, nodes:[{ name, keywords, detail }] } → 存进聊天元数据的脉络：
  * 每个节点带 id 和 status（active / pending / done / skipped），cursor 指向当前节点。
  * ------------------------------------------------------------------ */
-function pathNodeFrom(n, id, status) {
+export function pathNodeFrom(n, id, status) {
     return {
         id, status,
         name: String(n.name || '').trim(),
@@ -40,7 +43,7 @@ function pathNodeFrom(n, id, status) {
         detail: String(n.detail || '').trim(),
     };
 }
-function buildPath(parsed, speed, now) {
+export function buildPath(parsed, speed, now) {
     return {
         title: String(parsed.title || '').trim(),
         overall: String(parsed.overall || '').trim(),
@@ -51,7 +54,7 @@ function buildPath(parsed, speed, now) {
 }
 
 // 完成当前节点：done → 下一个未开始的节点（跨过已跳过的）。没有了 ⇒ ended。
-function pathAdvance(path, now) {
+export function pathAdvance(path, now) {
     const cur = pathActiveNode(path);
     if (!cur) return { ended: true };
     cur.status = 'done';
@@ -68,7 +71,7 @@ function pathAdvance(path, now) {
 }
 
 // 跳过一个未开始的节点（当前节点没有跳过——完成即推进；已完成的是历史）。
-function pathSkipNode(path, nodeId) {
+export function pathSkipNode(path, nodeId) {
     const n = (path.nodes || []).find((x) => x.id === nodeId);
     if (!n || n.status !== 'pending') return false;
     n.status = 'skipped';
@@ -77,7 +80,7 @@ function pathSkipNode(path, nodeId) {
 
 // 用新卡替换「当前节点起」剩下的部分（找参谋改改之后采用）：已完成 / 已跳过的历史留着，id 续号不复用。
 // 新卡带了标题 / 整体目标就换上，没带就沿用。
-function pathSpliceTail(path, parsed, now) {
+export function pathSpliceTail(path, parsed, now) {
     const fresh = parsed.nodes || [];
     if (!fresh.length) return path;
     const maxId = path.nodes.reduce((m, n) => Math.max(m, n.id || 0), 0);
@@ -91,7 +94,7 @@ function pathSpliceTail(path, parsed, now) {
     return path;
 }
 
-function pathHasUnplayed(path) {
+export function pathHasUnplayed(path) {
     return !!(path && path.nodes.some((n) => n.status === 'active' || n.status === 'pending'));
 }
 
@@ -119,7 +122,7 @@ export async function adoptPath(parsed, speed) {
             : '已开始引导：主聊天的 AI 会逐步把剧情推向这个目标（你正常进行 RP 即可）。可以在上方的方案条里调整推进速度、查看注入内容，或停止引导。';
     }
     abortNodeDetailJob();
-    setPathEditDraft(null);
+    discardPathEdit();
     if (!setPath(path)) {
         addSystemNote('无法保存引导：当前似乎没有打开任何聊天。');
         return false;
@@ -137,7 +140,7 @@ export function pathComplete() {
     if (!path) return;
     const multi = pathIsMulti(path);
     abortNodeDetailJob();
-    setPathEditDraft(null);
+    discardPathEdit();
     const r = pathAdvance(path, chatMsgCount());
     if (r.ended) {
         setPath(null);
@@ -163,7 +166,7 @@ export async function pathAbandon() {
     if (!path) return;
     if (pathIsMulti(path) && !(await uiConfirm('确定放弃？整条剧情脉络和引导都会清除，主聊天恢复原状。'))) return;
     abortNodeDetailJob();
-    setPathEditDraft(null);
+    discardPathEdit();
     setPath(null);
     applyPlanInjection();
     renderPlanBar();
@@ -187,7 +190,7 @@ export async function pathSendBack() {
     const content = P('advisor.sendBack', { where });
     const entry = { id: nextCid(), role: 'assistant', content };
     entry._el = addMessage('assistant', content, entry);
-    convo.push(entry);
+    appendConvo(entry);
     persistConvo();
 }
 
@@ -225,7 +228,7 @@ function pathJobKey(path, node) {
 }
 function abortNodeDetailJob() {
     const job = nodeDetailJob;
-    setNodeDetailJob(null);
+    nodeDetailJob = null;
     if (job) { try { job.ctl.abort(); } catch (e) { /* ignore */ } }
 }
 export function nodeDetailWriting(path, node) {
@@ -237,7 +240,7 @@ export async function writePathNodeDetail() {
     if (!node || nodeDetailWriting(path, node)) return;
     abortNodeDetailJob();
     const job = { key: pathJobKey(path, node), ctl: new AbortController() };
-    setNodeDetailJob(job);
+    nodeDetailJob = job;
     renderPlanBar();
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; job.ctl.abort(); }, POST_REPLY_CALL_TIMEOUT_MS);
@@ -255,7 +258,7 @@ export async function writePathNodeDetail() {
         clearTimeout(timer);
     }
     if (nodeDetailJob !== job) return;   // 已被取消，或被新的一次顶掉
-    setNodeDetailJob(null);
+    nodeDetailJob = null;
     const cur = getPath();
     const curNode = pathActiveNode(cur);
     if (!curNode || pathJobKey(cur, curNode) !== job.key) { renderPlanBar(); return; }
@@ -362,20 +365,19 @@ export function onChatChanged() {
     if (postReplyCancelsOnChatSwitch()) cancelPostReply();
     // 保活：切聊天必须显式中断在途的后台锻造 / 深度精简并清两槽——它们属于【旧聊天】（用旧卡/草稿生成），
     // 绝不能把结果写进新聊天。清空后 runForge / runCondenseDepth 的完成/失败分支会看到身份不符而丢弃落盘。
-    if (isGenerating && abortCtl) { try { abortCtl.abort(); } catch (e) { /* ignore */ } }
-    setLiveForge(null);
-    setLiveCondense(null);
+    if (isGenerating && abortCtl) stopGeneration();
+    clearLiveGenerations();
     clearNoteOpts();      // 换聊天即作废本会话的记录按钮材料：撤销 / 换 swipe 针对的是旧聊天的 MVU / 楼层，跨聊天重挂会写错对象
     closeMvuEditor();     // 🎛 变量编辑器：卡里摆的是【旧聊天】的 stat_data 快照与脏表，跨聊天按「应用」就是往新聊天写旧路径 —— 直接关掉（没开时是空操作）
     cancelMvuedScan();    // 🎛 并掐掉在途的「分析取值规则」（它的结果已注定被丢弃：白烧钱，还会让新聊天的扫描键僵在「分析中…」最长 120 秒）。刻意不放进 closeMvuEditor —— ✕ / 点背景关卡不该中断本聊天的扫描
     // 剧情脉络（2.5.0）：旧版的单拍方案 / 序列直接丢掉；「到了再写」在途的调用属于旧聊天，掐掉；方案条上没保存的修改作废。
     dropLegacyGuides();
     abortNodeDetailJob();
-    setPathEditDraft(null);
+    discardPathEdit();
     applyPlanInjection();
     if (win) renderPlanBar();
     checkPlanReminder();
-    setConvoStreamKey(convoStreamKeyForMode(currentOracleMode(), getSettings()));   // 新聊天：可见流复位到当前模式应在的房间（旧流已由自身写入落盘；这里不 sync，免把旧 convo 灌进新聊天元数据）
+    selectConvoStream(convoStreamKeyForMode(currentOracleMode(), getSettings()));   // 新聊天：可见流复位到当前模式应在的房间（旧流已由自身写入落盘；这里不 sync，免把旧 convo 灌进新聊天元数据）
     loadConvoForChat();   // 用户功能请求：把本聊天保存的侧聊历史载入窗口（per-chat 持久化）
     refreshSummaryUI();   // 用户功能请求：刷新本聊天的运行概要编辑器
     loadDiagSelForChat(); // 用户功能请求：载入本聊天的诊断「精选世界书条目」选择
@@ -406,8 +408,9 @@ export function toggleGuidePause() {
     setPath(path);
     applyPlanInjection();
     renderPlanBar();
-    if (window.toastr) {
-        window.toastr.info(path.paused ? '已暂停引导：主聊天先不注入剧情导向，进度都保留，随时点「继续」。' : '已继续引导。',
+    const toastr = getHostGlobal('toastr');
+    if (toastr) {
+        toastr.info(path.paused ? '已暂停引导：主聊天先不注入剧情导向，进度都保留，随时点「继续」。' : '已继续引导。',
             '剧情推进', { timeOut: 2500 });
     }
 }

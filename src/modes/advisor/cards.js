@@ -7,13 +7,16 @@ import { runForge } from '../builder/ui.js';
 import { renderAdvisorReplyHtml, renderFixResultHtml, renderMarkdownOnly } from '../chat/context.js';
 import { importConvo, rehangFixApply, scrollToBottom, soBulkRender } from '../chat/history.js';
 import { extractUpdateBlock } from '../diagnose/mvu.js';
-import { addAutoFixControls, addFullReplyControls, addMvuedUndoControls, addNoteUndoControls, addSaveHealthControls } from '../diagnose/schema.js';
-import { parseLorebookBlocks, renderBuilderReplyHtml } from '../lorebook/core.js';
+import { addSaveHealthControls } from '../diagnose/diagnostics.js';
+import { addAutoFixControls, addFullReplyControls, addMvuedUndoControls, addNoteUndoControls } from '../diagnose/schema.js';
+import { parseLorebookBlocks } from '../lorebook/operations.js';
+import { renderBuilderReplyHtml } from '../builder/model.js';
 import { ADVISOR_SPEEDS, ENABLE_SCHEMA_DIAG } from '../../prompts/builtins.js';
 import { addApplyControls, addLorebookApplyControls, addMessage, diagSchemaAfterManualReply } from '../../ui/messages.js';
 import { MODE_EMPTY, currentOracleMode } from '../../ui/mode-shell.js';
-import { abortCtl, cidSeq, convo, convoStreamKey, isGenerating, liveCondense, liveForge, setCidSeq, setConvo, setConvoStreamKey, setLiveCondense, setLiveForge } from '../../core/runtime-state.js';
-import { inputEl, messagesEl } from '../../ui/state.js';
+import { abortCtl, clearLiveGenerations, isGenerating, liveCondense, liveForge, stopGeneration } from '../../core/generation.js';
+import { cidSeq, convo, convoStreamKey, ensureCidSeqAtLeast, replaceConvo, selectConvoStream } from '../../core/conversation-store.js';
+import { inputEl, messagesEl } from '../../ui/refs.js';
 
 /* ------------------------------------------------------------------ *
  * 参谋方案区块 <StoryPlan>（2.5.0 剧情脉络）的解析与卡片。
@@ -22,7 +25,7 @@ import { inputEl, messagesEl } from '../../ui/state.js';
  * 与 <StorySequence>；未闭合的尾块（截断回复）救援到文末——与 splitStoryPlanSegments 的配对规则一致。
  * 解析不出节点的区块忽略：气泡里照原样显示，不出卡。2.5.0 之前的旧序列格式（beat: 行）不再认。
  * ------------------------------------------------------------------ */
-function parseStoryPlanBlock(inner) {
+export function parseStoryPlanBlock(inner) {
     const text = String(inner || '');
     if (/^\s*beat\s*[:：]/mi.test(text)) return null;
     const key = (line, keys) => {
@@ -334,11 +337,10 @@ export async function clearConversation() {
     // 运行在别的房间则不动（下面 loadConvoForChat 的守卫也据此放它继续）。
     const liveRun = liveForge || liveCondense;
     if (isGenerating && abortCtl && liveRun && liveRun.streamKey === convoStreamKey) {
-        try { abortCtl.abort(); } catch (e) { /* ignore */ }
-        setLiveForge(null);
-        setLiveCondense(null);
+        stopGeneration();
+        clearLiveGenerations();
     }
-    setConvo([]);
+    replaceConvo([]);
     persistConvo();   // 用户功能请求：手动清空也清掉本聊天保存的历史（删元数据键）
     messagesEl.innerHTML = '';
     loadConvoForChat();   // 重载空流：主流走空态，工坊房间重画头部提示线
@@ -403,12 +405,12 @@ export function loadConvoForChat() {
     // 正跑，让它继续（回房时下方重挂气泡，完成后按原始房间归位）。切聊天 / 清空由 onChatChanged /
     // clearConversation 显式中断并清掉两槽，到这里已 null，照常中断其它在途生成（普通聊天/访谈/校正等，
     // 维持 1.28.0 起行为；1.36.0 起用户侧切换入口会先弹确认——见 confirmConvoSwap）。
-    if (isGenerating && abortCtl && !liveForge && !liveCondense) { try { abortCtl.abort(); } catch (e) { /* ignore */ } }
+    if (isGenerating && abortCtl && !liveForge && !liveCondense) stopGeneration();
     const saved = getConvoMeta();
     // 读回 = 落盘的同一份口径（serializeConvo）：同样的角色筛选 + 同样的字段白名单，外加诊断卡的
     // diagStamp（Task 5 的陈旧闸重载后就靠它）。两处各写一遍，迟早有一处漏带新字段。
-    setConvo(serializeConvo(saved));
-    setCidSeq(convo.reduce((mx, m) => Math.max(mx, Number(m.id) || 0), cidSeq));
+    replaceConvo(serializeConvo(saved));
+    ensureCidSeqAtLeast(convo.reduce((mx, m) => Math.max(mx, Number(m.id) || 0), cidSeq));
     messagesEl.innerHTML = '';
     // 房间头部提示线（每模式独立房间）：让「历史换了一批」读成「独立记录」而不是「记录丢了」。主流不显示。
     const cueText = streamCueLabel(convoStreamKey, getSettings());
@@ -483,7 +485,7 @@ export function syncConvoStream() {
     const target = convoStreamKeyForMode(currentOracleMode(), getSettings());
     if (target === convoStreamKey) return false;
     persistConvo();                 // 现流落盘（写的是切换前的 convoStreamKey）
-    setConvoStreamKey(target);
+    selectConvoStream(target);
     loadConvoForChat();             // 从新流的元数据重建窗口
     return true;
 }

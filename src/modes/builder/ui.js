@@ -7,22 +7,25 @@ import { stripReasoningTags } from '../chat/context.js';
 import { scrollToBottom, soBulkRender } from '../chat/history.js';
 import { isUserAbort, onSend } from '../chat/send.js';
 import { getMvuStatData } from '../diagnose/mvu.js';
-import { setGenerating } from '../fix/staging.js';
-import { applyLorebookOps, buildBuilderContext, buildForgeMessages, builderVariantKey, forgePatchToDraft, getActiveBookNames, getAllBookNames, getWiEditApi, parseCharDraft, parseDraftPatch, renderBuilderReplyHtml, resolveBuilderTargetBook, resolveLbTargetNames, sanitizePersonaDraft, undoLorebookOps } from '../lorebook/core.js';
+import { buildBuilderContext, buildForgeMessages, bldBookNames, captureBuilderStatData, clearBuilderStatData } from './context.js';
+import { builderVariantKey, forgePatchToDraft, parseCharDraft, parseDraftPatch, renderBuilderReplyHtml, resolveBuilderTargetBook, sanitizePersonaDraft } from './model.js';
+import { applyLorebookOps, undoLorebookOps } from '../lorebook/operations.js';
+import { getActiveBookNames, getAllBookNames, getWiEditApi, resolveLbTargetNames } from '../lorebook/world-info.js';
 import { ENABLE_DRAFT_CONDENSE, ENABLE_LIGHT_CONDENSE, ENABLE_MODE_ROOMS } from '../../prompts/builtins.js';
 import { P } from '../../prompts/registry.js';
 import { createPersonaWithAvatar, deletePersonaById, personaNameExists, restorePersonaDesc, writeActivePersonaDesc } from '../../st/adapters.js';
-import { callDirect, callProfile, callProfileStream, resolveEndpointUrl, streamDirect } from '../../transport/direct.js';
-import { addMessage } from '../../ui/messages.js';
+import { dispatchBuilderRequest } from './request.js';
+import { addMessage, soFollowStream } from '../../ui/messages.js';
 import { currentOracleMode, focusOracleInput, modeReturnNote, refreshDraftCard, setOracleMode } from '../../ui/mode-shell.js';
-import { abortCtl, advisorMode, convo, convoStreamKey, isGenerating, lastPrompt, liveCondense, liveForge, nextCid, priorOracleMode, setAbortCtl, setLastPrompt, setLastPromptMeta, setLiveCondense, setLiveForge, setPriorOracleMode } from '../../core/runtime-state.js';
-import { bldBookNames, setBldStatData } from './state.js';
-import { lbBookNames, setLbBookNames } from '../lorebook/state.js';
-import { inputEl, messagesEl, soFollowStream, win } from '../../ui/state.js';
+import { appendConvo, convoStreamKey, nextCid } from '../../core/conversation-store.js';
+import { beginGeneration, clearLiveCondense, clearLiveForge, finishGeneration, isGenerating, liveCondense, liveForge, registerLiveCondense, registerLiveForge } from '../../core/generation.js';
+import { advisorMode, priorOracleMode, rememberPriorOracleMode, resetPriorOracleMode } from '../../core/oracle-modes.js';
+import { recordLastPrompt } from '../../core/recent-prompt.js';
+import { inputEl, messagesEl, win } from '../../ui/refs.js';
 
-// 锻造：一次完整调用（brief + 全上下文）→ <CharDraft> 草稿。复用【模块级】isGenerating/abortCtl——
-// setGenerating(true) 已把发送键变成「停止」键，点它经 onSend → stopGeneration 中断的正是 abortCtl
-//（1.17.14 教训：局部 controller 停止键够不着）；另加 arc 同款 180s 超时兜底，到点自动 abort。
+// 锻造：一次完整调用（brief + 全上下文）→ <CharDraft> 草稿。复用统一生成控制器——
+// beginGeneration() 已把发送键变成「停止」键，点它经 onSend → stopGeneration 中断当前控制器；
+// 另加 arc 同款 180s 超时兜底，到点自动 abort。
 // 工序要求显式 CoT（<thinking>）——展示 / 历史 / 解析前用 stripReasoningTags 统一剥离。
 // keep-forging 辅助①：把累积文本画进保活运行（liveForge / liveCondense 同形描述子）气泡的 .so-content
 //（仅当它当前挂在 DOM 上——离房时气泡被 loadConvoForChat 清掉，此时静默跳过；回房会由 loadConvoForChat
@@ -40,7 +43,7 @@ function paintForge(f) {
 // getChatMetadataSafe 兜 null → fail-open 不抛。可单测（builder-forge-bg.test.mjs）。
 function routeForgeReply(roomKey, entry) {
     if (roomKey === convoStreamKey) {
-        convo.push(entry);
+        appendConvo(entry);
         persistConvo();
         return;
     }
@@ -61,18 +64,18 @@ export async function runForge() {
     const ctx = getCtx();
     // 与 generateReply 的 builder 分支同款：发送前重读世界书选段 + 权威变量状态。
     await buildBuilderContext();
-    setBldStatData('');
+    clearBuilderStatData();
     if (s.bldIncludeStat) {
         const stat = await getMvuStatData();
-        setBldStatData(stat ? JSON.stringify(stat, null, 2) : '');
+        captureBuilderStatData(stat ? JSON.stringify(stat, null, 2) : '');
     }
     const messages = buildForgeMessages(ctx, s, st.brief);
     // 调试提示词查看器快照（与 generateReply 同一形状）。
-    setLastPrompt(messages.map((m) => ({ role: m.role, content: m.content })));
-    setLastPromptMeta({
+    const prompt = messages.map((m) => ({ role: m.role, content: m.content }));
+    recordLastPrompt(prompt, {
         mode: '工坊锻造',
         target: s.mode === 'direct' ? (s.model || '直连') : '配置文件',
-        chars: lastPrompt.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
+        chars: prompt.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
         time: new Date().toLocaleTimeString(),
     });
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
@@ -83,9 +86,8 @@ export async function runForge() {
     // keep-forging：把这次锻造登记为「后台可续」——记住它属于哪个工坊房间(streamKey)、气泡 entry、累积
     // 文本(text)。切模式时不中断（见 loadConvoForChat 的 !liveForge 守卫），完成/失败按此房归位（routeForgeReply）。
     const myForge = { streamKey: convoStreamKey, entry: aEntry, text: '' };
-    setLiveForge(myForge);
-    setGenerating(true);
-    setAbortCtl(new AbortController());
+    registerLiveForge(myForge);
+    const ctl = beginGeneration();
     // 锻造超时看门狗（T13）：旧版是平坦的墙钟——会误杀仍在正常流式输出的长锻造（Prince 实测中招），
     // 且中止提示与手动停止无从区分。改为【空闲】看门狗：流式路径每收到一段增量就把 180s 计时重置；
     // 非流式路径没有进度信号，只能用一个 600s 的平坦兜底。超时触发时先置 forgeTimedOut=true 再 abort，
@@ -94,7 +96,7 @@ export async function runForge() {
     let killTimer = null;
     const armWatchdog = (ms) => {
         if (killTimer) clearTimeout(killTimer);
-        killTimer = setTimeout(() => { forgeTimedOut = true; try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, ms);
+        killTimer = setTimeout(() => { forgeTimedOut = true; try { ctl.abort(); } catch (e) { /* ignore */ } }, ms);
     };
     try {
         let finalText = '';
@@ -104,43 +106,21 @@ export async function runForge() {
         // 老下限 12288 来自 lessons-pass 实测（DS 思考双峰、最重 ~10k）、8192 来自 T9 冷模型验证。
         // T13：用户可用「锻造回复上限」(bldMaxTokens) 在下限之上再顶（超大世界书致思考+成稿被截时）。
         const effMaxTokens = Math.max(s.maxTokens, Number(s.bldMaxTokens) || 0, 16384);
-        if (s.mode === 'direct') {
-            const url = resolveEndpointUrl(s);
-            const body = { model: s.model, messages, max_tokens: effMaxTokens };
-            if (s.sendTemperature) body.temperature = s.temperature;
-            if (s.stream) {
-                contentEl.classList.add('so-streaming');
-                armWatchdog(180000);   // 空闲看门狗：每段增量重置（见 onDelta 里的 armWatchdog）
-                finalText = await streamDirect(url, s.apiKey, body, abortCtl.signal, (delta) => {
-                    armWatchdog(180000);                    // 收到增量 = 仍在推进，重置计时
-                    clearTyping();
-                    myForge.text += delta;                  // streamDirect 的 onDelta 是【增量】——累积进 liveForge
-                    paintForge(myForge);                    // 画进气泡（离开工坊时气泡已卸，静默跳过；回房重挂后接上）
-                    if (soFollowStream && convoStreamKey === myForge.streamKey) scrollToBottom();
-                });
-                contentEl.classList.remove('so-streaming');
-            } else {
-                armWatchdog(600000);   // 非流式无进度信号：平坦兜底
-                finalText = await callDirect(url, s.apiKey, body, abortCtl.signal);
-            }
+        const streaming = !!s.stream;
+        if (streaming) {
+            contentEl.classList.add('so-streaming');
+            armWatchdog(180000);
         } else {
-            const override = s.sendTemperature ? { temperature: s.temperature } : {};
-            if (s.stream) {
-                contentEl.classList.add('so-streaming');
-                armWatchdog(180000);   // 空闲看门狗：每段增量重置（见 onText 里的 armWatchdog）
-                finalText = await callProfileStream(s.profileId, messages, effMaxTokens, override, abortCtl.signal, (full) => {
-                    armWatchdog(180000);                    // 收到累计全文更新 = 仍在推进，重置计时
-                    clearTyping();
-                    myForge.text = full;                    // callProfileStream 的 onText 是【累计全文】
-                    paintForge(myForge);
-                    if (soFollowStream && convoStreamKey === myForge.streamKey) scrollToBottom();
-                });
-                contentEl.classList.remove('so-streaming');
-            } else {
-                armWatchdog(600000);   // 非流式无进度信号：平坦兜底
-                finalText = await callProfile(s.profileId, messages, effMaxTokens, override, abortCtl.signal);
-            }
+            armWatchdog(600000);
         }
+        finalText = await dispatchBuilderRequest(s, messages, effMaxTokens, ctl.signal, (chunk, cumulative) => {
+            armWatchdog(180000);
+            clearTyping();
+            myForge.text = cumulative ? chunk : myForge.text + chunk;
+            paintForge(myForge);
+            if (soFollowStream && convoStreamKey === myForge.streamKey) scrollToBottom();
+        });
+        if (streaming) contentEl.classList.remove('so-streaming');
         clearTyping();
         // 剥掉工序写出的 <thinking> CoT——剥完为空 = 预算多半被思考占满（或真空回复），如实提示。
         const cleanText = stripReasoningTags(String(finalText || ''));
@@ -237,9 +217,8 @@ export async function runForge() {
         routeForgeReply(originKey, aEntry);
     } finally {
         if (killTimer) clearTimeout(killTimer);
-        if (liveForge === myForge) setLiveForge(null);   // 只注销自己这次（若已被切聊天置空/替换则不动）
-        setGenerating(false);
-        setAbortCtl(null);
+        clearLiveForge(myForge);   // 只注销自己这次（若已被切聊天置空/替换则不动）
+        finishGeneration();
         if (soFollowStream && convoStreamKey === myForge.streamKey) scrollToBottom();
     }
 }
@@ -265,45 +244,40 @@ export async function runCondense(opts = {}) {
         { role: 'system', content: P('bld.condense', null, s) },
         { role: 'user', content: P('bld.condenseAsk', { draft: rawC }, s) },
     ];
-    setLastPrompt(messages.map((m) => ({ role: m.role, content: m.content })));
-    setLastPromptMeta({ mode: '工坊精简', target: s.mode === 'direct' ? (s.model || '直连') : '配置文件', chars: rawC.length, time: new Date().toLocaleTimeString() });
+    recordLastPrompt(messages.map((m) => ({ role: m.role, content: m.content })), {
+        mode: '工坊精简', target: s.mode === 'direct' ? (s.model || '直连') : '配置文件', chars: rawC.length, time: new Date().toLocaleTimeString(),
+    });
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
     const contentEl = assistantEl.querySelector('.so-content');
     const clearTyping = showTyping(contentEl);
-    setGenerating(true);
-    setAbortCtl(new AbortController());
+    const ctl = beginGeneration();
     let condTimedOut = false, killTimer = null;
-    const armWatchdog = (ms) => { if (killTimer) clearTimeout(killTimer); killTimer = setTimeout(() => { condTimedOut = true; try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, ms); };
+    const armWatchdog = (ms) => { if (killTimer) clearTimeout(killTimer); killTimer = setTimeout(() => { condTimedOut = true; try { ctl.abort(); } catch (e) { /* ignore */ } }, ms); };
     try {
         // 下限 16384（spec §4.2）：Gemini 类连接把隐藏推理计进 max_tokens，8192 必截断→守卫回落=白花钱（真 API 电池实测）。
         const effMaxTokens = Math.max(s.maxTokens, Number(s.bldMaxTokens) || 0, 16384);
         let finalText = '';
-        if (s.mode === 'direct') {
-            const url = resolveEndpointUrl(s);
-            const body = { model: s.model, messages, max_tokens: effMaxTokens };
-            if (s.sendTemperature) body.temperature = s.temperature;
-            if (s.stream) {
-                contentEl.classList.add('so-streaming');
-                armWatchdog(180000);
-                finalText = await streamDirect(url, s.apiKey, body, abortCtl.signal, (delta) => { armWatchdog(180000); clearTyping(); contentEl.textContent += delta; if (soFollowStream) scrollToBottom(); });
-                contentEl.classList.remove('so-streaming');
-            } else { armWatchdog(600000); finalText = await callDirect(url, s.apiKey, body, abortCtl.signal); }
+        const streaming = !!s.stream;
+        if (streaming) {
+            contentEl.classList.add('so-streaming');
+            armWatchdog(180000);
         } else {
-            const override = s.sendTemperature ? { temperature: s.temperature } : {};
-            if (s.stream) {
-                contentEl.classList.add('so-streaming');
-                armWatchdog(180000);
-                finalText = await callProfileStream(s.profileId, messages, effMaxTokens, override, abortCtl.signal, (full) => { armWatchdog(180000); clearTyping(); contentEl.textContent = full; if (soFollowStream) scrollToBottom(); });
-                contentEl.classList.remove('so-streaming');
-            } else { armWatchdog(600000); finalText = await callProfile(s.profileId, messages, effMaxTokens, override, abortCtl.signal); }
+            armWatchdog(600000);
         }
+        finalText = await dispatchBuilderRequest(s, messages, effMaxTokens, ctl.signal, (chunk, cumulative) => {
+            armWatchdog(180000);
+            clearTyping();
+            contentEl.textContent = cumulative ? chunk : contentEl.textContent + chunk;
+            if (soFollowStream) scrollToBottom();
+        });
+        if (streaming) contentEl.classList.remove('so-streaming');
         clearTyping();
         const { content: cond, error: parseErr } = parseCondenseReply(String(finalText || ''));
         contentEl.textContent = cond ? '✂️ 精简完成（正文见草稿卡）' : String(finalText || '(空回复)').slice(0, 400);
         aEntry.content = contentEl.textContent;
-        convo.push(aEntry); persistConvo();
+        appendConvo(aEntry); persistConvo();
         if (!cond) { condenseFailNote(opts, 'G1', parseErr); return; }
         const g = condenseGuards(rawC, cond);
         if (!g.pass) { condenseFailNote(opts, g.fails.join('+'), `守卫未过（${g.fails.join('、')}）`); return; }
@@ -318,12 +292,11 @@ export async function runCondense(opts = {}) {
         contentEl.textContent = stopped ? (condTimedOut ? '（精简超时，已中止——原稿不受影响）' : '（已停止）') : ('精简调用失败：' + (err?.message || err));
         if (!stopped) contentEl.classList.add('so-error');
         aEntry.content = contentEl.textContent;
-        convo.push(aEntry); persistConvo();
+        appendConvo(aEntry); persistConvo();
         if (!stopped) console.error('[Story Oracle]', err);
     } finally {
         if (killTimer) clearTimeout(killTimer);
-        setGenerating(false);
-        setAbortCtl(null);
+        finishGeneration();
         if (soFollowStream) scrollToBottom();
     }
 }
@@ -354,19 +327,18 @@ export async function runCondenseDepth() {
     // 离房时气泡被清、回房由 loadConvoForChat 重挂并接上后续流；完成/失败按原始房间归位（routeForgeReply）。
     // 起跑后一切气泡写入都走 myRun.text + paintForge（重挂会换 entry._el，起跑时捕获的元素会失效）。
     const myRun = { streamKey: convoStreamKey, entry: aEntry, text: aEntry.content };
-    setLiveCondense(myRun);
+    registerLiveCondense(myRun);
     const runContentEl = () => {
         const el = myRun.entry && myRun.entry._el;
         const c = el && typeof el.querySelector === 'function' ? el.querySelector('.so-content') : null;
         return c && c.isConnected ? c : null;
     };
     const setStreamingCls = (on) => { const c = runContentEl(); if (c) c.classList.toggle('so-streaming', on); };
-    setGenerating(true);
-    setAbortCtl(new AbortController());
+    const ctl = beginGeneration();
     // 平坦兜底（非流式无进度信号）：每【阶段】各给 600s 预算——串行 4 连跑会超单一预算，并行=分节
     // 一份预算、手术单再一份。
     let killTimer = null;
-    const armDepthWatchdog = () => { if (killTimer) clearTimeout(killTimer); killTimer = setTimeout(() => { try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, 600000); };
+    const armDepthWatchdog = () => { if (killTimer) clearTimeout(killTimer); killTimer = setTimeout(() => { try { ctl.abort(); } catch (e) { /* ignore */ } }, 600000); };
     armDepthWatchdog();
     const effMaxTokens = Math.max(s.maxTokens, Number(s.bldMaxTokens) || 0, 16384);
     // 深度精简【恒串行 + 流式】（Prince 2026-07-19：逐份串行开关移除，统一走这条）：任一时刻只有一个
@@ -376,15 +348,10 @@ export async function runCondenseDepth() {
     const useStream = true;
     const callOnce = async (system, user, onProgress) => {
         const messages = [{ role: 'system', content: system }, { role: 'user', content: user }];
-        if (s.mode === 'direct') {
-            const body = { model: s.model, messages, max_tokens: effMaxTokens };
-            if (s.sendTemperature) body.temperature = s.temperature;
-            if (useStream) return await streamDirect(resolveEndpointUrl(s), s.apiKey, body, abortCtl.signal, (delta) => { armDepthWatchdog(); if (onProgress) onProgress(delta, false); });
-            return await callDirect(resolveEndpointUrl(s), s.apiKey, body, abortCtl.signal);
-        }
-        const override = s.sendTemperature ? { temperature: s.temperature } : {};
-        if (useStream) return await callProfileStream(s.profileId, messages, effMaxTokens, override, abortCtl.signal, (full) => { armDepthWatchdog(); if (onProgress) onProgress(full, true); });
-        return await callProfile(s.profileId, messages, effMaxTokens, override, abortCtl.signal);
+        return dispatchBuilderRequest(s, messages, effMaxTokens, ctl.signal, (chunk, cumulative) => {
+            armDepthWatchdog();
+            if (onProgress) onProgress(chunk, cumulative);
+        }, { stream: useStream });
     };
     // 流式实时铺进气泡：direct 回调给增量（+=），profile 回调给累计全文（=）；acc 收敛成「当前阶段全文」。
     // 保活版：写进描述子再经 paintForge 上屏（离房静默、回房重挂后继续画）；只在正看着原房时跟随滚动。
@@ -444,9 +411,8 @@ export async function runCondenseDepth() {
         routeForgeReply(myRun.streamKey, aEntry);
     } finally {
         clearTimeout(killTimer);
-        if (liveCondense === myRun) setLiveCondense(null);
-        setGenerating(false);
-        setAbortCtl(null);
+        clearLiveCondense(myRun);
+        finishGeneration();
     }
 }
 
@@ -526,16 +492,11 @@ export async function applyBuilderDraft(btn) {
                 }
             }
             const op = draftToLorebookOp({ ...d, book }, editUid);
-            // applyLorebookOps 用【模块级 lbBookNames】做范围校验（世界书模式的投喂范围）；工坊投喂的却是
-            // bldBookNames。故临时把范围换成工坊书目、调用后在 finally 还原——undoLorebookOps 不读该全局，
-            // 撤销闭包不受影响。
-            const savedScope = lbBookNames;
+            // 世界书应用显式接收工坊范围，不再临时改写世界书模式状态。
             const scope = bldBookNames.length ? bldBookNames.slice() : [];
             if (book && !scope.includes(book)) scope.push(book);
-            setLbBookNames(scope);
-            let res;
             // noCollapse：工坊写入不套用 B4 create→edit 折叠，保持其原有写入行为字节不变（世界书📖模式才折叠）。
-            try { res = await applyLorebookOps([op], { noCollapse: true }); } finally { setLbBookNames(savedScope); }
+            const res = await applyLorebookOps([op], { noCollapse: true, scope });
             const r = res.results[0];
             if (!r || r.ok === false) { modeEntryNote('写入世界书失败：' + (r?.reason || '未知原因')); return; }
             btn._undo = async () => { await undoLorebookOps(res.snapshots); };
@@ -554,14 +515,14 @@ export async function toggleAdvisor() {
     if (advisorMode) {
         const back = priorOracleMode || 'chat';
         if (!(await confirmModeSwitch(back))) return;   // 1.36.0 中断确认
-        setPriorOracleMode('chat');
+        resetPriorOracleMode();
         setOracleMode(back);
         modeEntryNote(modeReturnNote(back));
         focusOracleInput();
         return;
     }
     if (!(await confirmModeSwitch('advisor'))) return;   // 1.36.0 中断确认
-    setPriorOracleMode(currentOracleMode());
+    rememberPriorOracleMode(currentOracleMode());
     setOracleMode('advisor');
     // 「当前已有引导在进行」的判据：进门提示与下面的「导入」chip 共用同一个 const，免得日后漂移。
     const hasGuidingConstruct = !!getPath();
@@ -596,7 +557,7 @@ function addBridgeChip() {
             soBulkRender(() => {   // 1.85.3 批量导入不逐条滚，下面统一滚一次
                 for (const t of turns) {
                     const e = { id: nextCid(), role: t.role, content: t.content };
-                    convo.push(e);
+                    appendConvo(e);
                     e._el = (t.role === 'note') ? addNoteMessage(e) : addMessage(t.role, t.content, e);
                 }
             });

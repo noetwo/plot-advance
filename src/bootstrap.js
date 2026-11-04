@@ -25,7 +25,8 @@
  */
 
 import { maybePostReply, mvuCompatLifecycleMark, postReplyHandlesType, supersedePostReply, supersedePostReplyOnChatSwitch } from './core/post-reply.js';
-import { getCtx, getSettings, renderConnPresets, renderModelBar, renderQpManager, save } from './core/settings.js';
+import { closeModelMenu, closeQpMenu, getCtx, getSettings, renderConnPresets, renderModelBar, renderQpManager, save } from './core/settings.js';
+import { observeGenerationState } from './core/generation.js';
 
 import { checkPlanReminder, ensureSoSeqCleanupRegex, onChatChanged } from './modes/advisor/story-path.js';
 import { captureLwbSnapshot } from './modes/chat/context.js';
@@ -34,36 +35,39 @@ import { refreshWiCustomUI } from './modes/diagnose/pickers.js';
 import { injectWandButton, refreshOracleEntries } from './modes/diagnose/schema.js';
 import { clearFixChatSel, onChatSelectionChange, refreshFixChatEntry } from './modes/fix/selection.js';
 import { armGuide, disarmGuide, glueGen, glueGenReset, onPromptReadyGlue } from './modes/fix/templates.js';
-import { migrateBuiltinJbDefault, migrateFixLeanDefaults } from './modes/lorebook/core.js';
+import { migrateBuiltinJbDefault, migrateFixLeanDefaults } from './modes/lorebook/migrations.js';
 import { BUILTIN_JB_AUTHOR } from './presets/builtin-jailbreak.js';
 import { ENABLE_INJECT_GLUE, ENABLE_LWB_BRIDGE, ENABLE_MVU_EDITOR, ENABLE_WI_CUSTOM_PICK } from './prompts/builtins.js';
-import { loadRegexEngine } from './st/adapters.js';
+import { getLoadedMvu, loadRegexEngine } from './st/adapters.js';
+import { getHostGlobal, getHostStorage, setHostGlobal } from './st/host.js';
 import { callDirect, callProfile, callProfileStream, resolveEndpointUrl, streamDirect } from './transport/direct.js';
 import { applyWindowSkin, syncChatBarButton, syncFixSelBarButton, syncQrButton } from './ui/chat-entry.js';
+import { renderGenerationState } from './ui/generation-view.js';
 import { loadPromptEditor, populateSysPromptPresets, refreshProfiles, renderPromptNav } from './ui/settings.js';
 import { buildWindow } from './ui/window.js';
-import { mvuApi } from './st/runtime-state.js';
-import { setModelMenuOpen, setQpMenuOpen, setSettingsTab as setSettingsTabState, settingsTab, win } from './ui/state.js';
+import { win } from './ui/refs.js';
 
 
 
 // ---------- 设置面板：分页 ----------
 const SETTINGS_TABS = ['conn', 'ctx', 'persona', 'prompt', 'qp', 'ui'];
 const SETTINGS_TAB_KEY = 'so.settings.tab';   // 记住上次打开的页（只存在本浏览器）
+let settingsTab = 'conn';
 
 function restoreSettingsTab() {
     let tab = 'conn';
     try {
-        const saved = localStorage.getItem(SETTINGS_TAB_KEY);
+        const saved = getHostStorage()?.getItem(SETTINGS_TAB_KEY);
         if (SETTINGS_TABS.includes(saved)) tab = saved;
     } catch (e) { /* 无痕 / 禁用存储时就用默认页 */ }
-    setSettingsTabState(tab);
+    settingsTab = tab;
 }
 
 export function setSettingsTab(tab) {
-    if (!SETTINGS_TABS.includes(tab)) tab = 'conn';
-    setSettingsTabState(tab);
-    try { localStorage.setItem(SETTINGS_TAB_KEY, tab); } catch (e) { /* 同上 */ }
+    if (tab == null) tab = settingsTab;
+    else if (!SETTINGS_TABS.includes(tab)) tab = 'conn';
+    settingsTab = tab;
+    try { getHostStorage()?.setItem(SETTINGS_TAB_KEY, tab); } catch (e) { /* 同上 */ }
     if (!win) return;
     for (const b of win.querySelectorAll('.so-set-tab')) {
         const on = b.dataset.tab === tab;
@@ -81,8 +85,8 @@ export function toggleSettings(open, tab) {
     const panel = win.querySelector('#so-settings');
     const on = panel.classList.toggle('open', open);
     win.classList.toggle('so-settings-open', on);   // CSS 据此让出消息区、输入区与模式栏
-    setModelMenuOpen(false);
-    setQpMenuOpen(false);
+    closeModelMenu();
+    closeQpMenu();
     renderModelBar();
     if (!on) return;
     refreshProfiles();
@@ -116,8 +120,14 @@ export function applyToolsInHeader() {
 }
 // 裸模型调用（direct / profile 分发，与 generateReply 的发送路同款），供人格扩写、智能选条等一次性调用。
 // onDelta（可选）收【到目前为止的全文】（direct 侧把 delta 累加成全文，与 profile 侧对齐）。不碰 UI / 锁 / 消息；signal、maxTokens 由调用方给。
-export async function soCallModel(messages, opts = {}) {
-    const s = getSettings();
+export async function soCallModel(messages, opts = {}, deps = {}) {
+    const readSettings = deps.getSettings || getSettings;
+    const directUrl = deps.resolveEndpointUrl || resolveEndpointUrl;
+    const directCall = deps.callDirect || callDirect;
+    const directStream = deps.streamDirect || streamDirect;
+    const profileCall = deps.callProfile || callProfile;
+    const profileStream = deps.callProfileStream || callProfileStream;
+    const s = readSettings();
     const { onDelta, signal } = opts;
     const stream = (opts.stream !== undefined) ? opts.stream : s.stream;
     const eff = opts.maxTokens || s.maxTokens;
@@ -125,12 +135,12 @@ export async function soCallModel(messages, opts = {}) {
     if (s.mode === 'direct') {
         const body = { model: s.model, messages, max_tokens: eff };
         if (s.sendTemperature) body.temperature = s.temperature;
-        if (stream) { let acc = ''; return await streamDirect(resolveEndpointUrl(s), s.apiKey, body, signal, (delta) => { acc += delta; emit(acc); }); }
-        return await callDirect(resolveEndpointUrl(s), s.apiKey, body, signal);
+        if (stream) { let acc = ''; return await directStream(directUrl(s), s.apiKey, body, signal, (delta) => { acc += delta; emit(acc); }); }
+        return await directCall(directUrl(s), s.apiKey, body, signal);
     }
     const override = s.sendTemperature ? { temperature: s.temperature } : {};
-    if (stream) return await callProfileStream(s.profileId, messages, eff, override, signal, (full) => emit(full));
-    return await callProfile(s.profileId, messages, eff, override, signal);
+    if (stream) return await profileStream(s.profileId, messages, eff, override, signal, (full) => emit(full));
+    return await profileCall(s.profileId, messages, eff, override, signal);
 }
 
 // 精简版与原版共用设置键、聊天元数据键和界面元素 id（这样原版的参谋记录、已采用的方案 / 序列、
@@ -147,8 +157,8 @@ let SO_FORKS = [];
 function registerOracleFork(entryUrl) {
     try {
         SO_SELF_PATH = decodeURIComponent(new URL(entryUrl).pathname);
-        const list = Array.isArray(window.__storyOracleForks) ? window.__storyOracleForks : [];
-        window.__storyOracleForks = list;
+        const list = Array.isArray(getHostGlobal('__storyOracleForks')) ? getHostGlobal('__storyOracleForks') : [];
+        setHostGlobal('__storyOracleForks', list);
         if (SO_SELF_PATH && !list.includes(SO_SELF_PATH)) list.push(SO_SELF_PATH);
         SO_FORKS = list;
     } catch (e) {
@@ -162,7 +172,7 @@ const SO_ORIGINAL_WAIT_MS = 8000;
 // 只认文件夹名【正好是】story-oracle：社区的 story-oracle-next-beat 这类配套插件不该让我们白等。
 function otherOracleState() {
     try {
-        if (document.getElementById('so-window') || window.StoryOracleAPI) return 'other';
+        if (document.getElementById('so-window') || getHostGlobal('StoryOracleAPI')) return 'other';
         if (SO_FORKS.length && SO_FORKS[0] !== SO_SELF_PATH) return 'other';
         const pending = [...document.querySelectorAll('script[src*="/third-party/story-oracle/"]')].some((el) => {
             try {
@@ -185,7 +195,7 @@ export function init(entryUrl) {
         if (st === 'other') {
             const msg = '检测到原版「故事神谕」或另一份「剧情推进」也已启用。两者不能同时使用，请在扩展管理里只留一个启用，然后刷新页面。';
             console.error('[剧情推进] ' + msg);
-            try { toastr.error(msg, '剧情推进', { timeOut: 0, extendedTimeOut: 0 }); } catch (e) { /* toastr 缺席 */ }
+            try { const toastr = getHostGlobal('toastr'); toastr && toastr.error && toastr.error(msg, '剧情推进', { timeOut: 0, extendedTimeOut: 0 }); } catch (e) { /* toastr 缺席 */ }
             return;
         }
         try {
@@ -205,7 +215,8 @@ function initNow() {
         const mig = migrateFixLeanDefaults(s);
         if (mig.migrated) {
             save();
-            if (typeof toastr !== 'undefined' && toastr.info) {
+            const toastr = getHostGlobal('toastr');
+            if (toastr && toastr.info) {
                 toastr.info('手动校正默认已改为精简上下文（' + mig.hit.join(' / ') + ' 已关，角色卡保留）——长聊天下更稳更省。如需全量前文，可在「校正设置」把「加载前文条数」改回 -1。', '剧情推进', { timeOut: 12000 });
             }
         }
@@ -215,7 +226,8 @@ function initNow() {
     try {
         if (migrateBuiltinJbDefault(s).migrated) {
             save();
-            if (typeof toastr !== 'undefined' && toastr.info) {
+            const toastr = getHostGlobal('toastr');
+            if (toastr && toastr.info) {
                 toastr.info('已为你默认启用内置破限「初心破限 1.2」（作者：' + BUILTIN_JB_AUTHOR + '）——'
                     + '它包裹在剧情推进自己的提示词外面，默认只作用于【普通聊天】。'
                     + '不想要可在「系统提示词 → 补全预设」里换回「自定义」。',
@@ -226,6 +238,7 @@ function initNow() {
     applyWindowSkin(getSettings());   // 1.45.0：先上皮肤再建窗，避免开窗瞬间闪一下旧配色
     injectWandButton();
     buildWindow();
+    observeGenerationState(renderGenerationState);
     if (getSettings().toolsInHeader) applyToolsInHeader();   // A5：开了「工具移到标题栏」就在建窗后搬一次
     syncChatBarButton();   // 用户功能请求：按设置在聊天栏放 / 撤快捷按钮
     syncQrButton();        // 精简版 1.2：快捷回复栏里的「剧情推进」按钮
@@ -274,8 +287,8 @@ function initNow() {
             // 可能在重试之间反复把 isDuringExtraAnalysis 置 false；只有整批策略返回后，MVU 才会跑最终
             // handleVariablesInMessage 并发 UPDATE_ENDED。这里记的是生命周期信号，不读私有 store / 重试次数。
             try {
-                ctx.eventSource.on('mag_variable_update_started', () => mvuCompatLifecycleMark('started', mvuApi || window.Mvu));
-                ctx.eventSource.on('mag_variable_update_ended', () => mvuCompatLifecycleMark('ended', mvuApi || window.Mvu));
+                ctx.eventSource.on('mag_variable_update_started', () => mvuCompatLifecycleMark('started', getLoadedMvu()));
+                ctx.eventSource.on('mag_variable_update_ended', () => mvuCompatLifecycleMark('ended', getLoadedMvu()));
             } catch (e) { console.debug('[Story Oracle] MVU 兼容生命周期事件未接上：', e); }
             if (ENABLE_LWB_BRIDGE) {
                 // 小白X 记忆桥：主聊天生成期（小白X 已写注入槽、尚未清）抓一份总结缓存。只读、不改提示词。
@@ -332,7 +345,8 @@ function initNow() {
                     ];
                     // 运行时若已能读到 MVU 的常量表，就以它为准再补一条（init 时 MVU 多半还没加载，
                     // 读不到是常态 —— 故它是「锦上添花」，上面两条字面串才是主力）。
-                    const rt = window.Mvu && window.Mvu.events && window.Mvu.events.VARIABLE_INITIALIZED;
+                    const Mvu = getLoadedMvu();
+                    const rt = Mvu && Mvu.events && Mvu.events.VARIABLE_INITIALIZED;
                     if (rt && !mvuEvts.includes(rt)) mvuEvts.push(rt);
                     mvuEvts.forEach((ev) => ctx.eventSource.on(ev, () => mvuedScheduleRefresh(ev)));
                 } catch (e) { console.debug('[Story Oracle] MVU 自有事件未接上（不影响编辑器刷新主路）：', e); }

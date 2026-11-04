@@ -7,16 +7,30 @@ import { stripMechanismBlocks, stripReasoningTags } from '../modes/chat/context.
 import { exportConvo, importConvo, isRecordApplied, markRecordApplied, scrollBubbleToTop, scrollToBottom, soApplyConvoIoVisual, unmarkRecordApplied } from '../modes/chat/history.js';
 import { chatIdentityKey, generateReply } from '../modes/chat/send.js';
 import { diagUserFloorNotice, mvuMsgOpts } from '../modes/diagnose/auto.js';
-import { diagStatKey } from '../modes/diagnose/editor.js';
+import { diagStatKey } from '../modes/diagnose/patch.js';
 import { extractUpdateBlock, getLatestAiMessage, getMvu, getMvuStatData, mvuStatOf, wrapContentScope } from '../modes/diagnose/mvu.js';
-import { applyFixAsSwipe, canonicalizeDiagOps, diagSchemaDryLines, diagSchemaFilterPatch, diagSchemaRetryPlan, injectDiagPatchIntoMessage, removeDiagWriteBack, repairDiagNote, repairDiagPatch, restoreDiagWriteBack } from '../modes/diagnose/schema.js';
+import { diagSchemaDryLines, diagSchemaFilterPatch, diagSchemaRetryPlan, repairDiagNote, repairDiagPatch } from '../modes/diagnose/diagnostics.js';
+import { applyFixAsSwipe, canonicalizeDiagOps, injectDiagPatchIntoMessage, removeDiagWriteBack, restoreDiagWriteBack } from '../modes/diagnose/schema.js';
 import { applyFix, composeFixedReply, diagReportLines, diagStampDrifted, diagUndoDrifted, renderDiffCard, undoFix } from '../modes/fix/algorithms.js';
 import { fixCurrentSnapshot, fixOutputTruncated, fixTargetStale } from '../modes/fix/capture.js';
-import { applyLorebookOps, lbDryRunOps, lbFormatApplyLine, lbSummaryOf, lbVerdictRow, undoLorebookOps } from '../modes/lorebook/core.js';
+import { applyLorebookOps, lbDryRunOps, lbFormatApplyLine, lbSummaryOf, lbVerdictRow, undoLorebookOps } from '../modes/lorebook/operations.js';
 import { ENABLE_DIAG_BODY_INJECT } from '../prompts/builtins.js';
 import { fixNearCopyNote } from '../prompts/helpers.js';
-import { convo, convoStreamKey, isGenerating, nextCid } from '../core/runtime-state.js';
-import { messagesEl, setSoFollowStream, soBulkRenderDepth } from './state.js';
+import { appendConvo, convo, convoStreamKey, nextCid, removeConvoRange } from '../core/conversation-store.js';
+import { isGenerating } from '../core/generation.js';
+import { messagesEl } from './refs.js';
+
+export let soFollowStream = false;
+export let soBulkRenderDepth = 0;
+
+export function trackStreamFollow(followsLatest) {
+    soFollowStream = !!followsLatest;
+}
+
+export function renderMessagesInBulk(fn) {
+    soBulkRenderDepth++;
+    try { return fn(); } finally { soBulkRenderDepth--; }
+}
 
 /* ------------------------------------------------------------------ *
  * Rendering
@@ -148,10 +162,10 @@ export function addMessage(role, content, entry) {
 
     messagesEl.appendChild(wrap);
     if (role === 'assistant' && content === '') {
-        setSoFollowStream(false);                  // #1 新流式回复：固定顶部、默认不跟随，让用户从开头读
+        soFollowStream = false;                     // #1 新流式回复：固定顶部、默认不跟随，让用户从开头读
         scrollBubbleToTop(wrap);
     } else {
-        setSoFollowStream(true);                   // 用户发言 / 有内容的消息：滚到底并恢复跟随
+        soFollowStream = true;                      // 用户发言 / 有内容的消息：滚到底并恢复跟随
         scrollToBottom();
     }
     return wrap;
@@ -180,9 +194,9 @@ function deleteMessage(entry) {
     if (entry.role === 'user' && convo[i + 1] && convo[i + 1].role === 'assistant') {
         const reply = convo[i + 1];
         if (reply._el) reply._el.remove();
-        convo.splice(i, 2);
+        removeConvoRange(i, 2);
     } else {
-        convo.splice(i, 1);
+        removeConvoRange(i, 1);
     }
     if (entry._el) entry._el.remove();
     persistConvo();
@@ -196,7 +210,7 @@ async function regenerateFrom(entry) {
     if (isGenerating) return;
     const el = entry._el;
     const i = convo.indexOf(entry);
-    if (i !== -1) convo.splice(i);     // drop this entry and all after (error bubbles aren't in convo)
+    if (i !== -1) removeConvoRange(i);     // drop this entry and all after (error bubbles aren't in convo)
     if (el) { while (el.nextSibling) el.nextSibling.remove(); el.remove(); }
     persistConvo();
     if (!convo.length || convo[convo.length - 1].role !== 'user') { maybeRenderEmpty(); return; }
@@ -238,7 +252,7 @@ function editUserMessage(entry) {
         if (!newText || i === -1) { close(); return; }
         entry.content = newText;
         contentEl.textContent = newText;
-        convo.splice(i + 1);                                   // drop later turns
+        removeConvoRange(i + 1);                               // drop later turns
         persistConvo();
         close();
         while (el.nextSibling) el.nextSibling.remove();        // drop their DOM
@@ -309,7 +323,7 @@ export async function diagSchemaAfterManualReply(assistantEl, finalText, aEntry,
         const lockable = !!(applyBtn && !applyBtn.disabled && /将修复应用到状态/.test(applyBtn.textContent || ''));
         if (lockable) applyBtn.disabled = true;
         const entry = { id: nextCid(), role: 'user', content: plan.message, schemaRetry: true };
-        convo.push(entry);
+        appendConvo(entry);
         persistConvo();
         entry._el = addMessage('user', plan.message, entry);
         try { await generateReply(); } catch (e) { /* 下面按「没有第二张」处理 */ }
@@ -506,7 +520,13 @@ function staleMsg(reason) {
 // finalOverride（✨ 分段校正 1.18.0）：非空 = 「应用」写入这份【已 splice 回原位的整条】，跳过整稿截断复检
 // （逐段已各自查过；拼接稿的「断句 + 偏短」启发式不适用）；陈旧守卫照跑。空 = 老行为（composeFixedReply +
 // wrapContentScope），既有调用点传 7 参 → undefined → 逐字节不变。
-export function addFixApplyControls(assistantEl, parsed, originalReply, targetIdx, keepSections, scope, captured, finalOverride, opts = {}) {
+export function addFixApplyControls(assistantEl, parsed, originalReply, targetIdx, keepSections, scope, captured, finalOverride, opts = {}, dependencies) {
+    const targetStale = dependencies?.fixTargetStale || fixTargetStale;
+    const currentSnapshot = dependencies?.fixCurrentSnapshot || fixCurrentSnapshot;
+    const outputTruncated = dependencies?.fixOutputTruncated || fixOutputTruncated;
+    const applyAsSwipe = dependencies?.applyFixAsSwipe || applyFixAsSwipe;
+    const staleMessage = dependencies?.staleMsg || staleMsg;
+    const nearCopyNote = dependencies?.fixNearCopyNote || fixNearCopyNote;
     const bar = document.createElement('div');
     bar.className = 'so-apply-bar';
     const btn = document.createElement('button');
@@ -529,7 +549,7 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
     if (!opts.applied) {
         try {
             const ncBefore = (captured && captured.prose) || stripMechanismBlocks(String(originalReply || ''));
-            const ncNote = fixNearCopyNote(ncBefore, (parsed && parsed.fixed) || '');
+            const ncNote = nearCopyNote(ncBefore, (parsed && parsed.fixed) || '');
             if (ncNote) {
                 const warn = document.createElement('div');
                 warn.className = 'so-fix-nearcopy-warn';
@@ -573,16 +593,16 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
         try {
             // P-CORRUPT（主要面 = 延迟点击「应用」）：写入前再核对捕获快照。这段时间里可能切了聊天、划了 swipe、
             // 或编辑了这条回复——失效则不写、给人话原因、把按钮放回去让用户重新校正（绝不写到别的对话 / 覆盖新内容）。
-            const st = fixTargetStale(captured, fixCurrentSnapshot(targetIdx));
+            const st = targetStale(captured, currentSnapshot(targetIdx));
             if (st.stale) {
-                status.textContent = staleMsg(st.reason);
+                status.textContent = staleMessage(st.reason);
                 status.classList.add('so-hint-error');
                 btn.disabled = false;
                 return;
             }
             // P-TRUNC 廉价复检：成品（parsed.fixed）像是半句且明显短于原文 → 不写入（半句稿会腰斩回复）。
             // 分段校正（finalOverride）已逐段查过截断，整稿复检跳过（拼接稿的「断句 + 偏短」启发式不适用）。
-            if (finalOverride == null && fixOutputTruncated(parsed.fixed, undefined, captured && captured.prose).truncated) {
+            if (finalOverride == null && outputTruncated(parsed.fixed, undefined, captured && captured.prose).truncated) {
                 status.textContent = '校正稿似乎被截断了，未应用。请点 ↻ 重试或调大「最大 token 数」后重新校正。';
                 status.classList.add('so-hint-error');
                 btn.disabled = false;
@@ -591,7 +611,7 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
             const finalText = (finalOverride != null)
                 ? finalOverride   // ✨ 分段校正：已 splice 回原位的整条（守卫逐字、修好的段进原槽）
                 : wrapContentScope(scope, composeFixedReply(parsed.fixed, originalReply, keepSections));   // ✨ 作用域：校正稿回插信封原位（inactive 时为无操作）
-            const ok = await applyFixAsSwipe(targetIdx, finalText);
+            const ok = await applyAsSwipe(targetIdx, finalText);
             if (ok) {
                 applied = true;
                 if (opts.entry) {

@@ -1,8 +1,22 @@
 import { getCtx, getSettings, save } from '../core/settings.js';
+import { getHostGlobal, hostFetch, importHostModule } from '../st/host.js';
 
 import { updateBadge } from '../ui/settings.js';
-import { setSoLastFinishReason } from './state.js';
-import { win } from '../ui/state.js';
+import { win } from '../ui/refs.js';
+
+let lastFinishReason = '';
+
+export function getLastFinishReason() {
+    return lastFinishReason;
+}
+
+export function resetLastFinishReason() {
+    lastFinishReason = '';
+}
+
+function recordFinishReason(value) {
+    lastFinishReason = value || '';
+}
 
 /* ---- transports (all OpenAI Chat Completions shaped) ---- */
 function normalizeUrl(u, raw) {
@@ -39,7 +53,7 @@ function directHeaders(apiKey) {
 function parseExtraParams(text, kind, lib) {
     const t = String(text ?? '').trim();
     if (!t) return { ok: true, value: null };
-    if (lib === undefined) lib = (globalThis.SillyTavern && globalThis.SillyTavern.libs && globalThis.SillyTavern.libs.yaml) || null;
+    if (lib === undefined) lib = getHostGlobal('SillyTavern')?.libs?.yaml || null;
     let value;
     try {
         value = (lib && typeof lib.parse === 'function') ? lib.parse(t) : JSON.parse(t);
@@ -230,12 +244,12 @@ function buildBackendForwardPayload(url, apiKey, body, stream, extra) {
 
 // 经酒馆后端转发的「直连」——非流式。复用直连的 (url, apiKey, body)，走 ST 的 ChatCompletionService（custom 源 + 显式
 // Authorization 头），由酒馆服务器发出 → 无浏览器 CORS、无需连接配置文件 / secret。见 buildBackendForwardPayload。
-async function callBackendForward(url, apiKey, body, signal) {
+async function callBackendForward(url, apiKey, body, signal, settings) {
     const ctx = getCtx();
     if (typeof ctx?.ChatCompletionService?.processRequest !== 'function') {
         throw new Error('此 SillyTavern 版本缺少 ChatCompletionService，无法用后端转发——请取消勾选“经酒馆后端转发”，或改用连接配置文件。');
     }
-    const extra = resolveExtraParams(getSettings()); // 附加参数（1.70.0）：坏文本在此抛错、绝不静默
+    const extra = resolveExtraParams(settings); // 附加参数（1.70.0）：坏文本在此抛错、绝不静默
     const payload = buildBackendForwardPayload(url, apiKey, body, false, extra);
     const result = await ctx.ChatCompletionService.processRequest(payload, { presetName: undefined }, true, signal);
     return result?.content ?? '';
@@ -243,12 +257,12 @@ async function callBackendForward(url, apiKey, body, signal) {
 
 // 同上——流式。ChatCompletionService 流式返回一个「创建 AsyncGenerator 的函数」，每个 chunk.text 是【累计】全文；
 // 为与 streamDirect 的回调契约一致（onDelta 收【增量】），这里按累计差分算增量再回调。
-async function streamBackendForward(url, apiKey, body, signal, onDelta) {
+async function streamBackendForward(url, apiKey, body, signal, onDelta, settings) {
     const ctx = getCtx();
     if (typeof ctx?.ChatCompletionService?.processRequest !== 'function') {
         throw new Error('此 SillyTavern 版本缺少 ChatCompletionService，无法用后端转发——请取消勾选“经酒馆后端转发”，或改用连接配置文件。');
     }
-    const extra = resolveExtraParams(getSettings()); // 附加参数（1.70.0）
+    const extra = resolveExtraParams(settings); // 附加参数（1.70.0）
     const payload = buildBackendForwardPayload(url, apiKey, body, true, extra);
     const gen = await ctx.ChatCompletionService.processRequest(payload, { presetName: undefined }, true, signal);
     const iterator = (typeof gen === 'function') ? gen() : gen;
@@ -299,7 +313,7 @@ async function fetchModelsViaBackend(endpoint, apiKey, raw, signal) {
     if (typeof ctx?.getRequestHeaders !== 'function') {
         throw new Error('此 SillyTavern 版本无法经后端转发获取模型——请取消勾选“经酒馆后端转发”，或手动填写模型名。');
     }
-    const res = await fetch('/api/backends/chat-completions/status', {
+    const res = await hostFetch('/api/backends/chat-completions/status', {
         method: 'POST',
         headers: ctx.getRequestHeaders(),
         body: JSON.stringify(buildBackendModelsPayload(endpoint, apiKey, raw)),
@@ -331,7 +345,7 @@ export async function onFetchModels() {
             data = await fetchModelsViaBackend(s.endpoint, s.apiKey, !!s.directRawUrl, signal);
         } else {
             const url = modelsUrl(s.endpoint, !!s.directRawUrl);
-            const res = await fetch(url, { method: 'GET', headers: directHeaders(s.apiKey), signal });
+            const res = await hostFetch(url, { method: 'GET', headers: directHeaders(s.apiKey), signal });
             if (!res.ok) {
                 const t = await res.text().catch(() => '');
                 throw new Error(`HTTP ${res.status} ${res.statusText} ${t.slice(0, 200)}`);
@@ -392,8 +406,12 @@ export async function onFetchModels() {
 const YZM_MEMORY_MARKERS = ['【前情提要 -', '【前情提要】', '【当前世界状态参考 -', '【记忆只读数据库 -', '【剧情摘要】'];
 const YZM_SHIELD_CHAR = '\u200B';
 
+function getYuzukiMemory() {
+    try { return getHostGlobal('YuzukiMemory'); } catch (e) { return null; }
+}
+
 function yzmMemoryPresent() {
-    try { return !!(window.YuzukiMemory && window.YuzukiMemory.loaded); } catch (e) { return false; }
+    return !!getYuzukiMemory()?.loaded;
 }
 
 // 纯函数：把文本里每个记忆标题从「【」后拆开；没有标题时原字符串返回。幂等（拆开的标题不再命中）。
@@ -412,7 +430,7 @@ function yzmShieldText(text) {
 // 就地 splice 数组、改写 content（stripMemoryVars）。柚月不在场时 yzmShieldMessages 起手就返回，这里根本不会被调到。
 function yzmWouldDelete(m) {
     try {
-        const yz = window.YuzukiMemory;
+        const yz = getYuzukiMemory();
         const fn = yz && yz.PromptReadyInjector && yz.PromptReadyInjector.sanitizeMemoryFromChat;
         if (typeof fn !== 'function') return false;
         const probe = [{ ...m }];
@@ -532,7 +550,7 @@ function normalizeOutgoingMessages(messages) {
 // （`{choices:[{delta:{},finish_reason:"error"}],error:{message:"…high demand…",code:503}}`）再发 [DONE]。
 // 旧解析只读 delta.content、对 error 视而不见 → 用户拿到被腰斩的回复且界面无任何错误。这个纯函数让流循环认得它。
 // 返回 {done} / {skip} / {content, reasoning, error, finishReason}。纯函数、可单测。
-function classifySseData(payload) {
+export function classifySseData(payload) {
     if (payload === '[DONE]') return { done: true };
     let json;
     try { json = JSON.parse(payload); } catch (e) { return { skip: true }; }
@@ -585,12 +603,12 @@ export function explainProviderError(rawMessage) {
     return hints.length ? `${msg}（提示：${hints.join(' ')}）` : msg;
 }
 
-export async function callDirect(url, apiKey, body, signal) {
+export async function callDirect(url, apiKey, body, signal, settings = getSettings()) {
     body = yzmShieldBody(body);   // 柚月记忆兼容垫（1.77.1）：在分流到后端转发之前垫，两条路共用
     body = normalizeOutgoingBody(body);   // Gemini 加固（2026-09-15）：良构消毒 + 相邻同角色合并，同一咽喉
-    if (getSettings().directViaBackend) return callBackendForward(url, apiKey, body, signal); // 经酒馆后端转发（避免 CORS）
-    const extra = resolveExtraParams(getSettings()); // 附加参数（1.70.0）：坏文本在此抛错、绝不静默
-    const res = await fetch(url, {
+    if (settings.directViaBackend) return callBackendForward(url, apiKey, body, signal, settings); // 经酒馆后端转发（避免 CORS）
+    const extra = resolveExtraParams(settings); // 附加参数（1.70.0）：坏文本在此抛错、绝不静默
+    const res = await hostFetch(url, {
         method: 'POST',
         headers: applyExtraHeaders(directHeaders(apiKey), extra),
         body: JSON.stringify({ ...applyExtraBody(body, extra), stream: false }),
@@ -601,7 +619,7 @@ export async function callDirect(url, apiKey, body, signal) {
         throw new Error(`HTTP ${res.status} ${res.statusText} ${t.slice(0, 300)}`);
     }
     const data = unwrapCompletion(await res.json());
-    setSoLastFinishReason(data?.choices?.[0]?.finish_reason || '');   // FIX 4：留给空回复判据（cause D）
+    recordFinishReason(data?.choices?.[0]?.finish_reason || '');   // FIX 4：留给空回复判据（cause D）
     return data?.choices?.[0]?.message?.content ?? '';
 }
 
@@ -624,13 +642,13 @@ function extractNonStreamContent(raw) {
     }
 }
 
-export async function streamDirect(url, apiKey, body, signal, onDelta) {
+export async function streamDirect(url, apiKey, body, signal, onDelta, settings = getSettings()) {
     body = yzmShieldBody(body);   // 柚月记忆兼容垫（1.77.1）
     body = normalizeOutgoingBody(body);   // Gemini 加固（2026-09-15）：良构消毒 + 相邻同角色合并，同一咽喉
-    if (getSettings().directViaBackend) return streamBackendForward(url, apiKey, body, signal, onDelta); // 经酒馆后端转发（避免 CORS）
-    const extra = resolveExtraParams(getSettings()); // 附加参数（1.70.0）：坏文本在此抛错、绝不静默
-    const { default: EventSourceStream } = await import('/scripts/sse-stream.js');
-    const res = await fetch(url, {
+    if (settings.directViaBackend) return streamBackendForward(url, apiKey, body, signal, onDelta, settings); // 经酒馆后端转发（避免 CORS）
+    const extra = resolveExtraParams(settings); // 附加参数（1.70.0）：坏文本在此抛错、绝不静默
+    const { default: EventSourceStream } = await importHostModule('/scripts/sse-stream.js');
+    const res = await hostFetch(url, {
         method: 'POST',
         headers: applyExtraHeaders(directHeaders(apiKey), extra),
         body: JSON.stringify({ ...applyExtraBody(body, extra), stream: true }),
@@ -670,7 +688,7 @@ export async function streamDirect(url, apiKey, body, signal, onDelta) {
                 : [data];
             for (const payload of payloads) {
                 const cl = classifySseData(payload);
-                if (cl.finishReason) setSoLastFinishReason(cl.finishReason);   // FIX 4：留给空回复判据
+                if (cl.finishReason) recordFinishReason(cl.finishReason);   // FIX 4：留给空回复判据
                 if (cl.error && !streamErr) streamErr = cl.error;            // FIX 3：记下首个中途 error，攒完当前内容后统一裁决
                 if (cl.done) { doneSeen = true; break; }
                 if (cl.skip) continue;
@@ -697,13 +715,13 @@ export async function streamDirect(url, apiKey, body, signal, onDelta) {
 }
 
 
-export async function callProfile(profileId, messages, maxTokens, overridePayload, signal) {
+export async function callProfile(profileId, messages, maxTokens, overridePayload, signal, settings = getSettings()) {
     messages = yzmShieldMessages(messages);   // 柚月记忆兼容垫（1.77.1）：配置文件路也经它包过的 fetch
     messages = normalizeOutgoingMessages(messages);   // Gemini 加固（2026-09-15）：良构消毒 + 相邻同角色合并，同一咽喉
     const ctx = getCtx();
     // 附加参数（1.70.0）：经 overridePayload 透传三键——仅「自定义（兼容 OpenAI）」源的配置档会被
     // ST 后端读取（其余源忽略，弹窗警示行有言在先）。排在展开序前面 = 调用点显式 override 恒赢。
-    const extra = resolveExtraParams(getSettings());
+    const extra = resolveExtraParams(settings);
     const result = await ctx.ConnectionManagerRequestService.sendRequest(
         profileId,
         messages,
@@ -714,11 +732,11 @@ export async function callProfile(profileId, messages, maxTokens, overridePayloa
     return result?.content ?? '';
 }
 
-export async function callProfileStream(profileId, messages, maxTokens, overridePayload, signal, onText) {
+export async function callProfileStream(profileId, messages, maxTokens, overridePayload, signal, onText, settings = getSettings()) {
     messages = yzmShieldMessages(messages);   // 柚月记忆兼容垫（1.77.1）
     messages = normalizeOutgoingMessages(messages);   // Gemini 加固（2026-09-15）：良构消毒 + 相邻同角色合并，同一咽喉
     const ctx = getCtx();
-    const extra = resolveExtraParams(getSettings()); // 附加参数（1.70.0）：仅 custom 源配置档生效，同 callProfile
+    const extra = resolveExtraParams(settings); // 附加参数（1.70.0）：仅 custom 源配置档生效，同 callProfile
     // With stream:true, sendRequest resolves to a function that creates an
     // AsyncGenerator. Each chunk's `.text` is the CUMULATIVE text so far.
     const gen = await ctx.ConnectionManagerRequestService.sendRequest(

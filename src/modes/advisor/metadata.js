@@ -59,6 +59,22 @@ export const MVUED_LIST_META_KEY = MODULE + '_mvuedAsList';
 // 唯一键 =（path, kind）：一个字段最多各有一条 freeze / step / clamp，可以同时存在。
 export const MVUED_TRAINER_META_KEY = MODULE + '_mvuedTrainer';
 
+export let guideInjectionText = '';
+export let guideInjectionArmed = false;
+
+export function replaceGuideInjection(text) {
+    guideInjectionText = text;
+    return guideInjectionText;
+}
+
+export function armGuideInjection() {
+    guideInjectionArmed = true;
+}
+
+export function disarmGuideInjection() {
+    guideInjectionArmed = false;
+}
+
 export function getChatMetadataSafe() {
     try {
         const md = getCtx().chatMetadata;

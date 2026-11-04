@@ -3,18 +3,21 @@ import { getSettings } from '../../core/settings.js';
 
 import { addSystemNote } from '../advisor/cards.js';
 import { refreshDiagPickerUI } from '../fix/ui.js';
-import { bookNameMatchesQuery, formatLbSizeEstimate, getActiveBookNames, getActiveScanUids, getAllBookNames, getWiEditApi, lbSizeIsHuge, resolveLbTargetNames, wiCustomEntryCost } from '../lorebook/core.js';
-import { filterBookEntries } from '../lorebook/ui.js';
+import { formatLbSizeEstimate, lbSizeIsHuge, wiCustomEntryCost } from '../lorebook/entries.js';
+import { filterBookEntries } from '../lorebook/selection.js';
+import { bookNameMatchesQuery, getActiveBookNames, getActiveScanUids, getAllBookNames, getWiEditApi, resolveLbTargetNames } from '../lorebook/world-info.js';
 import { ENABLE_WI_CUSTOM_PICK } from '../../prompts/builtins.js';
 import { isMvuRuleEntry } from '../../st/adapters.js';
-import { diagEntrySel, nextWiCustomRenderSeq, setDiagEntrySel, wiCustomRenderSeq } from './state.js';
-import { win } from '../../ui/state.js';
+import { win } from '../../ui/refs.js';
 
 /* ---- 诊断模式「精选世界书条目」选条目器（用户功能请求；ENABLE_DIAG_WI_PICKER）----
  * 复用世界书选条目器的视觉（.so-lb-* 类），但语义不同：
  *   · 选择 diagEntrySel[书名] 始终是【显式 Set<uid>】（无「null = 全选」惯例）——勾了才发，没勾就不发；
  *   · 每次改动都【按聊天持久化】（persistDiagSel）；
  *   · 首开按 computeDiagSnapshot（当前激活＝蓝灯 + 命中绿灯）预选一份，之后随你增删。 */
+let diagEntrySel = {};
+let wiCustomRenderSeq = 0;
+
 
 // 首开预选「当前快照」：蓝灯常驻（未禁用）+ 主聊天此刻命中的绿灯，不含禁用。-> { 书名: Set<uid> }。
 // 蓝灯直接从【原始书】取（不依赖扫描预算——某些环境下 dry-run 扫描会因预算返回空），扫描只用来定「哪些绿灯当前命中」。
@@ -149,6 +152,13 @@ export function updateDiagHint() {
         ? `从「${meta.target}」这一本里挑条目喂给诊断。`
         : '从当前激活的全部世界书里挑条目喂给诊断。勾选即覆盖默认扫描——只发你选中的（无视启用 / 禁用）。';
 }
+export function onDiagTargetChange(target) {
+    const meta = getDiagWiMeta();
+    setDiagWiMeta({ use: meta.use, hybrid: meta.hybrid, target, sel: serializeDiagSel(diagEntrySel) });
+    updateDiagHint();
+    populateDiagWiEntries();
+}
+
 
 // 当前显示的全部行里有多少被勾选 -> 更新条目摘要（直接数复选框，与显式 Set 模型一致）。
 function refreshDiagEntriesSummary() {
@@ -171,7 +181,7 @@ function toggleDiagEntry(book, uid, checked) {
     if (checked) sel.add(Number(uid)); else sel.delete(Number(uid));
     diagEntrySel[book] = sel;
     refreshDiagEntriesSummary();
-    persistDiagSel();
+    persistDiagSel(diagEntrySel);
 }
 
 // 全选 / 全不选（仅作用于当前显示的书）。on -> 该书所有显示行的 uid；off -> 空集合。
@@ -186,7 +196,7 @@ export function setAllDiagEntries(on) {
     }
     for (const [book, set] of perBook) diagEntrySel[book] = set;
     refreshDiagEntriesSummary();
-    persistDiagSel();
+    persistDiagSel(diagEntrySel);
 }
 
 // 按灯型选：'blue'（常驻）/ 'green'（关键词）/ 'off'（已禁用），跨当前显示的每本书。
@@ -204,7 +214,7 @@ export function setDiagEntriesByType(type) {
     }
     for (const [book, set] of perBook) diagEntrySel[book] = set;
     refreshDiagEntriesSummary();
-    persistDiagSel();
+    persistDiagSel(diagEntrySel);
 }
 
 // 「全选筛选」：把选择设为当前筛选后仍可见的那些（每本书各自计算）。
@@ -220,7 +230,7 @@ export function selectFilteredDiagEntries() {
     }
     for (const [book, set] of perBook) diagEntrySel[book] = set;
     refreshDiagEntriesSummary();
-    persistDiagSel();
+    persistDiagSel(diagEntrySel);
 }
 
 export function updateDiagFilteredBtn() {
@@ -310,7 +320,7 @@ export async function populateDiagWiEntries() {
         }
     }
     const f = win.querySelector('#so-diag-entries-filter');
-    if (f && f.value) filterBookEntries('#so-diag-entries-list', f.value, updateDiagFilteredBtn);
+    if (f && f.value) filterBookEntries('#so-diag-entries-list', f.value, updateDiagFilteredBtn, win);
     refreshDiagEntriesSummary();
     updateDiagFilteredBtn();
 }
@@ -332,9 +342,9 @@ export function reflectDiagRetryVisible() {
 export async function onDiagUseSelToggle(on) {
     const meta = getDiagWiMeta();
     if (on && !Object.keys(meta.sel || {}).length) {
-        try { setDiagEntrySel(await computeDiagSnapshot()); } catch (e) { setDiagEntrySel({}); }
+        try { (diagEntrySel = await computeDiagSnapshot()); } catch (e) { (diagEntrySel = {}); }
     } else {
-        setDiagEntrySel(deserializeEntrySel(meta.sel));
+        (diagEntrySel = deserializeEntrySel(meta.sel));
     }
     setDiagWiMeta({ use: on, hybrid: meta.hybrid, target: meta.target, sel: serializeDiagSel(diagEntrySel) });
     reflectDiagPickerVisible(on);
@@ -355,7 +365,7 @@ export function onDiagHybridToggle(on) {
 
 // 把本聊天保存的诊断选择载入内存 + 刷新选条目器 UI（在 onChatChanged 调用，随聊天切换）。
 export function loadDiagSelForChat() {
-    setDiagEntrySel(deserializeEntrySel(getDiagWiMeta().sel));
+    (diagEntrySel = deserializeEntrySel(getDiagWiMeta().sel));
     refreshDiagPickerUI();
 }
 
@@ -390,7 +400,7 @@ export async function populateWiCustomBooks(announce) {
     const listEl = win && win.querySelector('#so-wic-book-list');
     if (!listEl) return;
     const chatId = wiCustomChatId();
-    const seq = nextWiCustomRenderSeq();
+    const seq = ++wiCustomRenderSeq;
     listEl.dataset.chat = '';   // 重画期间旧行不许写（onWiCustomBookChange 核对此戳）
     const meta = getWiCustomMeta();
     if (!meta) { listEl.innerHTML = ''; updateWiCustomBookSummary(null); updateWiCustomHint('nochat'); wiCustomHideEntries(); return; }
@@ -481,7 +491,7 @@ async function populateWiCustomEntries() {
     const list = win && win.querySelector('#so-wic-entries-list');
     if (!box || !list) return;
     const chatId = wiCustomChatId();
-    const seq = nextWiCustomRenderSeq();
+    const seq = ++wiCustomRenderSeq;
     list.dataset.chat = '';   // 重画期间勾选不许写（persistWiCustomSel 核对此戳）
     let meta = getWiCustomMeta();
     if (!meta) { box.classList.remove('shown'); return; }
@@ -573,7 +583,7 @@ async function populateWiCustomEntries() {
         }
     }
     const f = win.querySelector('#so-wic-entries-filter');
-    if (f && f.value) filterBookEntries('#so-wic-entries-list', f.value, updateWiCustomFilteredBtn);
+    if (f && f.value) filterBookEntries('#so-wic-entries-list', f.value, updateWiCustomFilteredBtn, win);
     refreshWiCustomSummary();
     updateWiCustomFilteredBtn();
 }

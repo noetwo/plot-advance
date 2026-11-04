@@ -1,13 +1,12 @@
 import { getSummary } from '../core/chat-metadata.js';
 import { getCtx, getSettings } from '../core/settings.js';
 
-import { buildAdvisorPrompt, buildBbsHistorySection, buildCardSection, buildChatWorldSection, buildDiagnosePrompt, buildFixPrompt, buildLorebookPrompt, buildLwbHistorySection, buildSummarySection, buildTranscript, getBbsHistoryText, getLwbSummaryText } from '../modes/chat/context.js';
-import { buildBuilderPrompt } from '../modes/lorebook/core.js';
+import { buildAdvisorPrompt, buildBbsHistorySection, buildCardSection, buildChatWorldSection, buildDiagnosePrompt, buildFixPrompt, buildLorebookPrompt, buildLwbHistorySection, buildSummarySection, buildTranscript, chatStatData, getBbsHistoryText, getLwbSummaryText, worldInfoBlock } from '../modes/chat/context.js';
+import { buildBuilderPrompt } from '../modes/builder/context.js';
 import { BUILTIN_JB_CORE, BUILTIN_JB_TAIL } from '../presets/builtin-jailbreak.js';
 import { ADVISOR_FORMAT_SECTION, ADVISOR_NODE_ASK, ADVISOR_SPEEDS, ADVISOR_SYSTEM_PROMPT, BUILDER_FORGE_PROMPT, BUILDER_FORGE_PROMPT_NOSTEAL, BUILDER_FORGE_PROMPT_STEAL, BUILDER_INTERVIEW_PROMPT, BUILDER_INTERVIEW_PROMPT_NOSTEAL, BUILDER_INTERVIEW_PROMPT_STEAL, BUILDER_LOOK_MUSTASK, BUILDER_PROTOCOL, CONDENSE_OPS_PROMPT, CONDENSE_SECT_PROMPT, DEFAULT_SYSTEM_PROMPT, DIAGNOSE_SYSTEM_PROMPT, DLG_RICH_RIDER, DRAFT_CONDENSE_PROMPT, ENABLE_OFFSTAGE_GUARD, FIX_CUSTOM_FOOTER, FIX_CUSTOM_LEAD, FIX_CUSTOM_RAW_NOTE, FIX_PROMPT_JINGXIAO_DEEPSEEK, FIX_PROMPT_JINGXIAO_OPUS, FIX_SPAN_PROMPT, FIX_SYSTEM_PROMPT_MANUAL, FIX_SYSTEM_PROMPT_TIGHTEN, FIX_TARGETS_LEAD, FIX_TARGET_MODULES, LB_SMART_SELECT_PROMPT, LOREBOOK_SYSTEM_PROMPT, PERSONAS, PERSONA_FLESH_PROMPT, PERSONA_FRAME, PERSONA_FRAME_CUSTOM, PERSONA_MODE_OVERRIDES, PERSONA_STRUCT_GUARD, PERSONA_STRUCT_GUARD_WI } from './builtins.js';
 import { buildPersonaBlock } from './helpers.js';
-import { advisorMode, builderMode, diagnoseMode, fixMode, lorebookMode } from '../core/runtime-state.js';
-import { chatStatData, worldInfoBlock } from '../modes/chat/state.js';
+import { advisorMode, builderMode, diagnoseMode, fixMode, lorebookMode } from '../core/oracle-modes.js';
 
 /* ------------------------------------------------------------------ *
  * Context assembly
@@ -527,8 +526,8 @@ export const PROMPT_DEFS = [
     { id: 'jb.tail', group: '内置破限', label: '破限尾（放在最后）',
         desc: '选了内置破限时，放在整组消息最后面。', builtin: BUILTIN_JB_TAIL },
 ];
-const PROMPT_DEF_MAP = new Map(PROMPT_DEFS.map((d) => [d.id, d]));
-const PROMPT_VAR_RE = /\{%\s*(\w+)\s*%\}/g;
+export const PROMPT_DEF_MAP = new Map(PROMPT_DEFS.map((d) => [d.id, d]));
+export const PROMPT_VAR_RE = /\{%\s*(\w+)\s*%\}/g;
 
 export function promptDef(id) {
     return PROMPT_DEF_MAP.get(id) || null;
@@ -582,7 +581,7 @@ export function promptReset(id, s = getSettings()) {
 }
 
 // 纯函数：按上面注释里的规则渲染模板。vars 里没有的名字原样保留。
-function renderPromptTemplate(raw, vars) {
+export function renderPromptTemplate(raw, vars) {
     const v = vars || {};
     const filled = (k) => Object.prototype.hasOwnProperty.call(v, k) && String(v[k] ?? '') !== '';
     const DROP = '\u0001';
@@ -627,14 +626,14 @@ export function promptProblems(id, text) {
     return out;
 }
 
-export function buildSystemPrompt() {
+export function buildSystemPrompt(fixContext) {
     const ctx = getCtx();
     const s = getSettings();
 
     if (diagnoseMode) return buildDiagnosePrompt(ctx, s);
     if (lorebookMode) return buildLorebookPrompt(ctx, s);
     if (advisorMode) return buildAdvisorPrompt(ctx, s);
-    if (fixMode) return buildFixPrompt(ctx, s);
+    if (fixMode) return buildFixPrompt(ctx, s, fixContext);
     if (builderMode) return buildBuilderPrompt(ctx, s);
 
     const parts = [P('chat.system', null, s)];

@@ -3,15 +3,21 @@ import { toggleSettings } from '../bootstrap.js';
 import { autoGrowInput } from '../modes/chat/history.js';
 import { onSend } from '../modes/chat/send.js';
 import { normalizeFixTemplates } from '../modes/fix/templates.js';
-import { normalizeBldTarget, sanitizeBldSections } from '../modes/lorebook/core.js';
+import { normalizeBldTarget, sanitizeBldSections } from '../modes/builder/model.js';
 import { BUILDER_NPC_ONLY, DEFAULT_SYSTEM_PROMPT, DIAG_SEED_GRACE_MS, ENABLE_BUILDER_PERSONA_STYLES, ENABLE_FIX_TEMPLATE_HUB, ENABLE_SCHEMA_DIAG, MODULE } from '../prompts/builtins.js';
 import { normalizeCustomPersonas } from '../prompts/helpers.js';
 import { promptDef } from '../prompts/registry.js';
 import { currentOracleMode } from '../ui/mode-shell.js';
-import { applyConnPreset, connPresetIsCurrent, connPresetState, getProfiles, saveToActiveConnPreset, shortModelName, switchConnPreset } from '../ui/settings.js';
-import { isGenerating } from './runtime-state.js';
-import { connPickerOpen, connPickerQuery, inputEl, modelMenuOpen, qpManageMode, qpMenuOpen, setConnPickerOpen, setConnPickerQuery, setModelMenuOpen, setQpManageMode, setQpMenuOpen, win } from '../ui/state.js';
-import { getHostContext } from '../st/host.js';
+import { applyConnPreset, connPresetState, getProfiles, saveToActiveConnPreset, shortModelName, switchConnPreset } from '../ui/settings.js';
+import { isGenerating } from './generation.js';
+import { inputEl, win } from '../ui/refs.js';
+import { getHostContext, getHostGlobal } from '../st/host.js';
+
+let connPickerOpen = false;
+let connPickerQuery = '';
+let modelMenuOpen = false;
+let qpMenuOpen = false;
+let qpManageMode = null;
 
 // 设置里「提示词」编辑器当前正在编辑哪一条（注册表 id；仅 UI 状态、不持久化，每次会话默认普通聊天系统提示词）。
 
@@ -325,129 +331,6 @@ const defaults = {
     winHeight: 540,
 };
 
-// In-memory side-chat history (cleared on page reload or via the Clear button).
-// Each entry: { id, role, content, _el }. _el links it to its DOM bubble so
-// edit / delete / regenerate can operate by identity (indices shift on splice).
-
-             // monotonic message-id source
-
-
-// 后台锻造（keep-forging，2026-07-20）：锻造是一次昂贵的重活，切换模式时不该被中断/丢弃。runForge 起跑时
-// 把这次锻造登记进 liveForge —— 记住它属于哪个工坊房间(streamKey)、气泡 entry、累积文本(text)。切模式时
-// loadConvoForChat 见它便【不中断】、回到工坊时据它重挂流式气泡；完成/失败由 runForge 按原始房间归位落盘
-// (routeForgeReply)。切聊天 / 清空由 onChatChanged / clearConversation 显式清空它（那属于旧聊天）。同一时刻
-// 只有一次生成，故 liveForge 至多一条。
-
-// 深度精简保活（1.36.0，keep-forging 同款）：深度精简与锻造同级昂贵（多分钟串行流式管线），切模式同样
-// 不中断——runCondenseDepth 起跑登记进 liveCondense（同形描述子 {streamKey, entry, text}），守卫/重挂/
-// 归位与 liveForge 并列走同一套路径。同一时刻只有一次生成，故 liveForge / liveCondense 至多一条非空。
-
-// Cached ST regex engine module: null = not tried, false = unavailable, object = loaded.
-
-// Cached ST world-info module (for "all entries" mode).
-
-// World-info text computed (async) in onSend, read (sync) in buildSystemPrompt.
-
-// World-info split by insertion position, for the faithful marker fill
-// (worldInfoBefore / worldInfoAfter slots). Computed in onSend when a curated
-// preset is active.
-
-
-// Diagnose mode state.
-
-      // stringified current stat_data, computed in onSend
-  // raw <UpdateVariable> block from the latest AI reply
-          // cached window.Mvu
-// Lorebook mode state.
-
-     // structured "book -> entries" listing, built in onSend
-       // names of the books included in the current context
-// Advisor mode state (experimental). The ACTIVE PLAN itself is NOT module state —
-// it lives in per-chat metadata (single source of truth); the injection text is
-// always derived from it at registration time, so clearing the metadata provably
-// kills the steering.
-
-// Reply-fix mode state (校正). Plain on/off mode like lorebook — no AUTO sub-state.
-
-// Builder mode state (角色工坊). Plain on/off mode like fix.
-
-   // structured "book -> selected entries" listing, built in generateReply
-    // 关键词扫描命中的补充条目块（opt-in bldScanWi；buildBuilderContext 同步刷新）
-     // names of the books included in the current builder context
-      // stringified current MVU stat_data for builder sends ('' when off / no MVU)
-// 退出参谋时回到「进来之前」的模式，而不是写死掉回普通聊天（精简版里进来之前只可能是普通聊天）。'chat' = 默认。
-
-        // 待校正回复在 ctx.chat 中的下标（捕获时记下）
-    // 待校正回复的【完整】原文（含机制块，应用时再接回）
-      // 剥掉机制块 + CoT 后的正文（喂给校正模型）
-     // 校正：角色卡块（送 prompt 前在异步 prep 里填）
-  // 校正：前文上下文块
-    // 校正：激活世界书块
-  // 校正：📜剧情概要块（手动默认带 / 自动可选；buildFixEnvelope 包成 <story_summary>）
-      // 排除·保留区抠出的块数组（composeFixedReply 据 ⟦SO_KEEP_n⟧ 标记按位置还原回原位）
-  // ✨ 思考块保护（W1）：本次捕获经 fixThinkKeepSpec 抠走的思考块数（captureFixContext 设；renderFixCard 出回执；0 = 无回执）
-   // ✨ 作用域信封（splitContentScope）：active 时只校正 <content> 内层，应用时把校正稿原位回插（wrapContentScope）
-   // ✨ Phase 5 D+E：resolveFixScope 的决策快照（captureFixContext 设，仅自动模式；runAutoFix/runFixByTargets 消费，决定 detected/suggest/skip 该做什么、提示什么）
-   // ✨ 分段校正（1.18.0）：resolveFixPieces 决策快照（captureFixContext 设，仅自动+开关开；runAutoFix / runFixByTargets / updateFixVerdict 消费）
-      // ✨ 分段校正：fixSegmentReply 的分段表（多段 run 时非空；bypass / whole / ask / suggest / skip 时 null）
-      // 📋 自定义模板任务：「整条」/ 无分段表时的 head/core/tail 表（captureFixContext mode:'custom' 设；其它模式恒 null）
-   // ✨ Phase 4 目标完整性：校正触发时抓下的快照 {chatId,targetIdx,swipeId,fingerprint,prose}；应用前用 fixTargetStale 比对（P-CORRUPT 切聊天 / 换 swipe / 内容变更守卫）
-// ✨/📋 切聊天不取消：结果【暂存】，回到原聊天时自动落地（1.77.0，Prince 亲裁 2026-09-04）。
-// 此前切一次聊天 = onChatChanged 无条件 cancelPostReply()，把在途那一轮连同已经买单的模型回复一起扔掉。
-// 现在校正 / 模板任务照跑完，只是落地时若发现聊天已切走（fixTargetStale 判 'chatSwitched'）就把成品放进
-// 这里，等 CHAT_CHANGED 回到那个聊天再落（fixDrainParked）。一个聊天一个槽，后来居上。
-// 【纯内存，刷新页面即失】：成品是一整条回复正文，塞进 chat metadata 会把每个聊天的存档撑大，而「暂存」
-// 本就只承诺这一次会话内有效。🩺 诊断 / 🎛 修改器不暂存——它们写的是【当前聊天】的 MVU 状态，切走即作废。
-export const fixParked = new Map();   // chatKey → { captured, joined, targetIdx, status, problems, before, after, meta, at }
-export const FIX_PARK_TTL_MS = 30 * 60 * 1000;   // 暂存的保质期：半小时后那条回复的处理结果再落地已离用户心智太远
-export const FIX_PARK_MAX = 8;                   // 槽位上限（按 at 淘汰最旧的）——Map 不封顶会随「切了 N 个聊天」一路长
-  // 当前校正调用是哪套（captureFixContext 设）：'manual' → buildFixPrompt 用 FIX_SYSTEM_PROMPT_MANUAL；'auto' → 轻校恒 FIX_SYSTEM_PROMPT_TIGHTEN / 精校按侧重
-   // 📋 自定义模板任务：本次调用的模板正文（runCustomTask 设；buildFixPrompt 自定义分支读）
-// 📋 自定义模板任务：#so-fixc-prompt 里有【未保存】的改动（spec §4.3 防误覆盖）。必须是模块级而不是
-// 处理器闭包里的局部量——seedFixControls 会从别处被调（切聊天、两个自动勾选），它得看得见这个旗才能
-// 「脏就不要覆盖用户正在写的正文」；旗留在闭包里时，重种子会静默吃掉用户的字，而旗还赖着 true，
-// 下一次切模板还会弹一个假的「有未保存的改动」。回填 / 保存 / 删除后一律清旗。
-
-// 📋 未保存正文的【归属】——它是哪一份模板的正文。脏着的时候下拉和文本框必须一起钉在这个名字上：
-// 程序化写 select.value 不发 change，所以切聊天 / 加载套餐会把下拉悄悄挪到别的模板 B 上，而框里还是
-// A 的未保存文字，再按保存就把 A 的文字写进了 B（与第一轮「删除后错位」同一类事故的另一扇门）。
-
-    // ✨ 自动校正提示词选择器（captureFixContext 经 resolveFixModeCfg 设，仅自动有意义）：'thorough' → buildFixPrompt 用精校提示（resolveFixAutoPrompt）；'light' → 轻校（现行）
-  // ✨ 精校侧重：'opus' → FIX_PROMPT_JINGXIAO_OPUS，否则 FIX_PROMPT_JINGXIAO_DEEPSEEK
-       // stringified current MVU stat_data for advisor sends
-                            // (computed fresh in generateReply, '' when no MVU)
-      // same, for NORMAL mode (gated by s.chatIncludeStat)
-     // 外部扩展（世界引擎等）世界信息，普通 / 参谋模式附带（gated by s.chatIncludeWorld）
-   // 小白X 记忆桥：当前聊天镜像到的剧情总结（抓拍 / metadata 回填 / 冷启动暖 三源写入）
-       // the ONE plan strip element — lives inside the window
-                            // OR reparented into the floating container (never both)
-   // 方案条上正在改的那一项（剧情脉络 2.5.0）：{ chatKey, adoptedAt, target, detail, keywords }
-   // 「到了再写」正在进行的那次参谋调用：{ key, ctl }
-       // floating container shown when window closed + plan active
-
-// Per-entry selection for a single targeted book: { [bookName]: Set<uid> }.
-// A book absent here (or null) means "send every entry" (the default).
-// 1.40.1：内存镜像，但每次改动都镜像进 lbEntrySel 设置、跨重载保留
-// （见 serializeEntrySel / persistLbEntrySel；水合见 populateLorebookEntries 顶部）。
-
-// 本会话是否已把 lbEntrySel 设置水合进 lbEntryFilter（每会话一次，同 bldSelHydrated）。
-
-// 角色工坊选条目器的每本书条目选择（与 lbEntryFilter 同形同义）：{ [书名]: Set<uid> | null }。
-// 书名缺席（或 null）= 发送整本；Set = 只发送这些 uid。内存镜像，随选书重建、剪除失效 uid。
-// T12：现随每次改动镜像进 bldEntrySel 设置、跨重载保留（见 serializeEntrySel / persistBldEntrySel）。
-
-// 本会话是否已把 bldEntrySel 设置水合进 bldEntryFilter（每会话一次，见 populateBuilderBooks 顶部）。
-
-// 诊断模式「精选条目」的当前选择（内存镜像，随聊天从元数据载入 / 回写）：{ [书名]: Set<uid> }。
-// 与 lbEntryFilter 同形，但【按聊天持久化】（见 DIAG_WI_META_KEY / loadDiagSelForChat / persistDiagSel）。
-
-// Last prompt actually sent (for the debug viewer), captured in onSend.
-
-
-// Gemini 加固（2026-09-15，FIX 4）：本轮生成最后见到的 finish_reason（供空回复判据 isEmptyLengthReply）。
-// 每轮 generateReply 开头复位；由 callDirect / streamDirect 写。配置文件路读不到、恒空。
-
-
 export function getCtx() {
     return getHostContext();
 }
@@ -619,6 +502,13 @@ export function connPresetSnapshot(s) {
 export function connValSame(a, b) {
     return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
+// 当前设置是否就是这个存档：旧存档只比较它实际保存过的可选项。
+export function connPresetIsCurrent(p, s = getSettings()) {
+    return !!p && s.mode === 'direct'
+        && (p.endpoint || '') === (s.endpoint || '') && (p.apiKey || '') === (s.apiKey || '')
+        && (p.model || '') === (s.model || '') && !!p.rawUrl === !!s.directRawUrl
+        && CONN_PRESET_KEYS.every((key) => !(key in p) || connValSame(p[key], s[key]));
+}
 function connPresetRemove(list, name) {
     return (Array.isArray(list) ? list : []).filter((p) => p && p.name !== name);
 }
@@ -630,8 +520,8 @@ export function renderConnPresets() {
     const presets = s.connPresets || [];
     box.innerHTML = '';
     if (!presets.length) {
-        setConnPickerOpen(false);
-        setConnPickerQuery('');
+        connPickerOpen = false;
+        connPickerQuery = '';
         const empty = document.createElement('div');
         empty.className = 'so-hint';
         empty.textContent = '还没有存档。填好下面的端点、密钥和模型后，在这里起个名字存起来，以后一键切换。';
@@ -663,7 +553,7 @@ export function renderConnPresets() {
         // 头部会被重画成新节点：别让 document 上的「点别处收起」把刚打开的弹出框又关掉
         e.stopPropagation();
         if (connPickerOpen) { closeConnPicker(); return; }
-        setConnPickerOpen(true);
+        connPickerOpen = true;
         renderConnPresets();
     });
     // 弹出框挂在 anchor 上（紧贴存档栏下沿），盖住下面的「已修改」提示条和设置，不挤压它们
@@ -704,8 +594,8 @@ export function renderConnPresets() {
         sub.textContent = [p.model || '（未填模型）', p.endpoint].filter(Boolean).join(' · ');
         sub.title = sub.textContent;
         pick.addEventListener('click', () => {
-            setConnPickerOpen(false);
-            setConnPickerQuery('');
+            connPickerOpen = false;
+            connPickerQuery = '';
             renderConnPresets();                 // 先收起；切换（可能先弹确认）成功后经 updateBadge 再重画
             if (!on) switchConnPreset(p.name);
         });
@@ -730,7 +620,7 @@ export function renderConnPresets() {
     none.textContent = '没有匹配的存档';
     rows.appendChild(none);
     const filter = () => {
-        setConnPickerQuery(search.value);
+        connPickerQuery = search.value;
         const q = search.value.trim().toLowerCase();
         let shown = 0;
         for (const row of rows.querySelectorAll('.so-preset-opt')) {
@@ -779,8 +669,8 @@ function buildConnDirtyBar(p) {
 }
 export function closeConnPicker() {
     if (!connPickerOpen) return;
-    setConnPickerOpen(false);
-    setConnPickerQuery('');
+    connPickerOpen = false;
+    connPickerQuery = '';
     renderConnPresets();
 }
 
@@ -815,6 +705,9 @@ const QP_DEFAULT_OLD_TEXTS = {
 
    // 设置「快捷指令」页当前在看哪个模式；null = 跟随当前模式
 
+export function managedQuickPromptMode(fallback) {
+    return qpManageMode || fallback;
+}
 function qpModeLabel(mode) {
     const m = QP_MODES.find((x) => x[0] === mode);
     return m ? m[1] : mode;
@@ -834,17 +727,17 @@ function qpText(q) {
 }
 export function closeQpMenu() {
     if (!qpMenuOpen) return;
-    setQpMenuOpen(false);
+    qpMenuOpen = false;
     renderModelBar();
 }
 // 点名字：直接发送。输入框里原来写了一半的话先让开、发完放回去（onSend 的同步段就读走并清空输入框）。
 // 正在生成时不发——此时按发送键的语义是「停止生成」，快捷指令绝不能顺手把它停掉。
 async function qpSend(q) {
-    setQpMenuOpen(false);
+    qpMenuOpen = false;
     renderModelBar();
     if (!inputEl) return;
     if (isGenerating) {
-        try { toastr.info('剧情推进还在回复，等它说完再点。', '快捷指令'); } catch (e) { /* toastr 缺席 */ }
+        try { const toastr = getHostGlobal('toastr'); toastr && toastr.info && toastr.info('剧情推进还在回复，等它说完再点。', '快捷指令'); } catch (e) { /* toastr 缺席 */ }
         return;
     }
     const text = qpText(q);
@@ -857,7 +750,7 @@ async function qpSend(q) {
 }
 // 点 ✎：填进输入框（已有文字时另起一行接在后面），改一改再发。
 function qpFill(q) {
-    setQpMenuOpen(false);
+    qpMenuOpen = false;
     renderModelBar();
     if (!inputEl) return;
     const text = qpText(q);
@@ -869,11 +762,11 @@ function qpFill(q) {
 }
 // 把输入框里的话存成当前模式的一条快捷指令。
 async function qpSaveFromInput() {
-    setQpMenuOpen(false);
+    qpMenuOpen = false;
     renderModelBar();
     const text = inputEl ? inputEl.value.trim() : '';
     if (!text) {
-        try { toastr.info('先在输入框里写好要存的话，再点这里。', '快捷指令'); } catch (e) { /* ignore */ }
+        try { const toastr = getHostGlobal('toastr'); toastr && toastr.info && toastr.info('先在输入框里写好要存的话，再点这里。', '快捷指令'); } catch (e) { /* ignore */ }
         return;
     }
     const mode = currentOracleMode();
@@ -884,7 +777,7 @@ async function qpSaveFromInput() {
     save();
     renderModelBar();
     if (win && win.querySelector('#so-settings.open')) renderQpManager();
-    try { toastr.success(`已存为「${qpModeLabel(mode)}」模式的快捷指令。`, '快捷指令'); } catch (e) { /* ignore */ }
+    try { const toastr = getHostGlobal('toastr'); toastr && toastr.success && toastr.success(`已存为「${qpModeLabel(mode)}」模式的快捷指令。`, '快捷指令'); } catch (e) { /* ignore */ }
 }
 // 模型栏右侧：宽 = 一排名字 + ⋯；窄 = 一个「⚡ 快捷指令」按钮（两套都渲染，CSS 容器查询决定显示哪套）。
 function renderQuickPrompts(bar) {
@@ -904,8 +797,8 @@ function renderQuickPrompts(bar) {
     }
     const toggleMenu = (e) => {
         e.stopPropagation();
-        setQpMenuOpen(!qpMenuOpen);
-        setModelMenuOpen(false);
+        qpMenuOpen = !qpMenuOpen;
+        modelMenuOpen = false;
         renderModelBar();
     };
     const more = document.createElement('button');
@@ -975,7 +868,7 @@ function renderQuickPrompts(bar) {
         menu.appendChild(b);
     };
     action('fa-plus', '把输入框里的话存成快捷指令', qpSaveFromInput);
-    action('fa-gear', '管理快捷指令…', () => { setQpMenuOpen(false); setQpManageMode(mode); toggleSettings(true, 'qp'); });
+    action('fa-gear', '管理快捷指令…', () => { qpMenuOpen = false; qpManageMode = mode; toggleSettings(true, 'qp'); });
     bar.appendChild(menu);
 }
 
@@ -1001,7 +894,7 @@ export function renderQpManager() {
             c.textContent = String(n);
             b.appendChild(c);
         }
-        b.addEventListener('click', () => { setQpManageMode(m); renderQpManager(); });
+        b.addEventListener('click', () => { qpManageMode = m; renderQpManager(); });
         segEl.appendChild(b);
     }
     const sum = win.querySelector('#so-qp-summary');
@@ -1094,7 +987,7 @@ export function renderModelBar() {
     pill.innerHTML = '<i class="fa-solid fa-plug"></i><span class="so-model-pill-name"></span><span class="so-model-pill-sub"></span><i class="fa-solid fa-chevron-up"></i>';
     pill.querySelector('.so-model-pill-name').textContent = name;
     pill.querySelector('.so-model-pill-sub').textContent = sub;
-    pill.addEventListener('click', (e) => { e.stopPropagation(); setModelMenuOpen(!modelMenuOpen); setQpMenuOpen(false); renderModelBar(); });
+    pill.addEventListener('click', (e) => { e.stopPropagation(); modelMenuOpen = !modelMenuOpen; qpMenuOpen = false; renderModelBar(); });
     bar.appendChild(pill);
     renderQuickPrompts(bar);   // ⚡ 二创版 2.2：模型右边的快捷指令
     if (!modelMenuOpen) return;
@@ -1123,7 +1016,7 @@ export function renderModelBar() {
         opt.querySelector('.so-model-opt-name').textContent = label;
         const subEl = opt.querySelector('.so-model-opt-sub');
         if (subText) subEl.textContent = subText; else subEl.remove();
-        opt.addEventListener('click', (e) => { e.stopPropagation(); setModelMenuOpen(false); onPick(); renderModelBar(); });
+        opt.addEventListener('click', (e) => { e.stopPropagation(); modelMenuOpen = false; onPick(); renderModelBar(); });
         menu.appendChild(opt);
     };
     for (const p of presets) {
@@ -1140,6 +1033,6 @@ export function renderModelBar() {
 }
 export function closeModelMenu() {
     if (!modelMenuOpen) return;
-    setModelMenuOpen(false);
+    modelMenuOpen = false;
     renderModelBar();
 }

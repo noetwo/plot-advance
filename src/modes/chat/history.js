@@ -6,11 +6,22 @@ import { getChatMetadataSafe } from '../advisor/metadata.js';
 import { chatIdentityKey } from './send.js';
 import { fixFingerprint } from '../fix/capture.js';
 import { ENABLE_MODE_ROOMS, MODULE } from '../../prompts/builtins.js';
-import { addFixApplyControls } from '../../ui/messages.js';
+import { getHostGlobal } from '../../st/host.js';
+import { addFixApplyControls, renderMessagesInBulk, soBulkRenderDepth } from '../../ui/messages.js';
 import { currentOracleMode } from '../../ui/mode-shell.js';
-import { convo, convoStreamKey, isGenerating, nextCid } from '../../core/runtime-state.js';
-import { setSoConvoImportInputEl, soConvoImportInputEl } from './state.js';
-import { decrementSoBulkRenderDepth, incrementSoBulkRenderDepth, inputEl, messagesEl, soBulkRenderDepth, win } from '../../ui/state.js';
+import { isGenerating } from '../../core/generation.js';
+import { appendConvo, convo, convoStreamKey, nextCid, removeConvoRange } from '../../core/conversation-store.js';
+import { inputEl, messagesEl, win } from '../../ui/refs.js';
+let soConvoImportInputEl = null;
+
+function hostDocument() {
+    return getHostGlobal('document');
+}
+
+function showToast(kind, ...args) {
+    const toastr = getHostGlobal('toastr');
+    if (toastr && typeof toastr[kind] === 'function') toastr[kind](...args);
+}
 
 /* ------------------------------------------------------------------ *
  * 持久「已应用」标记（1.33.2）。applied/撤销 一直只活在按钮闭包里——1.33.1 重挂动作卡后，
@@ -65,7 +76,7 @@ export function registerFixApply(entry, parsed, originalReply, targetIdx, keepSe
 }
 export function rehangFixApply(assistantEl, fa, entry) {
     if (fa.noteText) {
-        const note = document.createElement('div');
+        const note = hostDocument().createElement('div');
         note.className = 'so-fix-changes';
         note.textContent = fa.noteText;
         assistantEl.querySelector('.so-bubble')?.appendChild(note);
@@ -82,7 +93,7 @@ export function appendNoteToRoom(roomKey, entry, opts) {
     const key = ENABLE_MODE_ROOMS ? (roomKey || 'main') : 'main';
     registerNoteOpts(key, entry, opts);
     if (key === convoStreamKey) {
-        convo.push(entry);
+        appendConvo(entry);
         persistConvo();
         if (messagesEl) entry._el = addNoteMessage(entry, opts);
         return;
@@ -105,8 +116,11 @@ export function appendNoteToRoom(roomKey, entry, opts) {
 // 失败不静默：给一条错误提示，别让用户以为已经存好了。
 function downloadTextFile(filename, text) {
     try {
-        const blob = new Blob([String(text == null ? '' : text)], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
+        const BlobCtor = getHostGlobal('Blob');
+        const urlApi = getHostGlobal('URL');
+        const document = hostDocument();
+        const blob = new BlobCtor([String(text == null ? '' : text)], { type: 'text/markdown;charset=utf-8' });
+        const url = urlApi.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = filename;
@@ -114,11 +128,11 @@ function downloadTextFile(filename, text) {
         document.body.appendChild(a);
         a.click();
         a.remove();
-        setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) { /* 已释放 */ } }, 4000);
+        setTimeout(() => { try { urlApi.revokeObjectURL(url); } catch (e) { /* 已释放 */ } }, 4000);
         return true;
     } catch (e) {
         console.error('[Story Oracle] 导出对话失败', e);
-        window.toastr && window.toastr.error && window.toastr.error('导出失败——浏览器拒绝了这次下载。', '剧情推进');
+        showToast('error', '导出失败——浏览器拒绝了这次下载。', '剧情推进');
         return false;
     }
 }
@@ -144,7 +158,7 @@ export function exportConvo() {
     // 不允许导出的模式下气泡按钮本就被扫成隐藏；这里再挡一道（键盘等也可能触发）。⚠ 不静默 return——
     // 「点了什么都没发生」是最难报障的一类 bug，跟空房分支一样给一句话。
     if (!convoExportAllowed(mode)) {
-        window.toastr && window.toastr.info && window.toastr.info('导出对话只在普通聊天和剧情参谋里可用。', '剧情推进');
+        showToast('info', '导出对话只在普通聊天和剧情参谋里可用。', '剧情推进');
         return;
     }
     const modeLabel = mode === 'advisor' ? '剧情参谋' : '普通聊天';
@@ -152,7 +166,7 @@ export function exportConvo() {
     const t = soExportTimeParts(new Date());
     const md = buildConvoExportMd(convo, { modeLabel, chatName, when: t.when });
     if (!md) {
-        window.toastr && window.toastr.info && window.toastr.info('本页还没有对话，先聊两句再导出～', '剧情推进');
+        showToast('info', '本页还没有对话，先聊两句再导出～', '剧情推进');
         return;
     }
     downloadTextFile(buildConvoExportFileName(modeLabel, chatName, t.stamp), md);
@@ -188,7 +202,8 @@ function soReadTextFile(file) {
     if (file && typeof file.text === 'function') return file.text();
     return new Promise((resolve, reject) => {
         try {
-            const fr = new FileReader();
+            const Reader = getHostGlobal('FileReader');
+            const fr = new Reader();
             fr.onload = () => resolve(String(fr.result == null ? '' : fr.result));
             fr.onerror = () => reject(fr.error || new Error('read failed'));
             fr.readAsText(file, 'utf-8');
@@ -199,6 +214,7 @@ function soReadTextFile(file) {
 // 隐藏文件选择器（仓内此前没有任何文件选择器；ST 核心自己也是这个形状的隐藏 input）。
 function soConvoImportInput() {
     if (soConvoImportInputEl && soConvoImportInputEl.isConnected) return soConvoImportInputEl;
+    const document = hostDocument();
     const inp = document.createElement('input');
     inp.type = 'file';
     inp.accept = '.md,.txt,text/markdown';
@@ -210,7 +226,7 @@ function soConvoImportInput() {
         if (f) soImportConvoFile(f);
     });
     document.body.appendChild(inp);
-    setSoConvoImportInputEl(inp);
+    soConvoImportInputEl = inp;
     return inp;
 }
 
@@ -218,21 +234,21 @@ function soConvoImportInput() {
 export function importConvo() {
     // 与导出同一道模式闸；拦下时不静默（「点了没反应」最难报障）。
     if (!convoExportAllowed(currentOracleMode())) {
-        window.toastr && window.toastr.info && window.toastr.info('导入对话只在普通聊天和剧情参谋里可用。', '剧情推进');
+        showToast('info', '导入对话只在普通聊天和剧情参谋里可用。', '剧情推进');
         return;
     }
     if (isGenerating) {
-        window.toastr && window.toastr.info && window.toastr.info('还有回复正在生成，等它跑完再导入～', '剧情推进');
+        showToast('info', '还有回复正在生成，等它跑完再导入～', '剧情推进');
         return;
     }
     if (!getChatMetadataSafe()) {
-        window.toastr && window.toastr.info && window.toastr.info('请先打开一个聊天，导入的对话要存进这个聊天里。', '剧情推进');
+        showToast('info', '请先打开一个聊天，导入的对话要存进这个聊天里。', '剧情推进');
         return;
     }
     try { soConvoImportInput().click(); }
     catch (e) {
         console.error('[Story Oracle] 打开文件选择器失败', e);
-        window.toastr && window.toastr.error && window.toastr.error('打不开文件选择器。', '剧情推进');
+        showToast('error', '打不开文件选择器。', '剧情推进');
     }
 }
 
@@ -249,16 +265,16 @@ async function soImportConvoFile(file) {
     try { text = await soReadTextFile(file); }
     catch (e) {
         console.error('[Story Oracle] 读取导入文件失败', e);
-        window.toastr && window.toastr.error && window.toastr.error('读不了这个文件。', '剧情推进');
+        showToast('error', '读不了这个文件。', '剧情推进');
         return;
     }
     if (!stillHere()) {
-        window.toastr && window.toastr.info && window.toastr.info('选文件期间换了模式 / 聊天，本次导入已取消。', '剧情推进');
+        showToast('info', '选文件期间换了模式 / 聊天，本次导入已取消。', '剧情推进');
         return;
     }
     const parsed = parseConvoExportMd(text);
     if (!parsed || !parsed.turns.length) {
-        window.toastr && window.toastr.error && window.toastr.error('这不是剧情推进导出的对话文件——一条对话都没读到。', '剧情推进');
+        showToast('error', '这不是剧情推进导出的对话文件——一条对话都没读到。', '剧情推进');
         return;
     }
     const have = convoForPrompt(convo).length;
@@ -266,7 +282,7 @@ async function soImportConvoFile(file) {
         const ok = await uiConfirm(`当前页已有 ${have} 条对话：导入的 ${parsed.turns.length} 条会接在后面（不会覆盖）。继续吗？`);
         if (!ok) return;
         if (!stillHere()) {
-            window.toastr && window.toastr.info && window.toastr.info('确认期间换了模式 / 聊天，本次导入已取消。', '剧情推进');
+            showToast('info', '确认期间换了模式 / 聊天，本次导入已取消。', '剧情推进');
             return;
         }
     }
@@ -276,7 +292,7 @@ async function soImportConvoFile(file) {
     // （parsed.skipped）＋ 落地时被挡掉的条（角色 / 类型不合法）都要报出来，绝不静默少几条。
     const dropped = (Number(parsed.skipped) || 0) + (parsed.turns.length - n);
     const msg = dropped > 0 ? `已导入 ${n} 条对话（${dropped} 段无法识别、已跳过）。` : `已导入 ${n} 条对话。`;
-    window.toastr && window.toastr.success && window.toastr.success(msg, '剧情推进');
+    showToast('success', msg, '剧情推进');
 }
 
 // 把解析出来的轮次落成【真侧聊条目】并重画。渲染刻意不自己搭气泡：写进 convo + 落盘之后直接调
@@ -288,13 +304,13 @@ function appendImportedConvoTurns(turns) {
     let n = 0;
     for (const t of list) {
         if (!t || (t.role !== 'user' && t.role !== 'assistant') || typeof t.content !== 'string') continue;
-        convo.push({ id: nextCid(), role: t.role, content: t.content });
+        appendConvo({ id: nextCid(), role: t.role, content: t.content });
         n++;
     }
     if (!n) return 0;
     if (!persistConvo()) {           // 元数据写不进去（没打开聊天）→ 撤回，绝不留下只在屏幕上的假历史
-        convo.splice(convo.length - n, n);
-        window.toastr && window.toastr.error && window.toastr.error('无法保存到本聊天，导入已撤销。', '剧情推进');
+        removeConvoRange(convo.length - n, n);
+        showToast('error', '无法保存到本聊天，导入已撤销。', '剧情推进');
         return 0;
     }
     loadConvoForChat();              // 与重载 / 换房同源的整页重画（末尾自带 scrollToBottom）
@@ -316,7 +332,7 @@ export function refreshSummaryUI() {
     if (!win) return;
     const ta = win.querySelector('#so-summary-text');
     const text = getSummary();
-    if (ta && document.activeElement !== ta) ta.value = text;   // 别在用户正打字时覆盖
+    if (ta && hostDocument().activeElement !== ta) ta.value = text;   // 别在用户正打字时覆盖
     updateSummaryIndicator(text);
 }
 
@@ -340,8 +356,7 @@ export function updateSummaryIndicator(text) {
 // 不可能落在同步段内，所以直播路径（发送 / 流式 / 定稿）一律照旧。
 
 export function soBulkRender(fn) {
-    incrementSoBulkRenderDepth();
-    try { return fn(); } finally { decrementSoBulkRenderDepth(); }
+    return renderMessagesInBulk(fn);
 }
 export function nearBottom() {
     return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 40;
@@ -367,6 +382,6 @@ function computeInputHeight(scrollH, winH, minH = 46) {
 export function autoGrowInput() {
     if (!inputEl) return;
     inputEl.style.height = 'auto';
-    const winH = (win && win.clientHeight) || window.innerHeight || 540;
+    const winH = (win && win.clientHeight) || getHostGlobal('innerHeight') || 540;
     inputEl.style.height = computeInputHeight(inputEl.scrollHeight, winH) + 'px';
 }

@@ -1,5 +1,5 @@
-import { awaitFixMvuBoundary, beginPostReplyCall, drainPendingPostReply, postReplyShouldStop } from '../../core/post-reply.js';
-import { FIX_PARK_MAX, FIX_PARK_TTL_MS, POST_REPLY_CALL_TIMEOUT_MS, fixParked, getCtx, getSettings } from '../../core/settings.js';
+import { awaitFixMvuBoundary, beginPostReplyCall, beginPostReplyRun, drainPendingPostReply, finishPostReplyRun, isPostReplyBusy, postReplyShouldStop } from '../../core/post-reply.js';
+import { POST_REPLY_CALL_TIMEOUT_MS, getCtx, getSettings } from '../../core/settings.js';
 
 import { addSystemNote, renderEmptyState } from '../advisor/cards.js';
 import { buildFixPrompt } from '../chat/context.js';
@@ -15,11 +15,17 @@ import { buildFixPresetMessages } from '../../presets/messages.js';
 import { ENABLE_FIX_CUSTOM_TASK, ENABLE_FIX_PIECEWISE, STATUS_PLACEHOLDER } from '../../prompts/builtins.js';
 import { compileFixTargets, detectMvuBlockDialect, fixEffMaxTokens, fixEffectivelyUnchanged, fixNoOp, fixPreFilter, fixTargetOverrides } from '../../prompts/helpers.js';
 import { P } from '../../prompts/registry.js';
-import { addMessage, parseFixedReply } from '../../ui/messages.js';
+import { addMessage, parseFixedReply, soFollowStream } from '../../ui/messages.js';
 import { maybeWrapJb, presetCurationActive } from '../../ui/settings.js';
-import { abortCtl, activePostReplyRun, convoStreamKey, isGenerating, postReplyBusy, setActivePostReplyRun, setIsGenerating, setPostReplyBusy, setPostReplyCancelled } from '../../core/runtime-state.js';
-import { fixCaptured, fixCustomJoin, fixExtraKeep, fixOriginalReply, fixPieceDecision, fixPieceTable, fixScope, fixScopeDecision, fixTargetIdx, fixTargetProse, setFixCustomTemplateText } from './state.js';
-import { messagesEl, sendBtn, soFollowStream, win } from '../../ui/state.js';
+import { isGenerating } from '../../core/generation.js';
+import { convoStreamKey } from '../../core/conversation-store.js';
+import { getHostGlobal } from '../../st/host.js';
+import { messagesEl, win } from '../../ui/refs.js';
+
+// 自动校正离开原聊天时的会话内暂存；唯一写者和消费者均在本模块。
+const fixParked = new Map();
+const FIX_PARK_TTL_MS = 30 * 60 * 1000;
+const FIX_PARK_MAX = 8;
 
 /* ------------------------------------------------------------------ *
  * 📋 自定义模板任务的【流式直播】（1.77.0，Prince 点单 2026-09-04）。
@@ -159,19 +165,18 @@ async function fixLandResult(p) {
 // 'chatSwitched' 是【唯一】可暂存的理由：其余（换 swipe / 正文被编辑 / 目标没了）说明这条回复本身已经
 // 不是当初那条，暂存只会在用户回来时写坏东西 —— 照旧记一条 stale（文案字节不变）。
 // 暂存时【绝不】往当前这个（别人的）聊天里写记录，只弹一句 toast。
-// ★ 判据只认 payload.captured / payload.targetIdx，【绝不】读模块级 fixCaptured / fixTargetIdx ★
-// （复审 Critical #1，1.77.0 fix round 1）：切聊天不再作废在途轮之后，「模型往返期间那两个全局被别人
-// 覆写」变成了**可达**路径 —— 用户切到聊天 B、在 B 里点「按目标给最新回复去 AI 味」（`runFixByTargets`
-// 只被 isGenerating 挡、不看 postReplyBusy）→ captureFixContext 把全局改成 B 的捕获 → 聊天 A 那一轮
-// 回来时读全局，会拿【B 的捕获】比【B 的现状】判「不陈旧」，于是把 A 的正文写进 B 的楼层 = 跨聊天串写。
-// 所以捕获快照必须在 captureFixContext 返回后【立刻】取下、一路传到这里（三条运行路各取一次）。
+// ★ 判据只认 payload.captured / payload.targetIdx，它们来自触发本轮时冻结的 fixContext ★
+// （复审 Critical #1，1.77.0 fix round 1）：旧单槽实现会在用户切到聊天 B 并触发另一轮捕获后，把 A 轮
+// 回来时的陈旧校验错误地改用 B 的捕获，继而可能把 A 的正文写进 B 的楼层。现在每轮捕获随调用链传到
+// 这里，异步返回顺序不再改变目标身份。
+// 捕获快照必须从 captureFixContext 返回值一路传到这里（三条运行路均遵守）。
 async function fixLandOrPark(payload, opts) {
     const cap = payload.captured || null;
     const st = fixTargetStale(cap, fixCurrentSnapshot(payload.targetIdx), opts);
     if (!st.stale) { await fixLandResult(payload); return 'landed'; }
     if (st.reason === 'chatSwitched' && cap) {
         fixParkPut(fixParked, cap.chatId, { ...payload, captured: cap, at: Date.now() });
-        try { window.toastr && window.toastr.info && window.toastr.info('结果已暂存，回到原聊天时自动落地', '剧情推进'); } catch (e) { /* ignore */ }
+        try { getHostGlobal('toastr')?.info?.('结果已暂存，回到原聊天时自动落地', '剧情推进'); } catch (e) { /* ignore */ }
         return 'parked';
     }
     addAutoFixNote('stale', st.reason, null, payload.meta || null);
@@ -183,7 +188,7 @@ async function fixLandOrPark(payload, opts) {
 export async function fixDrainParked() {
     // 复审 minor #9：绝不与在飞的一轮交错落地（它随时会 applyFixAsSwipe / 写记录）。有轮在飞就让位，
     // 由那一轮 finally 里的 drainPendingPostReply 再唤我们一次（锁那时已释放）。
-    if (postReplyBusy) return 'deferred';
+    if (isPostReplyBusy()) return 'deferred';
     // ★ 顺序是【先取本聊天这一份、再扫其余】★（G 轮复审）：反过来的话，槽里挤着 ≥9 个聊天、而本聊天恰是
     // 其中最旧的那一个时，封顶淘汰会把「马上就要落地的这一份」当成最旧的踢掉——用户回到原聊天，已经
     // 买单的成品凭空消失。取出后仍按同一把尺子判它【自己】的保质期，TTL 语义与扫描不变。
@@ -213,19 +218,16 @@ function fixNoteRunStopped(meta) {
 // ✨/📋 整体校正与自定义模板任务共用的「一次调用 → 闸门 → MVU 等待 → 陈旧守卫 → 落 swipe → 记录」尾巴。
 // meta = null（校正）| { task:'custom', template, manual }（自定义，记录换族）。校正一族的记录实参逐字节不动
 // （meta 为空时 nochange 恒不带理由 = 老字节；自定义才补「模型没有改动」）。
-async function fixRunJoin(ctx, s, directive, join, compatSession, meta) {
-    // ★ 必须是【第一句】★（复审 Critical #1）：把捕获快照从模块级全局取下来。调用方（runCustomTask /
-    // runAutoFixPieces）从 captureFixContext 返回到这里全程无 await，所以这一刻的 fixCaptured / fixTargetIdx
-    // 仍是本轮的；此后的几十秒里用户可能在别的聊天点「按目标给最新回复去 AI 味」把它们覆写掉。
-    const cap = fixCaptured, tIdx = fixTargetIdx;
+async function fixRunJoin(ctx, s, directive, join, compatSession, meta, fixContext) {
+    const cap = fixContext.captured;
+    const tIdx = fixContext.targetIdx;
     const genToast2 = showAutoFixGenerating();
-    // 📋 只有自定义模板任务 + 全局流式开着时才拿得到 onDelta；校正路 preview.onDelta 恒 undefined
-    // ⇒ fixJoinCall 走的还是今天那条非流式分支（不变量 2：校正路径零行为变化）。
+    // 📋 只有自定义模板任务 + 全局流式开着时才拿得到 onDelta；校正路 preview.onDelta 恒 undefined。
     const preview = fixCustomPreviewStart(meta, genToast2, s);
     let r;
     const ctl2 = beginPostReplyCall(POST_REPLY_CALL_TIMEOUT_MS);
     try {
-        r = await fixJoinCall(ctx, s, directive, join, ctl2.signal, preview.onDelta);
+        r = await fixJoinCall(ctx, s, directive, join, ctl2.signal, preview.onDelta, fixContext);
     } catch (e) {
         preview.end();   // catch 体跑在 finally 之【前】：先撤气泡，记录才落在一间干净的房里（end() 幂等）
         if (!postReplyShouldStop()) addAutoFixNote('failed', '调用失败', null, meta);
@@ -257,11 +259,10 @@ async function fixRunJoin(ctx, s, directive, join, compatSession, meta) {
 // 两种都是单次 applyFixAsSwipe（绝不一段一个 swipe）+ 诚实侧聊记录。中断（「点此中断」toast →
 // cancelPostReply）随时废弃整轮、不写任何东西（1.17.4「abort 在写入之前」不变量原样）。
 // fixWaitForMvu / 陈旧守卫（mvuTolerant）与老单段路径同一套、只跑一次。
-async function runAutoFixPieces(ctx, s, compatSession) {
-    // ★ 与 fixRunJoin 同一条纪律（复审 Critical #1）：捕获快照在这里取下（runAutoFix 从 captureFixContext
-    // 到这里全程无 await），此后一律用 cap / tIdx，绝不再读模块级 fixCaptured / fixTargetIdx。
-    const cap = fixCaptured, tIdx = fixTargetIdx;
-    const table = fixPieceTable;
+async function runAutoFixPieces(ctx, s, compatSession, fixContext) {
+    const cap = fixContext.captured;
+    const tIdx = fixContext.targetIdx;
+    const table = fixContext.pieceTable;
     if (!table || !table.pieces.length) return;
     const cfg = getEffectiveFixCfg(s, getFixCfg());
     const a = resolveFixModeCfg(cfg, 'auto');
@@ -273,7 +274,7 @@ async function runAutoFixPieces(ctx, s, compatSession) {
         const join = fixJoinTable(table, a.dropTags);
         if (!join) { addAutoFixNote('nochange'); return; }
         if (!fixPreFilter(join.core, a.targets, constraints, clampFixAutoMinChars(cfg.fixAutoMinChars))) { addAutoFixNote('nochange'); return; }
-        await fixRunJoin(ctx, s, directive, join, compatSession, null);
+        await fixRunJoin(ctx, s, directive, join, compatSession, null, fixContext);
         return;
     }
     const plan = fixPiecePlan(table.pieces, a.targets, constraints, clampFixAutoMinChars(cfg.fixAutoMinChars));
@@ -285,7 +286,7 @@ async function runAutoFixPieces(ctx, s, compatSession) {
             if (postReplyShouldStop()) return;                  // 整轮作废，不写
             const ctl = beginPostReplyCall(POST_REPLY_CALL_TIMEOUT_MS);
             try {
-                results[i] = await fixPieceCall(ctx, s, a, directive, table.pieces[i], ctl.signal);
+                results[i] = await fixPieceCall(ctx, s, a, directive, table.pieces[i], ctl.signal, undefined, fixContext);
             } catch (e) {
                 if (postReplyShouldStop()) return;              // 中断 / supersede 引发的 abort：静默收尾
                 results[i] = { status: 'failed', reason: 'error' };
@@ -389,33 +390,33 @@ function replyExpectsMvu(text) {
 // ✨/📋 自动 / 自定义共用：captureFixContext 决策的【落地】（采纳作用域 / 记忆 / 提示 / 决定跳过）。返回 {stop:true} = 本轮结束。
 // meta 同 addAutoFixNote 第四参（自定义记录换族；scope/ask 类记录两族共用同一句式）。
 //
-// ✨ Phase 5 D+E 门：captureFixContext 已经决策好这条回复该拿哪个作用域标签、要不要出提示（fixScopeDecision）；
+// ✨ Phase 5 D+E 门：captureFixContext 已经把作用域决策放在 fixContext.scopeDecision；
 // 这里只负责【落地】——写配置 / 出提示 / 决定继续还是跳过。调用点刻意排在 R2 双重校正之后（那条已经
 // return 掉的情形不该再叠加一条作用域提示）、成本门 fixPreFilter 之前（省一次可能白花的 LLM 调用）。
 //   detected → 采纳新标签：写回 per-chat 配置（缓存，且 scopeManual 仍是 false——这不是用户手填的）+
 //     顺手同步一下设置面板里的 #so-fix-scope 输入框（如果窗口开着，用户正好能看见变化），继续往下走。
 //   suggest / skip → D 的静默兜底：只留一条侧聊记录，绝不整条回复瞎改，本轮直接结束。
-//   cache / fallbackWhole → 无需任何动作，直接往下走（fixScope 已经在 captureFixContext 里按决策设好了）。
+//   cache / fallbackWhole → 无需任何动作，直接往下走（fixContext.scope 已按决策准备好）。
 // 📋 自定义模板任务（沿用识别开）也走这里，因此模板任务会写 fixA_scopeTag / fixA_pieceMode / fixA_pieceAsked
 // ——这是【有意】的，不是串档：spec §5.2 把「沿用识别」定义成【逐字沿用自动的捕获路径】，正文形态的记忆
 // 本就是一张卡一份、两种任务共用（同一张卡的 <content> 不会因为换了任务就变），故不另开一套 fixC_ 形态键。
-function fixLandAutoDecisions(s, meta) {
-    const scopeDec = fixScopeDecision;
+function fixLandAutoDecisions(s, meta, fixContext) {
+    const scopeDec = fixContext.scopeDecision;
     if (scopeDec && scopeDec.action === 'detected') {
         setFixCfg({ fixA_scopeTag: scopeDec.tag, fixA_scopeManual: false });
         const scopeEl = win && win.querySelector('#so-fix-scope');
         if (scopeEl) scopeEl.value = scopeDec.tag;   // 单字段回填；el.value= 不触发 'input' 事件，scopeManual 不会被误置 true
         addAutoFixNote('scope', scopeDec.note, null, meta);
-        if (typeof toastr !== 'undefined') toastr.success(fixScopeNoteText(scopeDec.note).body, '', { timeOut: 6000 });   // ✨ M4：一次性自动切标签——窗口关着也看得见（skip/suggest 每条都弹会烦，故只 detected 弹）
+        getHostGlobal('toastr')?.success?.(fixScopeNoteText(scopeDec.note).body, '', { timeOut: 6000 });
     } else if (scopeDec && (scopeDec.action === 'suggest' || scopeDec.action === 'skip')) {
         addAutoFixNote('scope', scopeDec.note, null, meta);
         return { stop: true };   // D 静默兜底：跳过这条，绝不整条误改
     }
-    // ✨ 分段校正（1.18.0）门：captureFixContext 已跑决策阶梯（fixPieceDecision）。这里只【落地】——
+    // ✨ 分段校正（1.18.0）门：captureFixContext 已跑决策阶梯并写入 fixContext.pieceDecision。这里只【落地】——
     // 记忆（adopt 写回 per-chat）/ 提示 / 决定走哪条路。bypass / whole（无分段表）落到调用方的老单段路径，
-    // 行为逐字节不变；开关关时 fixPieceDecision 恒 null、整块蒸发。
-    if (ENABLE_FIX_PIECEWISE && fixPieceDecision) {
-        const pd = fixPieceDecision;
+    // 行为逐字节不变；开关关时 pieceDecision 恒 null、整块蒸发。
+    if (ENABLE_FIX_PIECEWISE && fixContext.pieceDecision) {
+        const pd = fixContext.pieceDecision;
         if (pd.adopt) {
             const cur = getEffectiveFixCfg(s, getFixCfg());
             if (cur.fixA_pieceMode !== 'wrapped' || cur.fixA_scopeTag !== pd.tag) {   // 只在有变化时写（免得每条回复都 saveChatMetadata）
@@ -424,7 +425,7 @@ function fixLandAutoDecisions(s, meta) {
                 if (scopeEl) scopeEl.value = pd.tag;
                 if (!pd.adopt.quiet) {
                     addAutoFixNote('scope', pd.note, null, meta);
-                    if (typeof toastr !== 'undefined') toastr.success(fixScopeNoteText(pd.note).body, '', { timeOut: 6000 });   // 一次性：检测切换才弹（quiet 迁移不弹）
+                    getHostGlobal('toastr')?.success?.(fixScopeNoteText(pd.note).body, '', { timeOut: 6000 });
                 }
             }
         }
@@ -453,28 +454,25 @@ export async function runCustomTask(ctx, s, targetId, compatSession, manual = fa
         if (fixNoTemplateShouldNote(fixNoTemplateNoted, chatIdentityKey(), cc.template)) addAutoFixNote('notemplate', '', null, meta);
         return;
     }
-    setFixCustomTemplateText(tpl.prompt);
-    await captureFixContext(s, { mode: 'custom', targetId });
-    // 楼号快照（G 轮复审的纪律条，与 runAutoFix 同式）：捕获之后本函数里的每一处楼号都读它，绝不再读
-    // 模块级 fixTargetIdx。落地那一份快照由 fixRunJoin 的第一句自己取（cap/tIdx 三处的既有钉）。
-    const tIdx = fixTargetIdx;
-    if (!fixTargetProse.trim()) return;
+    const fixContext = await captureFixContext(s, { mode: 'custom', targetId, customTemplateText: tpl.prompt });
+    const tIdx = fixContext.targetIdx;
+    if (!fixContext.targetProse.trim()) return;
     if (isFixSwipe((ctx.chat || [])[tIdx])) { addAutoFixNote('nochange', '这条已是一次处理结果', null, meta); return; }
-    if (cc.useMechanic && fixLandAutoDecisions(s, meta).stop) return;
-    const join = fixCustomJoin || (fixPieceTable ? fixJoinTable(fixPieceTable, fixDropMinusKeep(cc.keepTags, cc.dropTags)) : null);
+    if (cc.useMechanic && fixLandAutoDecisions(s, meta, fixContext).stop) return;
+    const join = fixContext.customJoin || (fixContext.pieceTable ? fixJoinTable(fixContext.pieceTable, fixDropMinusKeep(cc.keepTags, cc.dropTags)) : null);
     if (!join) { addAutoFixNote('nochange', '没有可处理的正文', null, meta); return; }
     if ([...join.core].length < clampFixAutoMinChars(cfg.fixAutoMinChars)) { addAutoFixNote('nochange', '太短', null, meta); return; }
-    await fixRunJoin(ctx, s, P('fix.customLead', null, s), join, compatSession, meta);
+    await fixRunJoin(ctx, s, P('fix.customLead', null, s), join, compatSession, meta, fixContext);
 }
 
 // 📋 「用模板处理最新回复」按钮：一次性手动触发。起飞前的各种拒绝（连接没配 / 模板缺失 / 没有可处理的回复）
 // 走 addSystemNote —— 有人盯着屏幕，说一句就够，不必留持久记录；真跑起来之后交给 runCustomTask，
 // 它与自动路一样在侧聊留【持久记录】（addAutoFixNote）。
-// postReplyBusy 是 maybePostReply 持的那把共享锁：自动轮在飞时点这颗，会把 fixTargetIdx / fixCaptured
-// 覆写掉、并抢走在途的 AbortController（两轮互相踩），故直接挡住。
+// postReplyBusy 是 maybePostReply 持的共享锁：自动轮在飞时点这颗会抢占同一 post-reply AbortController，
+// 两轮互相中止，故直接挡住。
 export async function runCustomTaskNow() {
     if (isGenerating || !ENABLE_FIX_CUSTOM_TASK) return;
-    if (postReplyBusy) { addSystemNote('正在跑自动处理，稍后再点。'); return; }
+    if (isPostReplyBusy()) { addSystemNote('正在跑自动处理，稍后再点。'); return; }
     const s = getSettings();
     if (s.mode === 'direct' && (!s.endpoint || !s.model)) { addSystemNote('请先在设置里配置直连端点与模型。'); return; }
     if (s.mode === 'profile' && !s.profileId) { addSystemNote('请先在设置里选择一个连接配置档。'); return; }
@@ -486,9 +484,8 @@ export async function runCustomTaskNow() {
     const idx = getLatestAiMessage().idx;
     const compatSession = null;
     // 锁【也要拿】，不只是让路（评审 F2）：光有上面那道 `if (postReplyBusy) return` 只挡住了一个方向。
-    // 本函数自己跑的这几十秒里落一条新回复 → MESSAGE_RECEIVED → maybePostReply 的 `if (postReplyBusy)` /
-    // `if (isGenerating)` 全都放行 → 它重新 captureFixContext，把 fixTargetIdx / fixCaptured / 在途的
-    // AbortController 一起覆写，本轮按钮的产出就落到【新那条】消息上了。持锁 = 那一轮改为入队，
+    // 本函数自己跑的这几十秒里落一条新回复 → MESSAGE_RECEIVED；若不持锁，新的回复后任务会与本轮并发，
+    // 抢占共享 post-reply AbortController，并让两个自动处理轮交错落地。持锁后新轮改为入队，
     // 由下面的 drainPendingPostReply 在释放后补跑（与 maybePostReply 的 finally 同一份补跑步）。
     // ★ 1.77.0 根因修复（调查报告 `.superpowers/sdd/2026-09-03-fix-custom-task/investigate-runnow-report.md`）★
     // postReplyCancelled 是【一轮的】状态，规矩是「谁开新一轮，谁起手清零」——今天只有 maybePostReply 照做了。
@@ -498,42 +495,36 @@ export async function runCustomTaskNow() {
     // 起手 + 收尾各清一次，并注册自己的 run —— 与 maybePostReply 逐字同款，这样 MESSAGE_SENT 的
     // supersedePostReply() 也能像作废自动轮一样作废按钮这一轮（此前按钮路从不注册 run，supersede 够不着）。
     const run = { messageId: idx, superseded: false, step: 'custom' };   // step：切聊天时 onChatChanged 只作废 diag / trainer，模板轮跑完后暂存
-    setPostReplyBusy(true);
-    setPostReplyCancelled(false);
-    setActivePostReplyRun(run);
+    beginPostReplyRun(run);
     try {
         await runCustomTask(ctx, s, idx, compatSession, true);
     } finally {
-        if (activePostReplyRun === run) setActivePostReplyRun(null);
-        setPostReplyCancelled(false);
-        setPostReplyBusy(false);
+        finishPostReplyRun(run);
         drainPendingPostReply();
     }
 }
 
 // 自动校正【运行步】（仿 runAutoDiagnose）：对最新一条主聊天 AI 回复用【勾选目标 + 约束】跑一次两段式校正，
 // 解析成功且确有改动则自动【作为新 swipe】应用（非破坏性，原文留在 swipe 0），每跑一轮在侧聊留一条记录。
-// 后台操作：自建上下文、不碰窗口共享态、不 setGenerating、不出问答气泡（与手动 runFixByTargets 的区别）。
+// 后台操作：自建上下文、不碰窗口共享态、不 beginGeneration、不出问答气泡（与手动 runFixByTargets 的区别）。
 // 【不】自管锁 / settle——编排（Task 5 的 message_received 监听）持锁；本函数只负责「跑这一次」。
 // 一次性非流式调用（own AbortController + 120s 超时）。
-export async function runAutoFix(ctx, s, targetId, compatSession) {
+export async function runAutoFix(ctx, s, targetId, compatSession, options = {}) {
     // 连接没配好就静默退出——别让每条回复都报错（开自动模式的人一般已配好直连 / 配置档）。
     if (s.mode === 'direct' && (!s.endpoint || !s.model)) return;
     if (s.mode === 'profile' && !s.profileId) return;
 
-    await captureFixContext(s, { mode: 'auto', targetId });     // 自动模式：双稿 / 目标 / 上下文按 fixA_*（收紧仍受 ✂️收紧 开关）；targetId 钉住触发消息
-    // ★ 捕获快照【立刻】取下（复审 Critical #1）：老单段路径在下面还要跑一整趟模型往返，期间用户可能在
-    // 别的聊天点「按目标给最新回复去 AI 味」把这两个全局覆写掉；落地判据只认这里取下的这一份。
-    const cap = fixCaptured, tIdx = fixTargetIdx;
-    if (!fixTargetProse.trim()) return;                         // 没有可校正的 AI 回复正文
+    const fixContext = options.fixContext || await captureFixContext(s, { mode: 'auto', targetId });
+    const cap = fixContext.captured;
+    const tIdx = fixContext.targetIdx;
+    if (!fixContext.targetProse.trim()) return;
     // R2 双重校正（自动）：目标当前 swipe 已是一次校正结果 → 跳过 + 记一条 nochange（防止在校正稿上再叠一层、越改越偏）。
-    // 楼号一律读 tIdx（G 轮复审的纪律条）：快照取下之后，本函数里再也不许出现模块级 fixTargetIdx / fixCaptured
-    // ——今天这一句与快照之间虽然没有 await（读到的是同一个值），但「只认快照」这条纪律留不得例外，
-    // 否则下一个人在中间插一句 await 时不会有任何东西提醒他。
+    // 楼号一律读 tIdx（G 轮复审的纪律条）：快照取下之后，本函数只认 fixContext，
+    // 让后续即使在中间加入 await，也不会转而读取另一轮捕获。
     if (isFixSwipe((ctx.chat || [])[tIdx])) { addAutoFixNote('nochange'); return; }
 
-    if (fixLandAutoDecisions(s, null).stop) return;
-    if (ENABLE_FIX_PIECEWISE && fixPieceDecision && fixPieceTable) { await runAutoFixPieces(ctx, s, compatSession); return; }
+    if (fixLandAutoDecisions(s, null, fixContext).stop) return;
+    if (ENABLE_FIX_PIECEWISE && fixContext.pieceDecision && fixContext.pieceTable) { await runAutoFixPieces(ctx, s, compatSession, fixContext); return; }
     // bypass / whole（无分段表）：继续走下面的老单段路径
 
     // 自动模式配置（per-chat 覆盖全局，再归一）；fixAutoMinChars = 成本门最小字符数（自动专属，不进归一）。
@@ -543,9 +534,9 @@ export async function runAutoFix(ctx, s, targetId, compatSession) {
     const constraints = { knowledge: a.knowledge, guardrails: a.guardrails };
 
     // 成本门：不值得发调用（太短 / 没勾目标的禁词命中 / 没约束）→ 记一条「无需校正」直接跳过，不发 LLM。
-    if (!fixPreFilter(fixTargetProse, targets, constraints, clampFixAutoMinChars(cfg.fixAutoMinChars))) { addAutoFixNote('nochange'); return; }   // ✨ 防呆（P5）：读侧钳制
+    if (!options.messages && !fixPreFilter(fixContext.targetProse, targets, constraints, clampFixAutoMinChars(cfg.fixAutoMinChars))) { addAutoFixNote('nochange'); return; }
 
-    const directive = compileFixTargets(
+    const directive = options.directive ?? compileFixTargets(
         targets,
         { card: a.includeCard, context: a.includeContext, world: a.includeWorld },
         constraints,
@@ -553,15 +544,15 @@ export async function runAutoFix(ctx, s, targetId, compatSession) {
     );
     if (!directive) return;                                      // 什么都没配（无目标 + 无约束）——不留记录、静默退出
 
-    const messages = (fixUsePresetFor(s, 'auto') && presetCurationActive(s))
-        ? buildFixPresetMessages(s, directive)   // 破限 / 越狱：套上自定义补全预设（仅文本块 + 角色，跳过 RP 内容标记）
-        : maybeWrapJb([{ role: 'system', content: buildFixPrompt(ctx, s) }, { role: 'user', content: directive }], 'fixAuto', s);
+    const messages = options.messages || ((fixUsePresetFor(s, 'auto') && presetCurationActive(s))
+        ? buildFixPresetMessages(s, directive, fixContext)
+        : maybeWrapJb([{ role: 'system', content: buildFixPrompt(ctx, s, fixContext) }, { role: 'user', content: directive }], 'fixAuto', s));
     const effMaxTokens = fixEffMaxTokens(s);   // Tier 0 ③：可被 fixMaxTokens 顶高（长楼层）
     const ctl = beginPostReplyCall(POST_REPLY_CALL_TIMEOUT_MS);      // 模块级中断器：240s 超时兜底 + 让「正在自动校正…」提示可点一下中断
     const genToast = showAutoFixGenerating();
     let finalText = '';
     try {
-        finalText = await fixCallTransport(s, messages, ctl.signal, undefined, effMaxTokens);
+        finalText = await fixCallTransport(s, messages, ctl.signal, undefined, effMaxTokens, options.transport);
     } finally {
         ctl.end();
         dismissToast(genToast);
@@ -572,16 +563,16 @@ export async function runAutoFix(ctx, s, targetId, compatSession) {
         const fr = fixFailureReason(finalText, undefined);
         let why = fr.kind === 'ok' ? '' : fr.message;
         // 这条回复期待 MVU 状态栏但环境没有 MVU：顺带说明「状态栏不显示是环境问题、与校正无关」（fixEnvNote）。
-        try { if (replyExpectsMvu(fixOriginalReply) && !(await getMvu())) why = (why ? why + '\n' : '') + fixEnvNote('mvuAbsent'); } catch (e) { /* ignore */ }
+        try { if (replyExpectsMvu(fixContext.originalReply) && !(await getMvu())) why = (why ? why + '\n' : '') + fixEnvNote('mvuAbsent'); } catch (e) { /* ignore */ }
         addAutoFixNote('failed', why);
         return;
     }
     // Tier 0 ①：等于没改（逐字相同 或 近抄）→ 不落 swipe。区分提示：逐字相同=无需校正；近抄=模型基本没改（高上下文常见）。
-    if (fixEffectivelyUnchanged(fixTargetProse, parsed.fixed)) { addAutoFixNote(fixNoOp(fixTargetProse, parsed.fixed) ? 'nochange' : 'nearcopy'); return; }
+    if (fixEffectivelyUnchanged(fixContext.targetProse, parsed.fixed)) { addAutoFixNote(fixNoOp(fixContext.targetProse, parsed.fixed) ? 'nochange' : 'nearcopy'); return; }
     // R1 P-TRUNC 截断守卫：原始回复里 <FixedReply> 开了没闭 → 合成 finish='length'；否则靠启发式（末尾断句 + 原文
     // 收尾干净 + 明显偏短）。截断稿会把回复腰斩成半句 → 不应用、记一条 truncated（不落 swipe）。
     const finishHint = (/<FixedReply\b[^>]*>/i.test(finalText) && !/<\/FixedReply\s*>/i.test(finalText)) ? 'length' : undefined;
-    if (fixOutputTruncated(parsed.fixed, finishHint, fixTargetProse).truncated) { addAutoFixNote('truncated'); return; }
+    if (fixOutputTruncated(parsed.fixed, finishHint, fixContext.targetProse).truncated) { addAutoFixNote('truncated'); return; }
 
     // 接回原回复的机制块（<UpdateVariable> + 状态栏占位符）+ 用户「排除·保留」区，再作为【新 swipe】应用。
     // ✨ overlap（opt-in fixWaitForMvu）：校正的 LLM 已和 MVU 额外模型更新【并行】跑完；写 swipe 前【等 MVU 写完】，
@@ -589,31 +580,20 @@ export async function runAutoFix(ctx, s, targetId, compatSession) {
     // MVU 不忙 → awaitMvuIdle 即时返回、mergeMvuTail 无操作，行为字节不变。
     const boundary = await awaitFixMvuBoundary(s, compatSession, cap && cap.chatId);
     if (!boundary.proceed) return;   // 等 MVU 期间被中断 / supersede / 兼容超时 → 不写
-    const innerFixed = composeFixedReply(parsed.fixed, fixOriginalReply, fixExtraKeep);
-    let finalText2 = wrapContentScope(fixScope, innerFixed);   // ✨ 作用域：把校正后的内层回插信封原位（inactive 时为无操作）
+    const innerFixed = composeFixedReply(parsed.fixed, fixContext.originalReply, fixContext.extraKeep);
+    let finalText2 = wrapContentScope(fixContext.scope, innerFixed);
     if (boundary.coordinated) finalText2 = mergeMvuTail(finalText2, (ctx.chat || [])[tIdx]?.mes);   // MVU 事后注的机制块补接末尾
     // P-CORRUPT 权威网：LLM 返回后聊天可能已切走 / 这条回复已换 swipe / 被编辑 / 被删——写入前再核对捕获快照，失效则不写、记一条
     // stale。overlap 模式（fixWaitForMvu）用 mvuTolerant：只比去机制块正文，容忍 MVU 刚注入的块，仍拦真编辑 / 换 swipe / 切聊天 / 目标没了。
     // 陈旧守卫 → 落地 / 暂存 / stale（1.77.0 起「切聊天」不再丢弃，见 fixLandOrPark）。落地时抓【应用后】
     // 落点的 swipe_id（fixLandResult 里），给记录的「用原文 ↔ 用校正稿」开关用；原文留在 swipe 0。
-    // before = 去机制块的原文 prose（fixTargetProse）；after 必须也是【纯散文】parsed.fixed——不是 finalText2：
+    // before = 去机制块的本轮 targetProse；after 必须也是【纯散文】parsed.fixed——不是 finalText2：
     // finalText2 经 composeFixedReply 接回了 <UpdateVariable> + 状态栏占位符 + 保留区，拿它做 after 会让 MVU 卡
     // 的整个状态块在差异里被误标成大段绿色新增。prose ↔ prose 才干净（与手动卡 stripMechanismBlocks(原文)
     // vs parsed.fixed 一致）。swipe 目标仍是 finalText2 落点（不动）。
     await fixLandOrPark({
         captured: cap, targetIdx: tIdx, joined: finalText2, status: 'fixed',
-        problems: parsed.problems, before: fixTargetProse, after: parsed.fixed, meta: null,
+        problems: parsed.problems, before: fixContext.targetProse, after: parsed.fixed, meta: null,
     }, { mvuTolerant: boundary.coordinated });
 }
 
-
-export function stopGeneration() {
-    try { abortCtl?.abort(); } catch (e) { /* ignore */ }
-}
-
-export function setGenerating(on) {
-    setIsGenerating(on);
-    sendBtn.innerHTML = on ? '<i class="fa-solid fa-stop"></i>' : '<i class="fa-solid fa-paper-plane"></i>';
-    sendBtn.title = on ? '停止' : '发送';
-    sendBtn.classList.toggle('so-generating', on);
-}

@@ -1,7 +1,10 @@
 import { getSettings, save } from '../core/settings.js';
 
 import { autoGrowInput } from '../modes/chat/history.js';
-import { _ensureInViewPending, _soPreFsGeom, setEnsureInViewPending, setSoPreFsGeom, win } from './state.js';
+import { win } from './refs.js';
+
+let preFullscreenGeometry = null;
+let ensureInViewPending = false;
 
 /* ------------------------------------------------------------------ *
  * Window dragging + resize persistence
@@ -149,20 +152,20 @@ export function setFullscreen(on) {
     const next = (on === undefined) ? !cur : !!on;
     if (next === cur) { updateFullscreenBtn(next); return; }   // 已是该态：别重复快照（否则会把全屏几何存成"悬浮"快照）
     if (next) {
-        setSoPreFsGeom({ left: el.style.left, top: el.style.top, right: el.style.right, width: el.style.width, height: el.style.height });
+        preFullscreenGeometry = { left: el.style.left, top: el.style.top, right: el.style.right, width: el.style.width, height: el.style.height };
         el.classList.add('so-fullscreen');
         updateFullscreenBtn(true);
         fitFullscreen();                                       // 铺满可见视口
     } else {
         el.classList.remove('so-fullscreen');
         updateFullscreenBtn(false);
-        if (_soPreFsGeom) {                                    // 逐字还原进入前的内联样式（含"无 left/top、纯 CSS 定位"的默认态）
-            el.style.left = _soPreFsGeom.left;
-            el.style.top = _soPreFsGeom.top;
-            el.style.right = _soPreFsGeom.right;
-            el.style.width = _soPreFsGeom.width;
-            el.style.height = _soPreFsGeom.height;
-            setSoPreFsGeom(null);
+        if (preFullscreenGeometry) {                                    // 逐字还原进入前的内联样式（含"无 left/top、纯 CSS 定位"的默认态）
+            el.style.left = preFullscreenGeometry.left;
+            el.style.top = preFullscreenGeometry.top;
+            el.style.right = preFullscreenGeometry.right;
+            el.style.width = preFullscreenGeometry.width;
+            el.style.height = preFullscreenGeometry.height;
+            preFullscreenGeometry = null;
         }
         ensureWindowInView();   // 还原后再夹一次：旋屏/键盘期间几何若变把窗口收回可见区（此刻 r 已是还原后的原位）；仍不 save
     }
@@ -190,9 +193,9 @@ export function onFullscreenEscKeydown(e) {
 // 视口变化会连发很多次（键盘动画 / 旋屏过渡）——合并到下一帧只夹一次，避免抖动。
 
 export function scheduleEnsureInView() {
-    if (_ensureInViewPending) return;
-    setEnsureInViewPending(true);
-    requestAnimationFrame(() => { setEnsureInViewPending(false); ensureWindowInView(); });
+    if (ensureInViewPending) return;
+    ensureInViewPending = true;
+    requestAnimationFrame(() => { ensureInViewPending = false; ensureWindowInView(); });
 }
 
 // Drag the window by its header. Pointer events cover mouse + touch + pen in one

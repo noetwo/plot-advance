@@ -7,8 +7,20 @@ import { applyPlanInjection, nodeTargetText, pathActiveNode, pathInjectionText, 
 import { ADVISOR_SPEEDS } from '../../prompts/builtins.js';
 import { makeDraggable } from '../../ui/geometry.js';
 import { toggleWindow } from '../../ui/mode-shell.js';
-import { pathEditDraft, planBarEl, planFloat, planFloatSlot, setPathEditDraft, setPlanFloat, setPlanFloatSlot } from './state.js';
-import { win } from '../../ui/state.js';
+import { win } from '../../ui/refs.js';
+export let planBarEl = null;
+let pathEditDraft = null;
+let planFloat = null;
+let planFloatSlot = null;
+
+export function bindPlanBar(element) {
+    planBarEl = element;
+    return planBarEl;
+}
+
+export function discardPathEdit() {
+    pathEditDraft = null;
+}
 
 /* ------------------------------------------------------------------ *
  * 方案条（active plan strip）。只要当前聊天存在已采用的方案就显示——
@@ -25,7 +37,7 @@ export function renderPlanBar() {
     if (win) win.classList.toggle('so-plan-on', !!path);
     const pre = planBarEl.querySelector('#so-plan-directive');
     if (!path) {
-        setPathEditDraft(null);
+        discardPathEdit();
         pre.classList.remove('open');
         planBarEl.querySelector('#so-plan-show').textContent = '▸ 查看注入内容';
         planBarEl.querySelector('#so-seq-list').innerHTML = '';
@@ -100,7 +112,7 @@ export function startPathEdit(target) {
         detail = n.detail || '';
         if (pathIsMulti(path)) keywords = n.keywords || '';
     }
-    setPathEditDraft({ chatKey: chatIdentityKey(), adoptedAt: path.adoptedAt, target, detail, keywords });
+    pathEditDraft = { chatKey: chatIdentityKey(), adoptedAt: path.adoptedAt, target, detail, keywords };
     renderPathList(path);
     const box = planBarEl.querySelector('#so-seq-list textarea');
     if (box) { box.focus(); box.setSelectionRange(0, 0); box.scrollTop = 0; }
@@ -108,7 +120,7 @@ export function startPathEdit(target) {
 function savePathEdit() {
     const path = getPath();
     const d = pathDraftFor(path);
-    setPathEditDraft(null);
+    discardPathEdit();
     if (!d) { renderPlanBar(); return; }
     if (d.target === 'overall') {
         path.overall = String(d.detail || '').trim();
@@ -192,7 +204,7 @@ function renderPathList(path) {
                 actions.appendChild(b);
             };
             mk('保存', 'so-plan-done', savePathEdit);
-            mk('取消', '', () => { setPathEditDraft(null); renderPathList(path); });
+            mk('取消', '', () => { discardPathEdit(); renderPathList(path); });
             bodyEl.appendChild(actions);
         }
         row.appendChild(bodyEl);
@@ -256,7 +268,7 @@ function activeConstructLabel() {
 // Lazy-build the floating home for the strip.
 function ensurePlanFloat() {
     if (planFloat) return;
-    setPlanFloat(document.createElement('div'));
+    planFloat = document.createElement('div');
     planFloat.id = 'so-plan-float';
     planFloat.innerHTML = `
         <div id="so-plan-float-head">
@@ -268,7 +280,7 @@ function ensurePlanFloat() {
         </div>
         <div id="so-plan-float-slot"></div>`;
     document.body.appendChild(planFloat);
-    setPlanFloatSlot(planFloat.querySelector('#so-plan-float-slot'));
+    planFloatSlot = planFloat.querySelector('#so-plan-float-slot');
     planFloat.querySelector('#so-plan-float-open').addEventListener('click', () => toggleWindow(true));
     planFloat.querySelector('#so-plan-float-collapse').addEventListener('click', () => {
         const s2 = getSettings();

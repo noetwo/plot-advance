@@ -1,7 +1,7 @@
 import { saveChatMetadata } from '../../core/chat-metadata.js';
 import { getCtx, getSettings, save, uiConfirm } from '../../core/settings.js';
 
-import { ADVISOR_PROMPT_KEY, FIX_CFG_META_KEY, getChatMetadataSafe, getPath } from '../advisor/metadata.js';
+import { ADVISOR_PROMPT_KEY, FIX_CFG_META_KEY, armGuideInjection, disarmGuideInjection, getChatMetadataSafe, getPath, guideInjectionArmed, guideInjectionText, replaceGuideInjection } from '../advisor/metadata.js';
 import { parseExcludeTags } from '../diagnose/mvu.js';
 import { filterBundleCfg, normalizeScopeInput } from './algorithms.js';
 import { loadFixCfgForChat, populateFixTemplates, updateFixTplDirtyMarker, updateFixVerdict } from './ui.js';
@@ -9,9 +9,18 @@ import { ADVISOR_SPEEDS, ENABLE_FIX_CUSTOM_TASK, ENABLE_FIX_TEMPLATE_HUB, ENABLE
 import { fixSampleTemplateByName, fixTemplateIsBuiltin } from '../../prompts/helpers.js';
 import { P, promptIsCustom } from '../../prompts/registry.js';
 import { MVU_UPDATE_TAG } from '../../st/adapters.js';
-import { setSoGuideArmed, setSoGuideText, soGuideArmed, soGuideText } from '../advisor/state.js';
-import { fixHubSkipWarned, fixHubState, fixShareOpenSeq, fixTplDirty, nextFixShareOpenSeq, setFixHubSkipWarned, setFixShareOpenSeq, setFixTplDirty, setFixTplDirtyFor } from './state.js';
-import { win } from '../../ui/state.js';
+import { getHostGlobal, getHostStorage, hostFetch } from '../../st/host.js';
+import { win } from '../../ui/refs.js';
+
+let fixHubSkipWarned = false;
+const fixHubState = { lib: null, source: '', fetchedAt: 0, tag: '', q: '', open: new Set(), pending: '' };
+let fixShareOpenSeq = 0;
+
+export let fixTplDirty = false;
+export let fixTplDirtyFor = '';
+export function markFixTemplateDirty() { fixTplDirty = true; }
+export function clearFixTemplateDirty(owner = '') { fixTplDirty = false; fixTplDirtyFor = owner; }
+export function claimFixTemplateDraft(owner) { fixTplDirtyFor = String(owner || ''); }
 
 /* ------------------------------------------------------------------ *
  * ✨ 校正模式 Phase 4：校正配置按【当前聊天】持久化（同 plan/convo/summary/diagwi 风格）。
@@ -302,7 +311,7 @@ function fixHubParseLibrary(body) {
         seen.add(t.id);
         templates.push(t);
     }
-    if (skipped && !fixHubSkipWarned) { setFixHubSkipWarned(true); console.warn(`[Story Oracle] 模板广场：${skipped} 个条目格式不对，已跳过`); }
+    if (skipped && !fixHubSkipWarned) { fixHubSkipWarned = true; console.warn(`[Story Oracle] 模板广场：${skipped} 个条目格式不对，已跳过`); }
     return { ok: true, lib: { generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : '', tags, templates }, skipped };
 }
 
@@ -367,14 +376,14 @@ const FIX_HUB_CACHE_KEY = 'so-fixhub-cache-v1';
 // 缓存 = localStorage 里的 { fetchedAt, url, body }；每次读写都 try/catch（隐私模式 / 满了 / 被禁用都照常能用）。
 function fixHubCacheRead() {
     try {
-        const raw = localStorage.getItem(FIX_HUB_CACHE_KEY);
+        const raw = getHostStorage().getItem(FIX_HUB_CACHE_KEY);
         if (!raw) return null;
         const c = JSON.parse(raw);
         return (c && typeof c.body === 'string') ? c : null;
     } catch (e) { return null; }
 }
 function fixHubCacheWrite(obj) {
-    try { localStorage.setItem(FIX_HUB_CACHE_KEY, JSON.stringify(obj)); } catch (e) { /* 隐私模式 / 满了：不缓存也能用 */ }
+    try { getHostStorage().setItem(FIX_HUB_CACHE_KEY, JSON.stringify(obj)); } catch (e) { /* 隐私模式 / 满了：不缓存也能用 */ }
 }
 
 // 纯函数：广场的「新旧」= generatedAt 的时间戳；解析不了 → 0（最旧）。
@@ -395,7 +404,7 @@ async function fixHubLoadLibrary({ force = false } = {}) {
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), 10000);
         try {
-            const res = await fetch(url, { cache: 'no-store', signal: ctl.signal });
+            const res = await hostFetch(url, { cache: 'no-store', signal: ctl.signal });
             if (!res.ok) return null;
             const text = await res.text();
             return { url, text, parsed: fixHubParseLibrary(text) };
@@ -509,10 +518,10 @@ async function fixHubDownload(entry, mode) {
     const box = win && win.querySelector('#so-fixc-prompt');
     if (sel) sel.value = name;
     if (box) box.value = entry.prompt;
-    setFixTplDirty(false); setFixTplDirtyFor(name); updateFixTplDirtyMarker();
+    fixTplDirty = false; fixTplDirtyFor = name; updateFixTplDirtyMarker();
     updateFixVerdict();
     // 名字来自广场（不可信）：显式要求 toastr 转义，不依赖 ST 的全局默认。
-    if (typeof toastr !== 'undefined') toastr.success(`已下载：〔${name}〕`, '', { escapeHtml: true });
+    getHostGlobal('toastr')?.success?.(`已下载：〔${name}〕`, '', { escapeHtml: true });
     return true;
 }
 
@@ -706,8 +715,8 @@ function fixHubShareCheck(el) {
 async function fixHubCopy(el, value) {
     const text = fixHubShareText(value);
     try {
-        await navigator.clipboard.writeText(text);   // 非安全上下文（局域网 http）里 clipboard 不存在 → 抛 → 走兜底
-        if (typeof toastr !== 'undefined') toastr.success('已复制——发到神谕 Discord 的模板分享频道就行');
+        await getHostGlobal('navigator').clipboard.writeText(text);   // 非安全上下文（局域网 http）里 clipboard 不存在 → 抛 → 走兜底
+        getHostGlobal('toastr')?.success?.('已复制——发到神谕 Discord 的模板分享频道就行');
     } catch (e) {
         const box = el.querySelector('#so-fixshare-copybox');
         box.hidden = false;
@@ -786,7 +795,7 @@ function buildFixShareCard() {
         if (chip) chip.classList.toggle('so-on');
     });
     el.querySelector('#so-fixshare-isupdate').addEventListener('change', (e) => { el.querySelector('#so-fixshare-updateof').hidden = !e.target.checked; });
-    el.querySelector('#so-fixshare-author').addEventListener('change', (e) => { try { localStorage.setItem(FIX_HUB_AUTHOR_KEY, e.target.value); } catch (err) { /* 不记也行 */ } });
+    el.querySelector('#so-fixshare-author').addEventListener('change', (e) => { try { getHostStorage().setItem(FIX_HUB_AUTHOR_KEY, e.target.value); } catch (err) { /* 不记也行 */ } });
     el.querySelector('#so-fixshare-copy').addEventListener('click', async () => {
         const r = fixHubShareCheck(el);
         if (!r.ok) { fixHubShowErrors(el, r.lines); return; }
@@ -803,14 +812,14 @@ export async function openFixShare() {
     const s = getSettings();
     const name = (win.querySelector('#so-fixc-template') || {}).value || '';
     const blocked = fixHubShareBlockedReason(name, s, fixTplDirty);
-    if (blocked) { if (typeof toastr !== 'undefined') toastr.info(blocked); return; }
+    if (blocked) { getHostGlobal('toastr')?.info?.(blocked); return; }
     const tpl = normalizeFixTemplates(s.fixTemplates).find((t) => t.name === name);
     const el = buildFixShareCard();
-    const seq = nextFixShareOpenSeq();
+    const seq = ++fixShareOpenSeq;
     el.querySelector('#so-fixshare-name').value = tpl.name;
     el.querySelector('#so-fixshare-prompt').value = tpl.prompt;
     let author = '';
-    try { author = localStorage.getItem(FIX_HUB_AUTHOR_KEY) || ''; } catch (e) { author = ''; }
+    try { author = getHostStorage().getItem(FIX_HUB_AUTHOR_KEY) || ''; } catch (e) { author = ''; }
     el.querySelector('#so-fixshare-author').value = author;
     el.querySelector('#so-fixshare-desc').value = '';
     el.querySelector('#so-fixshare-model').value = '';
@@ -838,7 +847,7 @@ export async function openFixShare() {
 }
 
 function closeFixShare() {
-    setFixShareOpenSeq(fixShareOpenSeq + (1));
+    fixShareOpenSeq = fixShareOpenSeq + (1);
     const el = win && win.querySelector('#so-fixshare');
     if (el) el.classList.remove('open');
 }
@@ -939,7 +948,7 @@ export function saveFixTemplate(name, prompt) {
     // 内置示例的名字是【保留名】：造得出同名，findFixTemplate 的兜底就够不着示例、下拉里也两条同名。
     // 硬拒在这一层（唯一的写入口），面板不必各自设防。
     if (fixTemplateIsBuiltin(trimmed)) {
-        if (typeof toastr !== 'undefined') toastr.info('这是内置示例的名字，换一个');
+        getHostGlobal('toastr')?.info?.('这是内置示例的名字，换一个');
         return false;
     }
     const s = getSettings();
@@ -971,10 +980,10 @@ export function loadFixBundle(name) {
     loadFixCfgForChat();     // 重新种子校正控件，UI 立刻反映
     // 📋 自定义模板任务：套餐会把本聊天整个切到模板任务——这是【看不见】的行为变化（面板可能还停在自动视图），
     // 故明说一句；套餐点名的模板本机不存在时降级成警告（spec §3「加载的套餐点名的模板本机不存在 → toast 提醒」）。
-    if (ENABLE_FIX_CUSTOM_TASK && bundle.cfg.fixA_task === 'custom' && typeof toastr !== 'undefined') {
+    if (ENABLE_FIX_CUSTOM_TASK && bundle.cfg.fixA_task === 'custom') {
         const tplName = typeof bundle.cfg.fixC_template === 'string' ? bundle.cfg.fixC_template : '';
-        if (findFixTemplate(getSettings(), tplName)) toastr.info('套餐已把本聊天切到模板任务〔' + tplName + '〕');
-        else toastr.warning('套餐指定的模板〔' + tplName + '〕本机不存在——到「校正设置 → 自定义」里新建同名模板，或换回校正');
+        if (findFixTemplate(getSettings(), tplName)) getHostGlobal('toastr')?.info?.('套餐已把本聊天切到模板任务〔' + tplName + '〕');
+        else getHostGlobal('toastr')?.warning?.('套餐指定的模板〔' + tplName + '〕本机不存在——到「校正设置 → 自定义」里新建同名模板，或换回校正');
     }
     return true;
 }
@@ -1111,16 +1120,16 @@ function registerGuideSlot(text) {
 // 预览提示词）也挂——它同样会发 GENERATE_AFTER_DATA，随即撤下。
 export function armGuide(type) {
     if (!GUIDE_GEN_TYPES.includes(type || 'normal')) return;
-    setSoGuideArmed(true);
-    registerGuideSlot(soGuideText);
+    armGuideInjection();
+    registerGuideSlot(guideInjectionText);
 }
 export function disarmGuide() {
-    if (!soGuideArmed) return;
-    setSoGuideArmed(false);
+    if (!guideInjectionArmed) return;
+    disarmGuideInjection();
     registerGuideSlot('');
 }
 
-// 按当前聊天的剧情脉络算出该注入的整段，存进 soGuideText。窗口外只把槽清空（顺带清掉旧版本留下的常驻登记）；
+// 按当前聊天的剧情脉络算出该注入的整段，存进 guideInjectionText。窗口外只把槽清空（顺带清掉旧版本留下的常驻登记）；
 // 窗口内（生成途中改了计划）立即换成新文本。返回 false 仅当这个酒馆版本没有 setExtensionPrompt。
 export function applyPlanInjection() {
     const ctx = getCtx();
@@ -1128,8 +1137,8 @@ export function applyPlanInjection() {
     // 同一时间只有当前节点在引导主聊天；暂停、没有当前节点（元数据被外力弄脏）都注入空串。
     const path = getPath();
     const text = (path && !path.paused) ? pathInjectionText(path) : '';
-    setSoGuideText(text);
-    return registerGuideSlot(soGuideArmed ? text : '');
+    replaceGuideInjection(text);
+    return registerGuideSlot(guideInjectionArmed ? text : '');
 }
 
 

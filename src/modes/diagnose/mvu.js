@@ -4,25 +4,20 @@ import { REASONING_TAGS } from '../chat/context.js';
 import { mvuMsgOpts } from './auto.js';
 import { MVU_BLOCK_DIALECTS } from '../../prompts/builtins.js';
 import { detectMvuBlockDialect, mvuBlockRegex, mvuDialectInnerOk } from '../../prompts/helpers.js';
-import { mvuApi, setMvuApi } from '../../st/runtime-state.js';
+import { getMvu } from '../../st/adapters.js';
 
 /* ------------------------------------------------------------------ *
  * MVU（MagVarUpdate）集成 —— 普通聊天 / 参谋附带当前变量状态（stat_data）用，只读。
  * ------------------------------------------------------------------ */
-export async function getMvu() {
-    if (mvuApi) return mvuApi;
-    if (window.Mvu) { setMvuApi(window.Mvu); return mvuApi; }
-    const th = window.TavernHelper;
-    if (th && typeof th.waitGlobalInitialized === 'function') {
-        try {
-            setMvuApi(await Promise.race([
-                th.waitGlobalInitialized('Mvu'),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
-            ]));
-            if (mvuApi) return mvuApi;
-        } catch (e) { /* fall through */ }
-    }
-    return window.Mvu || null;
+export { getMvu };
+
+export let diagStatData = '';
+export let diagLatestUpdate = '';
+
+// 手动诊断每轮生成前冻结的两份输入；自动诊断始终走显式参数，不共享这里。
+export function captureManualDiagnoseContext(statData, latestUpdate) {
+    diagStatData = statData;
+    diagLatestUpdate = latestUpdate;
 }
 
 // 纯函数：从一份 MvuData 里取出【当作状态看】的那一坨。正常卡上就是 stat_data；形状离奇（压根没有

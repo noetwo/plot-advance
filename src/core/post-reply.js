@@ -3,22 +3,25 @@ import { POST_REPLY_CALL_TIMEOUT_MS, getCtx, getSettings } from './settings.js';
 import { buildDiagnosePromptFrom } from '../modes/chat/context.js';
 import { chatIdentityKey } from '../modes/chat/send.js';
 import { diagSeedTargetFloor, mvuLatestMsgId, mvuMsgOpts } from '../modes/diagnose/auto.js';
-import { diagCountPatchBlocks, diagOpOutcomes, diagParseFailReason, diagPatchOpsOf, diagScopePatchToUntouched, diagStatKey, mvuedMaybeRefresh, runTrainer, trainerReadRules } from '../modes/diagnose/editor.js';
+import { mvuedMaybeRefresh, runTrainer, trainerReadRules } from '../modes/diagnose/editor.js';
+import { diagCountPatchBlocks, diagOpOutcomes, diagParseFailReason, diagPatchOpsOf, diagScopePatchToUntouched, diagStatKey } from '../modes/diagnose/patch.js';
+import { diagGateProbe, diagSchemaFilterPatch, diagSchemaRetryRound, diagShownPatch, diagZeroChangeReport, maybeRunSaveHealth, repairDiagPatch } from '../modes/diagnose/diagnostics.js';
 import { extractUpdateBlock, getLatestAiMessage, getMvu, getMvuStatData, mvuStatOf, resolveAutoTargetMessage } from '../modes/diagnose/mvu.js';
-import { canonicalizeDiagOps, diagGateProbe, diagSchemaFilterPatch, diagSchemaRetryRound, diagShownPatch, diagZeroChangeReport, dismissToast, injectDiagPatchIntoMessage, maybeRunSaveHealth, notifyAutoDiagnose, repairDiagPatch, showAutoDiagGenerating, toastDiagChatSwitched } from '../modes/diagnose/schema.js';
+import { canonicalizeDiagOps, dismissToast, injectDiagPatchIntoMessage, notifyAutoDiagnose, showAutoDiagGenerating, toastDiagChatSwitched } from '../modes/diagnose/schema.js';
 import { diagCaptureSwipe, diagCmpKey, diagPinMoved } from '../modes/fix/algorithms.js';
 import { fixDrainParked, runAutoFix, runCustomTask } from '../modes/fix/staging.js';
 import { getEffectiveFixCfg, getFixCfg, resolveFixCustomCfg } from '../modes/fix/templates.js';
 import { updateFixVerdict } from '../modes/fix/ui.js';
-import { buildDiagSelectedWi, diagPickerActive } from '../modes/lorebook/core.js';
+import { buildDiagSelectedWi, diagPickerActive } from '../modes/lorebook/world-info.js';
 import { buildDiagnosePresetMessages } from '../presets/messages.js';
 import { AUTO_DIAGNOSE_WRITE_BACK, ENABLE_AUTO_DIAGNOSE, ENABLE_DIAG_BODY_INJECT, ENABLE_DIAG_FLOOR_SEED, ENABLE_FIX_CUSTOM_TASK, ENABLE_MVU_TRAINER, ENABLE_REPLY_FIX, ENABLE_SCHEMA_DIAG, STATUS_PLACEHOLDER } from '../prompts/builtins.js';
 import { P } from '../prompts/registry.js';
-import { buildWorldInfo, collectMvuUpdateRules, wiContextMode } from '../st/adapters.js';
+import { buildWorldInfo, collectMvuUpdateRules, getLoadedMvu, wiContextMode } from '../st/adapters.js';
+import { getHostGlobal } from '../st/host.js';
 import { callDirect, callProfile, resolveEndpointUrl } from '../transport/direct.js';
 import { maybeWrapJb, presetCurationActive } from '../ui/settings.js';
-import { activePostReplyRun, autoDiagErrorToasted, isGenerating, lastPrompt, pendingPostReplyRun, postReplyAbortCtl, postReplyBusy, postReplyCancelled, setActivePostReplyRun, setAutoDiagErrorToasted, setLastPrompt, setLastPromptMeta, setPendingPostReplyRun, setPostReplyAbortCtl, setPostReplyBusy, setPostReplyCancelled } from './runtime-state.js';
-import { mvuApi } from '../st/runtime-state.js';
+import { isGenerating } from './generation.js';
+import { recordLastPrompt } from './recent-prompt.js';
 
 /* ------------------------------------------------------------------ *
  * 用户功能请求：自动诊断 + ✨ 校正模式 Phase 3 —— 统一的「回复后编排」。
@@ -27,25 +30,41 @@ import { mvuApi } from '../st/runtime-state.js';
  * 两者各自全程无界面：自建提示词（不碰窗口共享状态）、非流式调用，仅在确有改动时落地。
  * MVU「额外模型解析」并用由 autoDiagnoseMvuCompat 显式协调；默认关时保持既有时序、不增加等待。
  * ------------------------------------------------------------------ */
-         // 单一共享锁：自动校正与自动诊断不得并发抢占同一条回复
-  // 诊断错误 toast 每会话只弹一次，免得每条回复都打扰
-      // 当前在途的「回复后」自动调用（自动校正 / 自动诊断）的中断器（120s 超时 + 用户中断共用）
-    // 用户点了「正在自动…」提示里的中断 → 跳过本轮剩余步骤（如自动校正被中断后不再接着自动诊断）
-     // { messageId, superseded }：新用户回合可静默作废旧作业，不冒充手动取消
-    // {messageId,chatKey,messageRef}：锁忙时只保留最新 AI 回复，并钉住所属聊天
+let postReplyBusy = false;          // 单一共享锁：自动校正与自动诊断不得并发
+let autoDiagErrorToasted = false;   // 诊断错误 toast 每会话只弹一次
+let postReplyAbortCtl = null;       // 当前回复后调用的中断器
+let postReplyCancelled = false;     // 用户中断本轮
+let activePostReplyRun = null;      // { messageId, superseded, step }
+let pendingPostReplyRun = null;     // { messageId, chatKey, messageRef }
+
+export function isPostReplyBusy() {
+    return postReplyBusy;
+}
+
+export function beginPostReplyRun(run) {
+    postReplyBusy = true;
+    postReplyCancelled = false;
+    activePostReplyRun = run;
+}
+
+export function finishPostReplyRun(run) {
+    if (activePostReplyRun === run) activePostReplyRun = null;
+    postReplyCancelled = false;
+    postReplyBusy = false;
+}
 
 // 仿 arcBeginCall：把在途调用的中断器挂到模块级，让「正在自动校正 / 诊断…」提示可点一下中断它（ms = 超时兜底）。
 export function beginPostReplyCall(ms) {
     let ctl = null;
     try { ctl = new AbortController(); } catch (e) { return { signal: undefined, end() {} }; }
-    setPostReplyAbortCtl(ctl);
+    postReplyAbortCtl = ctl;
     let timer = null;
     try { timer = setTimeout(() => { try { ctl.abort(); } catch (e) { /* ignore */ } }, ms); } catch (e) { /* 无 timers 环境 */ }
-    return { signal: ctl.signal, end() { if (timer) clearTimeout(timer); if (postReplyAbortCtl === ctl) setPostReplyAbortCtl(null); } };
+    return { signal: ctl.signal, end() { clearTimeout(timer); if (postReplyAbortCtl === ctl) postReplyAbortCtl = null; } };
 }
 // 用户点提示「中断」：作废本轮（让 maybePostReply 跳过剩余步骤）+ 中断在途调用。自动校正与自动诊断共用同一个。
 export function cancelPostReply() {
-    setPostReplyCancelled(true);
+    postReplyCancelled = true;
     try { if (postReplyAbortCtl) postReplyAbortCtl.abort(); } catch (e) { /* ignore */ }
 }
 
@@ -57,7 +76,7 @@ export function postReplyShouldStop() {
 // MESSAGE_SENT 专用：静默让旧轮失效并撤掉尚未开跑的旧 AI pending。只中止 Story Oracle 自己的请求；
 // MVU 外部解析没有公开 cancel，仍可在后台自行收尾。返回值只供测试 / 诊断，不参与业务判断。
 export function supersedePostReply() {
-    setPendingPostReplyRun(null);
+    pendingPostReplyRun = null;
     if (!activePostReplyRun) return false;
     activePostReplyRun.superseded = true;
     try { if (postReplyAbortCtl) postReplyAbortCtl.abort(); } catch (e) { /* ignore */ }
@@ -83,7 +102,7 @@ export function postReplyCancelsOnChatSwitch() {
 // CHAT_CHANGED 专用：切聊天先撤掉尚未开跑的旧 AI pending（它属于旧聊天，绝不该在新聊天里补跑），
 // 但只有诊断 / 修改器的在途轮次才随之作废。返回值只供测试 / 诊断。
 export function supersedePostReplyOnChatSwitch() {
-    setPendingPostReplyRun(null);
+    pendingPostReplyRun = null;
     if (postReplyCancelsOnChatSwitch()) return supersedePostReply();
     return false;
 }
@@ -94,7 +113,7 @@ export function supersedePostReplyOnChatSwitch() {
 // 延长到新轮。调用点必须先把 postReplyBusy 置回 false（否则补跑那一轮会立刻被锁挡下、再次入队）。
 export function drainPendingPostReply() {
     const pending = pendingPostReplyRun;
-    setPendingPostReplyRun(null);
+    pendingPostReplyRun = null;
     const pendingCtx = getCtx();
     if (pending
         && pending.chatKey === chatIdentityKey()
@@ -320,7 +339,7 @@ export async function maybePostReply(messageId) {
     // eventSource 不会等本函数；若上一轮仍占锁，保留最新合法 AI 回复，释放后补跑。单槽刻意采用
     // “last write wins”：连着 swipe / regenerate 时，过期的中间回复不值得再花一次模型调用。
     if (postReplyBusy) {
-        setPendingPostReplyRun({ messageId: idx, chatKey: chatIdentityKey(), messageRef: m });
+        pendingPostReplyRun = { messageId: idx, chatKey: chatIdentityKey(), messageRef: m };
         return;
     }
     if (isGenerating) return;                               // 不在主聊天生成中途插手
@@ -332,13 +351,11 @@ export async function maybePostReply(messageId) {
     // 更需要一个「这一轮开始时」的基准），故一并顺给 runAutoDiagnose。
     const chatKey = chatIdentityKey();
     const run = { messageId: idx, superseded: false, step: null };   // step = 正在跑的处理器名（onChatChanged 据此决定作废谁）
-    setPostReplyBusy(true);
-    setPostReplyCancelled(false);                                 // 每轮开始清零；用户点提示「中断」会把它置真
-    setActivePostReplyRun(run);
+    beginPostReplyRun(run);
     // 兼容会话必须在 MESSAGE_RECEIVED 入口、既有 settle 之前启动。只在“自动诊断实际会跑 + 用户显式
     // 勾选兼容”时启用；否则是即时 resolved 的 disabled，会保持旧用户零额外等待。
     const compatSession = createMvuCompatSession(
-        mvuApi || window.Mvu,
+        getLoadedMvu(),
         plan.includes('diag') && !!s.autoDiagnoseMvuCompat,
     );
     try {
@@ -365,18 +382,16 @@ export async function maybePostReply(messageId) {
                 // 沿用诊断的「每会话一次」错误 toast（校正的失败已在其侧聊记录里反映，不再额外打扰；
                 // 修改器有意静默——不弹 toast，只留上面这行 console.warn）。
                 if (step === 'diag' && !autoDiagErrorToasted) {
-                    setAutoDiagErrorToasted(true);
-                    try { window.toastr && window.toastr.warning && window.toastr.warning('剧情推进：自动诊断这一轮没跑成（详见控制台）。后续回复会继续尝试。', '自动诊断'); } catch (e2) { /* ignore */ }
+                    autoDiagErrorToasted = true;
+                    try { const toastr = getHostGlobal('toastr'); toastr && toastr.warning && toastr.warning('剧情推进：自动诊断这一轮没跑成（详见控制台）。后续回复会继续尝试。', '自动诊断'); } catch (e2) { /* ignore */ }
                 }
             }
         }
     } finally {
         // 用户中断：给一句确认（abort 发生在写入之前，故这条回复未被改动）。
-        if (postReplyCancelled) { try { window.toastr && window.toastr.info && window.toastr.info('已中断本轮自动处理（未改动这条回复）。', '剧情推进'); } catch (e) { /* ignore */ } }
+        if (postReplyCancelled) { try { const toastr = getHostGlobal('toastr'); toastr && toastr.info && toastr.info('已中断本轮自动处理（未改动这条回复）。', '剧情推进'); } catch (e) { /* ignore */ } }
         try { updateFixVerdict(); } catch (e) { /* 窗口没开等——判定预览行刷新失败无碍（✨ 1.18.0） */ }
-        if (activePostReplyRun === run) setActivePostReplyRun(null);
-        setPostReplyCancelled(false);
-        setPostReplyBusy(false);
+        finishPostReplyRun(run);
         // 🎛 打开中的变量编辑器「跟随现实」：自动诊断刚刚可能写过 stat_data，而【这里】才是它写完的确定时刻。
         // 直接刷、不走防抖：message_received 那颗定时器早在 300ms 后就烧完了（诊断一趟是完整的模型往返），
         // 靠它等于赌运气。本函数空操作安全（卡没开 / 值没变 / 切了聊天都自己返回），无脑调即可。
@@ -455,7 +470,7 @@ async function runAutoDiagnoseWithRetry(ctx, s, targetId, chatKey, compatSession
 // 重试标注；本轮失败且还会再试时，记录末尾加一行标注、失败 warning 让位（见 notifyAutoDiagnose）。
 // 返回值 = 本轮结局（分类结局回 result，安全跳过回 undefined），供包装层裁决重试；直调不接返回值
 // 的旧调用方零影响。
-async function runAutoDiagnose(ctx, s, targetId, chatKey, compatSession, retryState) {
+export async function runAutoDiagnose(ctx, s, targetId, chatKey, compatSession, retryState) {
     const Mvu = await getMvu();
     if (!Mvu) return;                                       // 没有 MVU 就没什么可诊断
     // 连接没配好就静默退出——别让每条回复都报错（开自动模式的人一般已配好直连 / 配置文件）。
@@ -562,11 +577,11 @@ async function runAutoDiagnose(ctx, s, targetId, chatKey, compatSession, retrySt
     // 调试提示词查看器快照（与 generateReply 同一形状）。自动诊断在后台跑、不经 generateReply，1.40.2 前
     // 从不入快照 —— 用户遇到自动诊断异常时，「调试提示词」面板里根本看不到它发了什么（smallmj 那个 bug
     // 因此多绕了好几轮）。这里补上。
-    setLastPrompt(messages.map((m) => ({ role: m.role, content: m.content })));
-    setLastPromptMeta({
+    const promptSnapshot = messages.map((m) => ({ role: m.role, content: m.content }));
+    recordLastPrompt(promptSnapshot, {
         mode: '自动诊断',
         target: s.mode === 'direct' ? (s.model || '直连') : '配置文件',
-        chars: lastPrompt.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
+        chars: promptSnapshot.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
         time: new Date().toLocaleTimeString(),
     });
 
@@ -615,7 +630,7 @@ async function runAutoDiagnose(ctx, s, targetId, chatKey, compatSession, retrySt
         let md = null;
         try { md = Mvu.getMvuData(mvuMsgOpts()); } catch (e) { md = null; }
         const round = await diagSchemaRetryRound(finalText, md, s, messages, (msgs2) => {
-            setLastPrompt(msgs2.map((m) => ({ role: m.role, content: m.content })));
+            recordLastPrompt(msgs2.map((m) => ({ role: m.role, content: m.content })));
             return callOnce(msgs2);
         }, postReplyShouldStop);
         if (round.schemaRetried) {

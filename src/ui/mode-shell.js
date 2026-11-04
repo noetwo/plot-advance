@@ -1,21 +1,25 @@
 import { confirmModeSwitch } from '../core/chat-metadata.js';
-import { getCtx, getSettings, renderModelBar, save, uiConfirm } from '../core/settings.js';
+import { closeQpMenu, getCtx, getSettings, renderModelBar, save, uiConfirm } from '../core/settings.js';
 
 import { addSystemNote, modeEntryNote, renderEmptyState, syncConvoStream } from '../modes/advisor/cards.js';
 import { activeDraftContent, draftCardLabel, getBuilderState, setBuilderState } from '../modes/advisor/metadata.js';
 import { checkPlanReminder } from '../modes/advisor/story-path.js';
 import { placePlanBar } from '../modes/advisor/ui.js';
+import { populateBuilderBooks } from '../modes/builder/books-ui.js';
 import { applyBuilderDraft, runCondense, runCondenseDepth, runForge } from '../modes/builder/ui.js';
 import { soApplyConvoIoVisual } from '../modes/chat/history.js';
-import { maybeRunSaveHealth } from '../modes/diagnose/schema.js';
+import { maybeRunSaveHealth } from '../modes/diagnose/diagnostics.js';
 import { getEffectiveFixCfg, getFixCfg } from '../modes/fix/templates.js';
 import { refreshDiagPickerUI } from '../modes/fix/ui.js';
-import { populateBuilderBooks, populateLorebookBooks } from '../modes/lorebook/ui.js';
+import { populateLorebookBooks } from '../modes/lorebook/ui.js';
 import { ENABLE_AUTO_DIAGNOSE, ENABLE_CHAR_BUILDER, ENABLE_DIAG_WI_PICKER, ENABLE_DRAFT_CONDENSE, ENABLE_FIX_CUSTOM_TASK, ENABLE_LIGHT_CONDENSE, ENABLE_REPLY_FIX, ENABLE_SCHEMA_DIAG } from '../prompts/builtins.js';
 import { ensureWindowInView, windowIsReachable } from './geometry.js';
 import { applySysPromptPresetUiState, buildCurationRows, getActiveMainPresetName, snapshotFromRows, updateBadge } from './settings.js';
-import { advisorMode, builderMode, convo, diagnoseMode, fixMode, lorebookMode, priorOracleMode, setAdvisorMode, setBuilderMode, setDiagnoseMode, setFixMode, setLorebookMode, setPriorOracleMode } from '../core/runtime-state.js';
-import { curationState, inputEl, messagesEl, setCurationState, setQpMenuOpen, win } from './state.js';
+import { convo } from '../core/conversation-store.js';
+import { activateOracleMode, advisorMode, builderMode, diagnoseMode, fixMode, lorebookMode, priorOracleMode, rememberPriorOracleMode, resetPriorOracleMode } from '../core/oracle-modes.js';
+import { inputEl, messagesEl, win } from './refs.js';
+
+let curationState = null;
 
 /* ------------------------------------------------------------------ *
  * Curation modal — the user is the sole curator (no LLM step).
@@ -37,7 +41,7 @@ export function openCuration(name, seedRows) {
         addSystemNote(`预设「${name}」没有可挑选的已启用块。请检查它在 ST 里是否配置正确。`);
         return;
     }
-    setCurationState({ name, rows, dragFrom: -1 });
+    curationState = { name, rows, dragFrom: -1 };
 
     let modal = win.querySelector('#so-curate');
     if (!modal) {
@@ -145,7 +149,7 @@ function maybeShowCurationWarning(modal, name) {
 function closeCuration() {
     const modal = win.querySelector('#so-curate');
     if (modal) { modal.classList.remove('open'); modal.style.display = 'none'; }
-    setCurationState(null);
+    curationState = null;
 }
 
 function renderCurationRows() {
@@ -419,11 +423,7 @@ export function modeReturnNote(mode) {
 }
 
 export function setOracleMode(target) {
-    setDiagnoseMode(target === 'diagnose');
-    setLorebookMode(target === 'lorebook');
-    setAdvisorMode(target === 'advisor');
-    setFixMode(target === 'fix');
-    setBuilderMode(target === 'builder');
+    activateOracleMode(target);
     win.classList.toggle('so-diag-on', diagnoseMode);
     win.classList.toggle('so-lb-on', lorebookMode);
     win.classList.toggle('so-adv-on', advisorMode);
@@ -448,7 +448,7 @@ export function setOracleMode(target) {
     soApplyConvoIoVisual(null);
     // 每模式独立房间：切模式即把可见侧聊换到该模式的房间（先落盘现流、再重载）。换房时 loadConvoForChat 已重画
     // （含空态）；没换房（同房间 / 开关关）才手动刷新空态——每模式自带引导语 + 示例 chip。
-    setQpMenuOpen(false);
+    closeQpMenu();
     renderModelBar();   // ⚡ 快捷指令按模式显示
     const swapped = syncConvoStream();
     if (!swapped && messagesEl && !convo.length) { messagesEl.innerHTML = ''; renderEmptyState(); }
@@ -566,14 +566,14 @@ export async function toggleLorebook() {
     if (lorebookMode) {
         const back = priorOracleMode || 'chat';
         if (!(await confirmModeSwitch(back))) return;   // 1.36.0 中断确认：有在途回复会被切换中止 → 先问
-        setPriorOracleMode('chat');
+        resetPriorOracleMode();
         setOracleMode(back);
         modeEntryNote(modeReturnNote(back));
         focusOracleInput();
         return;
     }
     if (!(await confirmModeSwitch('lorebook'))) return;   // 1.36.0 中断确认
-    setPriorOracleMode(currentOracleMode());
+    rememberPriorOracleMode(currentOracleMode());
     setOracleMode('lorebook');
     populateLorebookBooks();
     modeEntryNote('世界书模式已开启。我已读取选定世界书的全部条目——你可以问里面写了什么、找矛盾、聊扩写思路；也可以让我改写、新增或删除条目，我会给出一份你能一键应用（并可撤销）的改动。上方可切换要处理哪一本。');
@@ -586,7 +586,7 @@ export async function toggleFix() {
     if (fixMode) {
         const back = priorOracleMode || 'chat';
         if (!(await confirmModeSwitch(back))) return;   // 1.36.0 中断确认
-        setPriorOracleMode('chat');
+        resetPriorOracleMode();
         setOracleMode(back);
         modeEntryNote(modeReturnNote(back));
         focusOracleInput();
@@ -599,7 +599,7 @@ export async function toggleFix() {
 // 进入校正模式的【无门】本体（1.42.0 抽出）：toggleFix = 确认门 + 本体。主聊天 ✂️ 入口的门放在【开窗之前】
 //（spec 决定 6「拒绝零足迹」），过门后直接调本体——不复用 toggleFix 是为了不弹第二次确认。行为与抽出前逐字节同。
 export function enterFixMode() {
-    setPriorOracleMode(currentOracleMode());
+    rememberPriorOracleMode(currentOracleMode());
     setOracleMode('fix');
     modeEntryNote('校正模式已开启。我会读取最新一条 AI 回复，按你说的把它改一版——你想怎么改都行：重写某段、改语气、调节奏、删减、改掉某个设定或不合适的描写……任何要求都可以。直接说你想改什么，我给出一份可一键应用的校正稿（应用后原文仍在，左滑即可看回）。');
     focusOracleInput();
@@ -611,14 +611,14 @@ export async function toggleBuilder() {
     if (builderMode) {
         const back = priorOracleMode || 'chat';
         if (!(await confirmModeSwitch(back))) return;   // 1.36.0 中断确认（锻造/深度精简保活不触发——它们切走不中断）
-        setPriorOracleMode('chat');
+        resetPriorOracleMode();
         setOracleMode(back);   // 内部已 syncConvoStream → 切回该模式的房间
         modeEntryNote(modeReturnNote(back));
         focusOracleInput();
         return;
     }
     if (!(await confirmModeSwitch('builder'))) return;   // 1.36.0 中断确认
-    setPriorOracleMode(currentOracleMode());
+    rememberPriorOracleMode(currentOracleMode());
     setOracleMode('builder');   // 内部已 syncConvoStream → 切到当前打造目标的独立房间
     populateBuilderBooks();   // Task 4：填充选书 / 选条目器 + chips（定义在 populateLorebookBooks 附近）
     refreshDraftCard();       // Task 6 provides this; stub `function refreshDraftCard() {}` this task

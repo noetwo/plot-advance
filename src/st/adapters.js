@@ -3,11 +3,43 @@ import { getCtx, getSettings } from '../core/settings.js';
 
 import { ensureWiCustomSeeded, wiCustomGreens } from '../modes/diagnose/pickers.js';
 import { mergeHybridUids } from '../modes/fix/templates.js';
-import { collectWiCustomEntries, getActiveBookNames, getActiveScanUids, getAllBookNames, getCharChatBookNames, getWiEditApi, resolveLbTargetNames } from '../modes/lorebook/core.js';
+import { collectWiCustomEntries } from '../modes/lorebook/entries.js';
+import { getActiveBookNames, getActiveScanUids, getAllBookNames, getCharChatBookNames, getWiEditApi, resolveLbTargetNames } from '../modes/lorebook/world-info.js';
 import { ENABLE_WI_CUSTOM_PICK, ENABLE_WI_EJS_RENDER } from '../prompts/builtins.js';
-import { convo } from '../core/runtime-state.js';
-import { personasModule, regexEngine, scriptCore, setPersonasModule, setRegexEngine, setScriptCore, setWorldInfoModule, worldInfoModule } from './runtime-state.js';
-import { importHostModule } from './host.js';
+import { convo } from '../core/conversation-store.js';
+import { getHostGlobal, hostFetch, importHostModule } from './host.js';
+
+let regexEngine = null;
+let worldInfoModule = null;
+let scriptCore = null;
+let personasModule = null;
+let mvuApi = null;
+export function getRegexEngine() {
+    return regexEngine;
+}
+
+export function getLoadedMvu() {
+    return mvuApi || getHostGlobal('Mvu') || null;
+}
+
+export async function getMvu() {
+    if (mvuApi) return mvuApi;
+    const globalMvu = getHostGlobal('Mvu');
+    if (globalMvu) {
+        mvuApi = globalMvu;
+        return mvuApi;
+    }
+    const th = getHostGlobal('TavernHelper');
+    if (th && typeof th.waitGlobalInitialized === 'function') {
+        try {
+            mvuApi = await Promise.race([
+                th.waitGlobalInitialized('Mvu'),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+            ]);
+        } catch (e) { /* fall through */ }
+    }
+    return mvuApi || getHostGlobal('Mvu') || null;
+}
 
 /**
  * Lazily import SillyTavern's regex engine from its served path. The absolute
@@ -18,11 +50,11 @@ export async function loadRegexEngine() {
     if (regexEngine !== null) return regexEngine;
     try {
         const mod = await importHostModule('/scripts/extensions/regex/engine.js');
-        setRegexEngine((mod && mod.getRegexedString && mod.regex_placement) ? mod : false);
+        regexEngine = (mod && mod.getRegexedString && mod.regex_placement) ? mod : false;
         if (!regexEngine) console.warn('[Story Oracle] regex engine loaded but missing exports; sending raw text.');
     } catch (e) {
         console.warn('[Story Oracle] Could not load regex engine; sending raw messages.', e);
-        setRegexEngine(false);
+        regexEngine = false;
     }
     return regexEngine;
 }
@@ -31,10 +63,10 @@ export async function loadWorldInfoModule() {
     if (worldInfoModule !== null) return worldInfoModule;
     try {
         const mod = await importHostModule('/scripts/world-info.js');
-        setWorldInfoModule((mod && mod.getSortedEntries) ? mod : false);
+        worldInfoModule = (mod && mod.getSortedEntries) ? mod : false;
     } catch (e) {
         console.warn('[Story Oracle] Could not load world-info module.', e);
-        setWorldInfoModule(false);
+        worldInfoModule = false;
     }
     return worldInfoModule;
 }
@@ -43,10 +75,10 @@ export async function loadWorldInfoModule() {
 async function loadScriptCore() {
     if (scriptCore !== null) return scriptCore;
     try {
-        setScriptCore(await importHostModule('/script.js'));
+        scriptCore = await importHostModule('/script.js');
     } catch (e) {
         console.warn('[Story Oracle] Could not load /script.js for context size.', e);
-        setScriptCore(false);
+        scriptCore = false;
     }
     return scriptCore;
 }
@@ -64,7 +96,7 @@ async function loadScriptCore() {
    // '/scripts/personas.js'，惰性 import（null=未试，object=已装，null 表示失败会重试）
 async function loadPersonasModule() {
     if (personasModule) return personasModule;
-    try { setPersonasModule(await importHostModule('/scripts/personas.js')); } catch (e) { setPersonasModule(null); }
+    try { personasModule = await importHostModule('/scripts/personas.js'); } catch (e) { personasModule = null; }
     return personasModule;
 }
 
@@ -120,13 +152,13 @@ export async function createPersonaWithAvatar(name, description) {
     const avatarId = `${Date.now()}-${String(name).replace(/[^a-zA-Z0-9]/g, '')}.png`;
     await mod.initPersona(avatarId, name, description, '');
     try {
-        const resp = await fetch('img/user-default.png');
+        const resp = await hostFetch('img/user-default.png');
         const blob = await resp.blob();
         const fd = new FormData();
         fd.append('avatar', new File([blob], 'avatar.png', { type: 'image/png' }));
         fd.append('overwrite_name', avatarId);
         const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders({ omitContentType: true }) : {};
-        await fetch('/api/avatars/upload', { method: 'POST', headers, body: fd });
+        await hostFetch('/api/avatars/upload', { method: 'POST', headers, body: fd });
     } catch (e) { console.warn('[Story Oracle] 默认头像上传失败（Persona 数据已写入）', e); }
     try { await mod.getUserAvatars(true, avatarId); } catch (e) { /* 列表刷新失败不致命 */ }
     return avatarId;
@@ -138,7 +170,7 @@ export async function deletePersonaById(avatarId) {
     const pu = ctx.powerUserSettings;
     try {
         const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
-        await fetch('/api/avatars/delete', { method: 'POST', headers, body: JSON.stringify({ avatar: avatarId }) });
+        await hostFetch('/api/avatars/delete', { method: 'POST', headers, body: JSON.stringify({ avatar: avatarId }) });
     } catch (e) { /* 文件删不掉也要把数据摘掉 */ }
     delete pu.personas[avatarId];
     delete pu.persona_descriptions[avatarId];
@@ -248,8 +280,7 @@ export function wiEffectiveMode(s) {
 // 只用到 prepareContext + evalTemplate；未安装 / 接口不完整时返回 null（调用方据此降级为不执行 EJS）。
 function getEjsTemplateApi() {
     try {
-        const g = (typeof globalThis !== 'undefined') ? globalThis : window;
-        const api = g && g.EjsTemplate;
+        const api = getHostGlobal('EjsTemplate');
         if (api && typeof api.prepareContext === 'function' && typeof api.evalTemplate === 'function') return api;
     } catch (e) { /* globalThis 不可用 → 视作未装插件 */ }
     return null;

@@ -1,4 +1,4 @@
-import { CONN_PRESET_KEYS, connPresetSnapshot, connPresetUpsert, connValSame, getCtx, getSettings, renderConnPresets, renderModelBar, save, uiConfirm } from '../core/settings.js';
+import { CONN_PRESET_KEYS, connPresetIsCurrent, connPresetSnapshot, connPresetUpsert, getCtx, getSettings, renderConnPresets, renderModelBar, save, uiConfirm } from '../core/settings.js';
 
 import { populateWiCustomBooks } from '../modes/diagnose/pickers.js';
 import { fixUsePresetFor } from '../modes/fix/templates.js';
@@ -8,17 +8,14 @@ import { ENABLE_FIX_CUSTOM_TASK, ENABLE_SYSPROMPT_PRESET, ENABLE_WI_CUSTOM_PICK 
 import { P, PROMPT_DEFS, promptDef, promptIsCustom, promptProblems, promptRaw } from '../prompts/registry.js';
 import { updateExtraParamsHint } from '../transport/direct.js';
 import { openCuration } from './mode-shell.js';
-import { advisorMode, builderMode, diagnoseMode, fixMode, lorebookMode } from '../core/runtime-state.js';
-import { modeBadge, promptEditId, promptEditorOpen, promptGroup, setPromptEditId, setPromptEditorOpen, setPromptGroup, win } from './state.js';
+import { advisorMode, builderMode, diagnoseMode, fixMode, lorebookMode } from '../core/oracle-modes.js';
+import { modeBadge, win } from './refs.js';
+
+export let promptEditId = 'chat.system';
+let promptGroup = null;
+let promptEditorOpen = false;
 
 // ---------- 连接存档：一键切换（设置页的存档列表 + 输入框上方的切换栏共用）----------
-// 当前设置是否就是这个存档：直连模式下，端点、密钥、模型、「地址原样」以及存档里记着的高级选项 / 生成参数都相同。
-export function connPresetIsCurrent(p, s = getSettings()) {
-    return !!p && s.mode === 'direct'
-        && (p.endpoint || '') === (s.endpoint || '') && (p.apiKey || '') === (s.apiKey || '')
-        && (p.model || '') === (s.model || '') && !!p.rawUrl === !!s.directRawUrl
-        && CONN_PRESET_KEYS.every((k) => !(k in p) || connValSame(p[k], s[k]));
-}
 function currentConnPreset(s = getSettings()) {
     const act = activeConnPreset(s);
     if (act && connPresetIsCurrent(act, s)) return act;   // 两个存档内容相同时，认最近用的那个
@@ -679,9 +676,9 @@ export function renderPromptNav() {
     const ed = win.querySelector('#so-peditor');
     if (!groupsEl || !listEl || !ed) return;
     const s = getSettings();
-    if (!promptDef(promptEditId)) setPromptEditId('chat.system');
+    if (!promptDef(promptEditId)) promptEditId = 'chat.system';
     const groups = promptGroups();
-    if (!groups.includes(promptGroup)) setPromptGroup(promptDef(promptEditId).group);
+    if (!groups.includes(promptGroup)) promptGroup = promptDef(promptEditId).group;
 
     groupsEl.innerHTML = '';
     for (const g of groups) {
@@ -698,7 +695,7 @@ export function renderPromptNav() {
             c.textContent = String(n);
             b.appendChild(c);
         }
-        b.addEventListener('click', () => { setPromptGroup(g); renderPromptNav(); });
+        b.addEventListener('click', () => { promptGroup = g; renderPromptNav(); });
         groupsEl.appendChild(b);
     }
 
@@ -718,9 +715,9 @@ export function renderPromptNav() {
         const desc = item.querySelector('.so-pitem-desc');
         if (d.desc) desc.textContent = d.desc; else desc.remove();
         item.addEventListener('click', () => {
-            if (promptEditorOpen && promptEditId === d.id) { setPromptEditorOpen(false); renderPromptNav(); return; }
-            setPromptEditId(d.id);
-            setPromptEditorOpen(true);
+            if (promptEditorOpen && promptEditId === d.id) { promptEditorOpen = false; renderPromptNav(); return; }
+            promptEditId = d.id;
+            promptEditorOpen = true;
             loadPromptEditor();
             renderPromptNav();
             const box = win.querySelector('#so-sysprompt');

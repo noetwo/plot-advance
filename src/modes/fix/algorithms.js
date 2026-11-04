@@ -1,9 +1,9 @@
 import { refreshLatestMvuBar } from '../../core/post-reply.js';
 import { getCtx } from '../../core/settings.js';
 import { mvuLatestMsgId, mvuMsgOpts } from '../diagnose/auto.js';
-import { diagCountPatchBlocks, diagOpOutcomes, diagStatKey } from '../diagnose/editor.js';
+import { diagCountPatchBlocks, diagOpOutcomes, diagStatKey } from '../diagnose/patch.js';
 import { extractExcludedSections, extractUpdateBlock, fixKeepPlaceholder, getMvu, mvuStatOf, parseExcludeTagNames, parseExcludeTags, splitContentScope, stripFixKeepMarks } from '../diagnose/mvu.js';
-import { diagDoubleBlockNotice, diagSchemaDryLines, diagSchemaFilterPatch, diagZeroChangeReport, diagZeroHeadline, maybeRunSaveHealth, repairDiagNote, repairDiagPatch } from '../diagnose/schema.js';
+import { diagDoubleBlockNotice, diagSchemaDryLines, diagSchemaFilterPatch, diagZeroChangeReport, diagZeroHeadline, maybeRunSaveHealth, repairDiagNote, repairDiagPatch } from '../diagnose/diagnostics.js';
 import { fixDropMinusKeep, fixTagOverlap } from './templates.js';
 import { ENABLE_FIX_CUSTOM_TASK, ENABLE_SCHEMA_DIAG, FIX_MAX_PIECE_CALLS, FIX_PIECE_MAX_CHARS, STATUS_PLACEHOLDER } from '../../prompts/builtins.js';
 import { fixPreFilter } from '../../prompts/helpers.js';

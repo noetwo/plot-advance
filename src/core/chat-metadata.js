@@ -1,11 +1,11 @@
 import { getCtx, getSettings, uiConfirm } from './settings.js';
 
 import { CONVO_META_KEY, DIAG_WI_META_KEY, SUMMARY_META_KEY, WI_CUSTOM_META_KEY, getChatMetadataSafe } from '../modes/advisor/metadata.js';
-import { BUILDER_VARIANTS, builderVariantKey } from '../modes/lorebook/core.js';
+import { BUILDER_VARIANTS, builderVariantKey } from '../modes/builder/model.js';
 import { ENABLE_BUILDER_PERSONA_STYLES, ENABLE_MODE_ROOMS } from '../prompts/builtins.js';
 import { builderTargetLabel } from '../prompts/helpers.js';
-import { abortCtl, convo, convoStreamKey, isGenerating, liveCondense, liveForge } from './runtime-state.js';
-import { diagEntrySel } from '../modes/diagnose/state.js';
+import { abortCtl, isGenerating, liveCondense, liveForge } from './generation.js';
+import { convo, convoStreamKey } from './conversation-store.js';
 
 /* ------------------------------------------------------------------ *
  * 用户功能请求：按【当前聊天】持久化侧聊历史 + 运行概要（与剧情脉络同风格——
@@ -379,8 +379,8 @@ export function setWiCustomMeta(obj) {
     return true;
 }
 
-// 把内存选择 diagEntrySel 回写元数据，保留 use/hybrid/target。每次勾选 / 快捷按钮后调用。
-export function persistDiagSel() {
+// 把调用方的内存选择回写元数据，保留 use/hybrid/target。每次勾选 / 快捷按钮后调用。
+export function persistDiagSel(selection) {
     const cur = getDiagWiMeta();
-    setDiagWiMeta({ use: cur.use, hybrid: cur.hybrid, target: cur.target, sel: serializeDiagSel(diagEntrySel) });
+    setDiagWiMeta({ use: cur.use, hybrid: cur.hybrid, target: cur.target, sel: serializeDiagSel(selection) });
 }

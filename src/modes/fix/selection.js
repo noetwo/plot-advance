@@ -10,19 +10,39 @@ import { extractExcludedSections, fixKeepPlaceholder, fixOutputHasMvuBlock, getL
 import { applyFixAsSwipe, autoFixNoteContent, customTaskNoteContent } from '../diagnose/schema.js';
 import { clampFixAutoMinChars, composeFixedReply, fixJoinTable, fixPiecePlan, fixPieceSummary, fixSpliceTable, renderDiffCard } from './algorithms.js';
 import { captureFixContext, fixFingerprint, fixOutputTruncated, fixScopeNoteText, isFixSwipe, renderFixCard } from './capture.js';
-import { fixFailureReason, setGenerating } from './staging.js';
+import { fixFailureReason } from './staging.js';
 import { fixUsePresetFor, getEffectiveFixCfg, getFixCfg, resolveFixModeCfg, setFixCfg } from './templates.js';
 import { updateFixVerdict } from './ui.js';
 import { buildFixPresetMessages } from '../../presets/messages.js';
 import { ENABLE_FIXSEL_CHAT_ENTRY, ENABLE_FIX_CUSTOM_TASK, ENABLE_FIX_PIECEWISE, ENABLE_FIX_SELECT, ENABLE_FIX_TAP_SELECT, ENABLE_REPLY_FIX, FIXSEL_CH_NUDGE_WIN, FIXSEL_CH_PAGE, MULTIFIX_CONCURRENCY, MULTIFIX_MAX_PINS } from '../../prompts/builtins.js';
 import { buildFixSelOverlayHtml, buildFixSelPickerHtml, compileFixTargets, fixEffMaxTokens, fixEffectivelyUnchanged, fixNoOp, fixSelDispatchMode, fixSelGraphemes, fixSelJudgeTap, fixSelPickMode, fixSelUnits, fixTargetOverrides, mapSelectionToRaw, multiFixRunnable, normalizePinAdd, resolvePinInstruction, resolveRecordedSelection, spliceSpan, spliceSpansBackToFront, validateSpanFix } from '../../prompts/helpers.js';
 import { callDirect, callProfile, callProfileStream, resolveEndpointUrl, streamDirect } from '../../transport/direct.js';
-import { addFixApplyControls, addMessage, parseFixedReply } from '../../ui/messages.js';
+import { addFixApplyControls, addMessage, parseFixedReply, soFollowStream } from '../../ui/messages.js';
 import { enterFixMode, toggleWindow, updateFixButtonVisual } from '../../ui/mode-shell.js';
 import { maybeWrapJb, presetCurationActive } from '../../ui/settings.js';
-import { abortCtl, fixMode, isGenerating, nextCid, setAbortCtl } from '../../core/runtime-state.js';
-import { fixActiveMode, fixCaptured, fixChatSelSnap, fixCustomJoin, fixPieceDecision, fixPieceTable, fixScopeDecision, fixSelCard, fixSelDebug, fixSelDebugLines, fixSelExpandArmed, fixSelGate, fixSelMode, fixSelSegOk, fixSelState, fixSelStored, fixTargetIdx, fixTargetProse, setFixChatSelSnap, setFixExtraKeep, setFixSelCard, setFixSelDebug, setFixSelDebugLines, setFixSelExpandArmed, setFixSelMode, setFixSelSegOk, setFixSelState, setFixSelStored, setFixTargetProse } from './state.js';
-import { soFollowStream, win } from '../../ui/state.js';
+import { beginGeneration, finishGeneration, isGenerating } from '../../core/generation.js';
+import { nextCid } from '../../core/conversation-store.js';
+import { fixMode } from '../../core/oracle-modes.js';
+import { win } from '../../ui/refs.js';
+
+let fixChatSelSnap = null;
+let fixSelState = null;
+let fixSelCard = null;
+let fixSelStored = null;
+let fixSelMode = 'drag';
+let fixSelExpandArmed = false;
+let fixSelDebug = false;
+let fixSelDebugLines = [];
+const fixSelGate = { down: null, lastScrollAt: -1e9, active: new Set() };
+let fixSelSegOk = false;
+
+const FIX_TRANSPORT_DEPENDENCIES = {
+    callDirect,
+    callProfile,
+    callProfileStream,
+    resolveEndpointUrl,
+    streamDirect,
+};
 
 /* ------------------------------------------------------------------ *
  * ✂️ 选段校正·主聊天入口（1.42.0，spec 2026-07-27-fixsel-chat-entry）：最新 AI 楼层动作行上的 ✂️ 按钮。
@@ -72,10 +92,10 @@ function extractChatSelRange(range) {
 // 存在的理由）。顺手清过期残留。
 function recordChatSelection(range) {
     const snap = extractChatSelRange(range);
-    if (snap) setFixChatSelSnap({ ...snap, ts: Date.now() });
-    else if (fixChatSelSnap && (Date.now() - fixChatSelSnap.ts) > FIXSEL_CHAT_TTL_MS) setFixChatSelSnap(null);
+    if (snap) fixChatSelSnap = { ...snap, ts: Date.now() };
+    else if (fixChatSelSnap && (Date.now() - fixChatSelSnap.ts) > FIXSEL_CHAT_TTL_MS) fixChatSelSnap = null;
 }
-export function clearFixChatSel() { setFixChatSelSnap(null); }
+export function clearFixChatSel() { fixChatSelSnap = null; }
 // 取用（点 ✂️ 时）：楼层仍是最新 AI + 保鲜期内 → 返回快照。【不消费】——送达开卡那步才消费（spec 决定 5/6：
 // 确认弹窗被拒时留着，重试点一次还在）。
 function takeFixChatSel(latestIdx, now) {
@@ -226,8 +246,8 @@ function fixSelLog(kind, f) {
 function fixSelDebugInit(card) {
     let on = false;
     try { on = !!localStorage.getItem('so.fixsel.debug'); } catch (e) { on = false; }
-    setFixSelDebug(on);
-    setFixSelDebugLines([]);
+    fixSelDebug = on;
+    fixSelDebugLines = [];
     let box = card.querySelector('.so-fixsel-debug');
     if (!on) { if (box) box.remove(); return; }
     if (!box) {
@@ -278,7 +298,7 @@ function fixSelApplyMode(card) {
     // 「找不到 span 就改文本节点」的兜底是死代码（旗关时本函数早已 return），删掉，不留第二个写法。
     const titleTx = card.querySelector('#so-fixsel-head .so-fixsel-title-text');
     if (titleTx) titleTx.textContent = tap ? ' ✂️ 选段校正 —— 轻点要改的句子' : ' ✂️ 选段校正 —— 划选要改的片段';
-    setFixSelExpandArmed(false);
+    fixSelExpandArmed = false;
     // 闸门记录按【每次开卡 / 每次切模式】归零（复审 #4）：万一有一次抬手被吃掉（页面被别的扩展挡下、
     // 切后台），残留的 pointerId 会让此后每一次轻点都被判成「多指」——重开一次卡就该干净。
     fixSelGate.down = null;
@@ -405,7 +425,7 @@ function fixSelChProbe(edge, pos) {
 
 export function openFixSelectCard(presel) {
     if (!ENABLE_FIX_SELECT) return;                       // 杀死开关读点①
-    // 生成中禁开卡（终审补钉）：并发单段跑会抢走共享 abortCtl（停止键错杀）＋提前清 isGenerating
+    // 生成中禁开卡（终审补钉）：并发单段跑会抢走 generation 控制器（停止键错杀）并提前释放 isGenerating
     if (isGenerating) { addSystemNote('正在生成回复中——请等它完成或先停止，再开选段校正。'); return; }
     const ctx = getCtx();
     const latest = getLatestAiMessage();
@@ -413,19 +433,19 @@ export function openFixSelectCard(presel) {
     const m = (ctx.chat || [])[latest.idx];
     const full = (m && typeof m.mes === 'string') ? m.mes : '';
     if (!full.trim()) { addSystemNote('最新回复为空，无法选段。'); return; }
-    setFixSelState({ idx: latest.idx, swipeId: (m && Number.isInteger(m.swipe_id)) ? m.swipe_id : 0, fingerprint: fixFingerprint(full), start: 0, end: 0, text: '', full, pins: [] });
-    setFixSelStored(null);
-    if (!fixSelCard) setFixSelCard(buildFixSelCard());
+    fixSelState = { idx: latest.idx, swipeId: (m && Number.isInteger(m.swipe_id)) ? m.swipe_id : 0, fingerprint: fixFingerprint(full), start: 0, end: 0, text: '', full, pins: [] };
+    fixSelStored = null;
+    if (!fixSelCard) fixSelCard = buildFixSelCard();
     const ta = fixSelCard.querySelector('.so-fixsel-text');
     ta.value = full;
     try { ta.setSelectionRange(0, 0); } catch (e) { /* ignore */ }   // 复开同文时 Chromium 不重置原生选区（值没变=赋值 no-op）——显式清掉，开卡必须真「未选中」
     fixSelCard.querySelector('.so-fixsel-instr').value = '';
     if (ENABLE_FIX_TAP_SELECT) {   // 点选杀死开关读点③：开卡定一次模式，此后旋转 / 插鼠标都不再改
-        setFixSelMode(fixSelResolveMode());
+        fixSelMode = fixSelResolveMode();
         fixSelDebugInit(fixSelCard);
         // 微调可用性：开卡拿一个字探一次，整个开卡周期就用这个答案（真拆字时 fixSelGraphemes 仍会
         // 每次现查 Intl.Segmenter——这个布尔只决定按钮灰不灰，不是可用性的判据）。
-        setFixSelSegOk(!!fixSelGraphemes('字', 0, 1));
+        fixSelSegOk = !!fixSelGraphemes('字', 0, 1);
         fixSelApplyMode(fixSelCard);
     }
     const info = fixSelCard.querySelector('.so-fixsel-info');
@@ -443,14 +463,14 @@ export function openFixSelectCard(presel) {
             if (ENABLE_FIX_TAP_SELECT && fixSelMode === 'tap') {
                 // 点选：逐字采纳映射到的区间（【不】吸附到整句边界），并且绝不去聚焦那个已经藏起来的
                 // textarea、不派发 select —— 那两样都会把 record() 那条老路重新叫醒。
-                setFixSelStored({ start: mapped.start, end: mapped.end });
+                fixSelStored = { start: mapped.start, end: mapped.end };
                 fixSelCard.dispatchEvent(new Event('so-fixsel-refresh'));   // 卡内同一段写回（apply + 重画）
                 scrollFixSelToOffset(fixSelCard, mapped.start);
             } else {
                 try {
                     ta.focus();
                     ta.setSelectionRange(mapped.start, mapped.end);
-                    setFixSelStored({ start: mapped.start, end: mapped.end });
+                    fixSelStored = { start: mapped.start, end: mapped.end };
                     ta.dispatchEvent(new Event('select'));   // 走卡自己的 record/apply 原路：已选中 N 字 + 📌 + go 态
                     scrollFixSelToOffset(fixSelCard, mapped.start);
                 } catch (e) { /* 预选设置失败 = 按未选中开卡（fail-open） */ }
@@ -584,7 +604,7 @@ function buildFixSelCard() {
     const record = () => {
         if (fixSelMode === 'tap') return;   // 结构性闸门（§5 opus）：点选模式下这条老路【永不】写草稿
         const start = ta.selectionStart, end = ta.selectionEnd;
-        if (typeof start === 'number' && typeof end === 'number' && end > start) setFixSelStored({ start, end });   // 规则3：只在真选区时更新存档
+        if (typeof start === 'number' && typeof end === 'number' && end > start) fixSelStored = { start, end };   // 规则3：只在真选区时更新存档
         apply();
     };
     // 规则1：mouseup / keyup / select
@@ -613,9 +633,9 @@ function buildFixSelCard() {
         }
         fixSelState.pins = r.pins;
         fixSelState.start = 0; fixSelState.end = 0; fixSelState.text = '';
-        setFixSelStored(null);
+        fixSelStored = null;
         try { ta.setSelectionRange(0, 0); } catch (e) { /* ignore */ }
-        setFixSelExpandArmed(false);   // 钉住 = 这一段结束，扩选的一次性武装随之作废
+        fixSelExpandArmed = false;   // 钉住 = 这一段结束，扩选的一次性武装随之作废
         renderFixSelPins(el);
         paintFixSelOverlayAll(el);
         info.textContent = fixSelHint('pinned', fixSelState.pins.length);
@@ -675,14 +695,14 @@ function buildFixSelCard() {
             if (!r.ok) {
                 info.textContent = fixSelRefuse((r.reason === 'overlap' && fixSelExpandArmed) ? 'expand-cross' : r.reason, r.index + 1);
                 if (r.reason === 'overlap') fixSelFlashPin(el, r.index);
-                setFixSelExpandArmed(false);
+                fixSelExpandArmed = false;
                 fixSelSyncStrip(el);
                 fixSelLog('TAP-NO', { unit: i, reason: r.reason });
                 return;
             }
             closeChooser(true);   // 微调窗开着时新点一句 = 先落定当下的微调结果（不还原），再按新句重选
-            setFixSelStored({ start: r.added.start, end: r.added.end });   // 已经规整过：📌 不会再挪动看得见的边
-            setFixSelExpandArmed(false);
+            fixSelStored = { start: r.added.start, end: r.added.end };   // 已经规整过：📌 不会再挪动看得见的边
+            fixSelExpandArmed = false;
             writeBack();
         };
 
@@ -723,7 +743,7 @@ function buildFixSelCard() {
 
         el.querySelector('.so-fixsel-expand').addEventListener('click', () => {
             if (!fixSelStored || fixSelStored.end <= fixSelStored.start) { info.textContent = '先点一句，再按扩选。'; return; }
-            setFixSelExpandArmed(!fixSelExpandArmed);
+            fixSelExpandArmed = !fixSelExpandArmed;
             fixSelSyncStrip(el);
             if (fixSelExpandArmed) info.textContent = '扩选：再点另一头，中间全选上。';
             else apply();   // 收手 = 提示行回到「已选中 N 字」
@@ -731,8 +751,8 @@ function buildFixSelCard() {
         });
         el.querySelector('.so-fixsel-clear').addEventListener('click', () => {
             closeChooser(true);   // 清除 = 连微调一起收掉，且【不】把快照放回来（草稿就是要没了）
-            setFixSelStored(null);
-            setFixSelExpandArmed(false);
+            fixSelStored = null;
+            fixSelExpandArmed = false;
             // 拖选模式下 textarea 还聚焦着、原生选区还在，apply() 会走【实时】那一支把草稿原样捡回来
             //（复审 #1 的出路必须真的通）——同 📌 成功后的那一行，显式清零。点选模式下是 no-op。
             try { ta.setSelectionRange(0, 0); } catch (e) { /* ignore */ }
@@ -756,7 +776,7 @@ function buildFixSelCard() {
         const chPick = (g) => {
             const p = fixSelChProbe(CH.edge, CH.edge === 'start' ? g.start : g.end);
             if (!p.ok) return;
-            setFixSelStored({ start: p.added.start, end: p.added.end });
+            fixSelStored = { start: p.added.start, end: p.added.end };
             fixSelLog('CH-PICK', { reason: `${CH.edge} → [${fixSelStored.start},${fixSelStored.end})`, unit: CH.unit });
             writeBack();
             renderChooser();   // 挑完不关窗：格子上的 on 跟着挪，可以接着挑
@@ -777,7 +797,7 @@ function buildFixSelCard() {
             if (np === undefined) return;
             const p = fixSelChProbe(CH.edge, np);
             if (!p.ok || !p.exact) { fixSelLog('CH-NUDGE-NO', { reason: p.reason || 'trimmed' }); return; }
-            setFixSelStored({ start: p.cand.start, end: p.cand.end });
+            fixSelStored = { start: p.cand.start, end: p.cand.end };
             fixSelLog('CH-NUDGE', { reason: `${CH.edge} ${dir > 0 ? '+' : '-'}1 → [${fixSelStored.start},${fixSelStored.end})` });
             CH.unit = fixSelChUnitAt(fixSelState.units, CH.edge === 'start' ? fixSelStored.start : fixSelStored.end - 1);
             writeBack();
@@ -849,7 +869,7 @@ function buildFixSelCard() {
         // commit=false：把草稿还原成打开那一刻的快照（只有「取消」走）。
         const closeChooser = (commit) => {
             if (!chIsOpen()) return;
-            if (!commit && CH.snapshot) setFixSelStored({ start: CH.snapshot.start, end: CH.snapshot.end });
+            if (!commit && CH.snapshot) fixSelStored = { start: CH.snapshot.start, end: CH.snapshot.end };
             chooser.classList.remove('open');
             el.classList.remove('so-fixsel-ch-open');
             // 只还原【显示】，绝不碰值：用户在整体要求框里敲的字原样还在（那是 textarea 的 value，
@@ -894,7 +914,7 @@ function buildFixSelCard() {
                 if (mode === fixSelMode) return;
                 closeChooser(true);   // 换模式 = 先落定微调（拖选那边没有停靠选择器）
                 try { localStorage.setItem('so.fixsel.mode', mode); } catch (e) { /* 隐私模式写不进，不挡本次切换 */ }
-                setFixSelMode(mode);
+                fixSelMode = mode;
                 fixSelApplyMode(el);
                 apply();   // 提示行换成新模式的说法
             });
@@ -1001,47 +1021,46 @@ function updateFixSelGo(card) {
 }
 
 // 校正调用共用传输；回调接收累计全文，自动任务不传回调时保持非流式。
-export async function fixCallTransport(s, messages, signal, onCum, effMaxTokens = fixEffMaxTokens(s)) {
+export async function fixCallTransport(s, messages, signal, onCum, effMaxTokens = fixEffMaxTokens(s), deps = FIX_TRANSPORT_DEPENDENCIES) {
     if (s.mode === 'direct') {
-        const url = resolveEndpointUrl(s);
+        const url = deps.resolveEndpointUrl(s);
         const body = { model: s.model, messages, max_tokens: effMaxTokens };
         if (s.sendTemperature) body.temperature = s.temperature;
         if (onCum && s.stream) {
             let acc = '';
-            return streamDirect(url, s.apiKey, body, signal, (d) => { acc += d; onCum(acc); });
+            return deps.streamDirect(url, s.apiKey, body, signal, (d) => { acc += d; onCum(acc); });
         }
-        return callDirect(url, s.apiKey, body, signal);
+        return deps.callDirect(url, s.apiKey, body, signal);
     }
     const override = s.sendTemperature ? { temperature: s.temperature } : {};
-    if (onCum && s.stream) return callProfileStream(s.profileId, messages, effMaxTokens, override, signal, onCum);
-    return callProfile(s.profileId, messages, effMaxTokens, override, signal);
+    if (onCum && s.stream) return deps.callProfileStream(s.profileId, messages, effMaxTokens, override, signal, onCum);
+    return deps.callProfile(s.profileId, messages, effMaxTokens, override, signal);
 }
 
 // ✂️ 选段校正主流程（1.27.0，Part C）：把 fixSelState 里划选的片段 + 用户指令发给模型（冻结 FIX_SPAN_PROMPT），
-// 只回改写片段；上下文走手动那套 fixM_* 开关（captureFixContext 填卡/概要/前文模块槽——选段正是能扛高上下文的形态）。
-// 调用机理与 runFixByTargets 同构（direct/profile + 流式 + 共享 abortCtl 停止键）。定稿 → renderFixSelectResult。
+// 只回改写片段；上下文走手动那套 fixM_* 开关（captureFixContext 为本轮冻结卡/概要/前文——选段正是能扛高上下文的形态）。
+// 调用机理与 runFixByTargets 同构（direct/profile + 流式 + generation 控制器停止键）。定稿 → renderFixSelectResult。
 async function runFixSelect(instruction) {
     if (!ENABLE_FIX_SELECT || !fixSelState || fixSelState.text.length < 2) return;
     const ctx = getCtx();
     const s = getSettings();
     const sel = fixSelState;   // 快照本次划选（fixSelState 可能被下次开卡覆盖）
-    await captureFixContext(s, { mode: 'manual' });   // 填 fixCardBlock/fixSummaryBlock/fixContextBlock（buildFixSpanPrompt 读）
-    const messages = buildSpanMessages(ctx, s, sel, instruction);
+    const fixContext = await captureFixContext(s, { mode: 'manual' });
+    const messages = buildSpanMessages(ctx, s, sel, instruction, fixContext);
 
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
     const contentEl = assistantEl.querySelector('.so-content');
     const clearTyping = showTyping(contentEl);
-    setGenerating(true);
-    setAbortCtl(new AbortController());   // 共享中断器：停止键即时生效（同 runFixByTargets）
-    const timer = setTimeout(() => { try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
+    const ctl = beginGeneration();
+    const timer = setTimeout(() => { try { ctl.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
     let finalText = '';
     try {
         // 传输四格收进 fixCallTransport（1.37.0 单一来源）；onCum 累计语义 = 原 profile 流分支原样，
         // direct 流从「+= 增量」改「= 累计」——同一字符串级数，最终画面逐字节一致。
         if (s.stream) contentEl.classList.add('so-streaming');
-        finalText = await fixCallTransport(s, messages, abortCtl.signal, (full) => { clearTyping(); contentEl.textContent = full; if (soFollowStream) scrollToBottom(); });
+        finalText = await fixCallTransport(s, messages, ctl.signal, (full) => { clearTyping(); contentEl.textContent = full; if (soFollowStream) scrollToBottom(); });
         contentEl.classList.remove('so-streaming');
         clearTyping();
         renderFixSelectResult(assistantEl, contentEl, sel, finalText);
@@ -1050,7 +1069,7 @@ async function runFixSelect(instruction) {
         if (isUserAbort(e)) contentEl.textContent = '(已停止)';
         else { contentEl.textContent = '选段校正失败：' + (e?.message || e); contentEl.classList.add('so-hint-error'); }
     } finally {
-        clearTimeout(timer); setGenerating(false); setAbortCtl(null);
+        clearTimeout(timer); finishGeneration();
         if (soFollowStream) scrollToBottom();
     }
 }
@@ -1175,11 +1194,11 @@ async function runSpanCall(s, messages, batchSignal) {
     }
 }
 
-// 多段批发主流程（1.37.0）：captureFixContext 一次 → 【同步】为每段建 prompt（模块槽 fixCardBlock/
-// fixSummaryBlock/fixContextBlock 在任何 await 前读完 = 并发绝不互踩，R8 的构造性解法）→ 有界并发池
-// 逐段 runSpanCall → 汇总出评审卡。isGenerating + 模块 abortCtl 走标准生成协议：停止键 / 1.36.0
+// 多段批发主流程（1.37.0）：captureFixContext 一次 → 【同步】为每段建 prompt（本轮冻结上下文的
+// cardBlock/summaryBlock/contextBlock 在任何 await 前消费完 = 并发绝不互踩，R8 的构造性解法）→ 有界并发池
+// 逐段 runSpanCall → 汇总出评审卡。isGenerating + generation 控制器走标准生成协议：停止键 / 1.36.0
 // 切模式确认（confirmConvoSwap）/ 切聊天中断全部免费继承；不入保活槽（liveForge/liveCondense 是锻造/
-// 深度精简专属）。起跑后绝不 convo.push（1.36.0 串房教训）——全部落笔进起跑时建好的这只气泡。
+// 深度精简专属）。起跑后绝不 appendConvo（1.36.0 串房教训）——全部落笔进起跑时建好的这只气泡。
 async function runFixSelectBatch(sharedInstr) {
     if (!ENABLE_FIX_SELECT || isGenerating) return;
     if (!fixSelState || !Array.isArray(fixSelState.pins) || fixSelState.pins.length < 2) return;
@@ -1187,19 +1206,18 @@ async function runFixSelectBatch(sharedInstr) {
     const s = getSettings();
     // 快照（await 前）：重开卡会覆盖 fixSelState，批发全程只认起跑这一刻的钉选
     const job = { idx: fixSelState.idx, swipeId: fixSelState.swipeId, fingerprint: fixSelState.fingerprint, full: fixSelState.full, pins: fixSelState.pins.map((p) => ({ ...p })) };
-    await captureFixContext(s, { mode: 'manual' });   // 填模块槽（同 runFixSelect，一次够全批用——手动分支不依赖片段）
+    const fixContext = await captureFixContext(s, { mode: 'manual' });
     const calls = job.pins.map((pin) => ({
         pin,
-        messages: buildSpanMessages(ctx, s, { full: job.full, text: pin.text }, resolvePinInstruction(pin.instr, sharedInstr)),
+        messages: buildSpanMessages(ctx, s, { full: job.full, text: pin.text }, resolvePinInstruction(pin.instr, sharedInstr), fixContext),
     }));
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
     const contentEl = assistantEl.querySelector('.so-content');
     const clearTyping = showTyping(contentEl);
-    setGenerating(true);
-    setAbortCtl(new AbortController());   // 共享中断器（H7）：停止键 / 切聊天 / 1.36.0 确认后切换 都打得到
-    const batchSignal = abortCtl.signal;
+    const ctl = beginGeneration();
+    const batchSignal = ctl.signal;
     let done = 0;
     try {
         const results = await runBoundedPool(calls.map((c) => () =>
@@ -1217,7 +1235,7 @@ async function runFixSelectBatch(sharedInstr) {
         contentEl.textContent = '多段校正失败：' + ((e && e.message) || e);
         contentEl.classList.add('so-hint-error');
     } finally {
-        setGenerating(false); setAbortCtl(null);
+        finishGeneration();
         if (soFollowStream) scrollToBottom();
     }
 }
@@ -1321,9 +1339,8 @@ async function retryFixSelectBatch(assistantEl, contentEl, job, rows) {
     const targets = [];
     rows.forEach((r, i) => { if (r.status === 'failed' || r.status === 'truncated' || r.status === 'unparseable' || r.status === 'aborted') targets.push(i); });
     if (!targets.length) return;
-    setGenerating(true);
-    setAbortCtl(new AbortController());
-    const batchSignal = abortCtl.signal;
+    const ctl = beginGeneration();
+    const batchSignal = ctl.signal;
     let done = 0;
     contentEl.textContent = `重试中… 0/${targets.length} 段完成`;
     try {
@@ -1339,7 +1356,7 @@ async function retryFixSelectBatch(assistantEl, contentEl, job, rows) {
     } catch (e) {
         contentEl.textContent = '重试失败：' + ((e && e.message) || e);
     } finally {
-        setGenerating(false); setAbortCtl(null);
+        finishGeneration();
     }
 }
 
@@ -1360,20 +1377,20 @@ async function applyFixSelectBatch(job, accepted) {
 
 // 「按目标校正最新回复」：用勾选的目标 + 约束（不是手动输入）当指令，对最新回复跑一次两段式校正并出卡。
 // 这是后续自动模式的核心，这里由按钮手动触发。一次性非流式调用（仿 runAutoDiagnose）。
-export async function runFixByTargets() {
+export async function runFixByTargets(options = {}) {
     if (isGenerating) return;
-    const s = getSettings();
+    const s = options.settings || getSettings();
     if (s.mode === 'direct' && (!s.endpoint || !s.model)) { addSystemNote('请先在设置里配置直连端点与模型。'); return; }
     if (s.mode === 'profile' && !s.profileId) { addSystemNote('请先在设置里选择一个连接配置档。'); return; }
-    await captureFixContext(s, { mode: 'auto' });   // 「按目标校正」= 自动那套（双稿 / 目标 / 上下文按 fixA_*），手动触发一次
-    if (!fixTargetProse.trim()) { addSystemNote('没找到可校正的 AI 回复（主聊天里要先有一条 AI 回复）。'); return; }
-    // R2 双重校正（一次性手动触发）：目标当前 swipe 已是校正结果 → 提醒会在其基础上再校正，随后继续（不静默改基准）。
-    if (isFixSwipe((getCtx().chat || [])[fixTargetIdx])) addSystemNote('这条回复当前显示的已是一次校正结果；将在其基础上再次校正（如需校正原文请先左滑回原文）。');
+    const fixContext = options.fixContext || await captureFixContext(s, { mode: 'auto' });
+    if (!fixContext.targetProse.trim()) { addSystemNote('没找到可校正的 AI 回复（主聊天里要先有一条 AI 回复）。'); return; }
+    // R2 双重校正（一次性手动触发）：目标当前 swipe 已是校正结果 → 提醒会在其基础上再校正，随后继续。
+    if (isFixSwipe((getCtx().chat || [])[fixContext.targetIdx])) addSystemNote('这条回复当前显示的已是一次校正结果；将在其基础上再次校正（如需校正原文请先左滑回原文）。');
     // ✨ Phase 5 D+E 门：与 runAutoFix 同一套判断（RESOLUTION A——这个按钮走的也是「自动」那套配置，理应遵守
     // 同一份 D 静默兜底），只是这里是一次性、有人盯着屏幕的手动触发，所以走 addSystemNote 通道（普通侧聊提示），
     // 不是 addAutoFixNote 的持久记录；suggest / skip 时直接 return，不出校正卡（呼应下面「没找到可校正的
     // AI 回复」那类提前退出，不留下一张会误导的卡片）。
-    const scopeDec = fixScopeDecision;
+    const scopeDec = fixContext.scopeDecision;
     if (scopeDec && scopeDec.action === 'detected') {
         setFixCfg({ fixA_scopeTag: scopeDec.tag, fixA_scopeManual: false });
         const scopeEl = win && win.querySelector('#so-fix-scope');
@@ -1386,8 +1403,8 @@ export async function runFixByTargets() {
     // ✨ 分段校正（1.18.0）门（与 runAutoFix 同一套决策；这里是有人盯着屏幕的手动触发 → addSystemNote 通道，
     // 呼应 1.17.16 的 RESOLUTION A）。ask 时用户在场：立刻把提案摆出来（addSystemNote）+ 走一次 emitPieceAsk
     // （toast 可点确认 + 持久记录 + 记 pieceAsked），本轮不校正。
-    if (ENABLE_FIX_PIECEWISE && fixPieceDecision) {
-        const pd = fixPieceDecision;
+    if (ENABLE_FIX_PIECEWISE && fixContext.pieceDecision) {
+        const pd = fixContext.pieceDecision;
         if (pd.adopt) {
             const cur = getEffectiveFixCfg(s, getFixCfg());
             if (cur.fixA_pieceMode !== 'wrapped' || cur.fixA_scopeTag !== pd.tag) {
@@ -1407,12 +1424,12 @@ export async function runFixByTargets() {
             return;
         }
         if (pd.action === 'suggest' || pd.action === 'skip') { addSystemNote(fixScopeNoteText(pd.note).body); return; }
-        if (fixPieceTable) { await runFixByTargetsPieces(s); return; }
+        if (fixContext.pieceTable) { await runFixByTargetsPieces(s, fixContext); return; }
         // bypass / whole：继续走下面的老单段路径
     }
     // 自动模式配置（per-chat 覆盖全局，再经 resolveFixModeCfg 归一）。
     const a = resolveFixModeCfg(getEffectiveFixCfg(s, getFixCfg()), 'auto');
-    const directive = compileFixTargets(
+    const directive = options.directive ?? compileFixTargets(
         a.targets,
         { card: a.includeCard, context: a.includeContext, world: a.includeWorld },
         { knowledge: a.knowledge, guardrails: a.guardrails },
@@ -1420,29 +1437,25 @@ export async function runFixByTargets() {
     );
     if (!directive) { addSystemNote('还没勾选任何校正目标、也没填约束。请在「校正设置」里勾选或填写，或直接在下方输入框手动说要改什么。'); return; }
 
-    const ctx = getCtx();
-    const messages = (fixUsePresetFor(s, 'auto') && presetCurationActive(s))
-        ? buildFixPresetMessages(s, directive)   // 破限 / 越狱：套上自定义补全预设（仅文本块 + 角色，跳过 RP 内容标记）
-        : maybeWrapJb([{ role: 'system', content: buildFixPrompt(ctx, s) }, { role: 'user', content: directive }], 'fixAuto', s);
+    const ctx = options.ctx || getCtx();
+    const messages = options.messages || ((fixUsePresetFor(s, 'auto') && presetCurationActive(s))
+        ? buildFixPresetMessages(s, directive, fixContext)
+        : maybeWrapJb([{ role: 'system', content: buildFixPrompt(ctx, s, fixContext) }, { role: 'user', content: directive }], 'fixAuto', s));
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
-    const assistantEl = addMessage('assistant', '', aEntry);
+    const assistantEl = options.assistantEl || addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
     const contentEl = assistantEl.querySelector('.so-content');
-    const clearTyping = showTyping(contentEl);
-    setGenerating(true);
-    // 用【模块级】abortCtl（与 generateReply / stopGeneration / 停止按钮同一个）：setGenerating(true) 已把发送键变成
-    // 「停止」键，点它经 onSend → stopGeneration 中断的正是 abortCtl。此前这里用【本地】ctl，停止键够不着 →「按目标
-    // 校正最新回复」一旦发出就无法中断（只能等 120s 超时 / 重载）。改用 abortCtl 后停止键即时生效（用户反馈修复）。
-    setAbortCtl(new AbortController());
-    const timer = setTimeout(() => { try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
+    const clearTyping = (options.showTyping || showTyping)(contentEl);
+    const ctl = beginGeneration();
+    const timer = setTimeout(() => { try { ctl.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
     try {
         const effMaxTokens = fixEffMaxTokens(s);   // Tier 0 ③：可被 fixMaxTokens 顶高（长楼层）
         const onCum = s.stream ? (full) => { clearTyping(); contentEl.textContent = full; if (soFollowStream) scrollToBottom(); } : undefined;
         if (s.stream) contentEl.classList.add('so-streaming');
-        const finalText = await fixCallTransport(s, messages, abortCtl.signal, onCum, effMaxTokens);
+        const finalText = await fixCallTransport(s, messages, ctl.signal, onCum, effMaxTokens, options.transport);
         if (s.stream) contentEl.classList.remove('so-streaming');
         clearTyping();
-        if (renderFixCard(assistantEl, contentEl, aEntry, finalText) !== 'ok') {
+        if ((options.renderFixCard || renderFixCard)(assistantEl, contentEl, aEntry, finalText, fixContext) !== 'ok') {
             contentEl.textContent = finalText || '（空回复）';
             addSystemNote('没能从模型回复里解析出 <FixedReply> 校正稿。请检查连接 / 模型，或调整目标后重试。');
         }
@@ -1456,19 +1469,18 @@ export async function runFixByTargets() {
         }
     } finally {
         clearTimeout(timer);
-        setGenerating(false);
-        setAbortCtl(null);                                             // 交还共享中断器（与 generateReply 一致）
+        finishGeneration();
         if (soFollowStream) scrollToBottom();   // #1 定稿后只在用户跟随到底部时才滚
     }
 }
 
-// 「按目标校正」的分段版：在侧聊气泡里逐段跑。发送键=停止键（共享 abortCtl——1.17.14 教训：局部
-// controller 停止键够不着），点停止 → isUserAbort → 「(已停止)」平静收尾、不写。跑完出校正卡：正文 =
+// 「按目标校正」的分段版：在侧聊气泡里逐段跑。发送键=停止键（generation 控制器中的 AbortController），
+// 点停止 → isUserAbort → 「(已停止)」平静收尾、不写。跑完出校正卡：正文 =
 // 各段校正稿拼接（预览），「应用到回复」写入 splice 回原位的整条（addFixApplyControls finalOverride），
-// 应用前陈旧守卫照跑（fixCaptured）。「看改动」= 修好各段的 prose↔prose 拼接对比（守卫两侧都不在，不刷屏）。
-async function runFixByTargetsPieces(s) {
+// 应用前陈旧守卫照跑（fixContext.captured）。「看改动」= 修好各段的 prose↔prose 拼接对比（守卫两侧都不在，不刷屏）。
+async function runFixByTargetsPieces(s, fixContext) {
     const ctx = getCtx();
-    const table = fixPieceTable;
+    const table = fixContext.pieceTable;
     if (!table || !table.pieces.length) return;
     const cfg = getEffectiveFixCfg(s, getFixCfg());
     const a = resolveFixModeCfg(cfg, 'auto');
@@ -1484,8 +1496,7 @@ async function runFixByTargetsPieces(s) {
     aEntry._el = assistantEl;
     const contentEl = assistantEl.querySelector('.so-content');
     const clearTyping = showTyping(contentEl);
-    setGenerating(true);
-    setAbortCtl(new AbortController());   // 共享中断器：setGenerating(true) 已把发送键变停止键，点它中断的正是这个
+    const ctl = beginGeneration();
     const results = join ? [] : plan.entries.map((e) => ({ status: e.status }));
     let stopped = false;
     let joinResult = null;
@@ -1494,13 +1505,13 @@ async function runFixByTargetsPieces(s) {
             clearTyping();
             const joinHead = `整体校正中…（1 次调用；${join.keepBlocks.length} 块结构锚点原位保留）`;
             contentEl.textContent = joinHead;
-            const timer = setTimeout(() => { try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
+            const timer = setTimeout(() => { try { ctl.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
             try {
                 contentEl.classList.add('so-streaming');
                 // ✨ 1.18.3：按钮路径流式直播草稿（尊重全局 流式 开关；锚点 / <FixedReply> 标签会原样闪过——
                 // 定稿后由下方卡片渲染替换，同弧线实时输出的契约）。
-                joinResult = await fixJoinCall(ctx, s, directive, join, abortCtl.signal,
-                    (full) => { contentEl.textContent = joinHead + '\n\n' + full; if (soFollowStream) scrollToBottom(); });
+                joinResult = await fixJoinCall(ctx, s, directive, join, ctl.signal,
+                    (full) => { contentEl.textContent = joinHead + '\n\n' + full; if (soFollowStream) scrollToBottom(); }, fixContext);
             } catch (e) {
                 if (isUserAbort(e)) { stopped = true; }
                 else joinResult = { status: 'failed', reason: 'error' };
@@ -1511,11 +1522,11 @@ async function runFixByTargetsPieces(s) {
                 clearTyping();
                 const pieceHead = `正在分段校正…（第 ${k + 1}/${plan.attempts.length} 次调用，共 ${table.pieces.length} 段正文）`;
                 contentEl.textContent = pieceHead;
-                const timer = setTimeout(() => { try { abortCtl?.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
+                const timer = setTimeout(() => { try { ctl.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
                 try {
                     contentEl.classList.add('so-streaming');
-                    results[i] = await fixPieceCall(ctx, s, a, directive, table.pieces[i], abortCtl.signal,
-                        (full) => { contentEl.textContent = pieceHead + '\n\n' + full; if (soFollowStream) scrollToBottom(); });
+                    results[i] = await fixPieceCall(ctx, s, a, directive, table.pieces[i], ctl.signal,
+                        (full) => { contentEl.textContent = pieceHead + '\n\n' + full; if (soFollowStream) scrollToBottom(); }, fixContext);
                 } catch (e) {
                     if (isUserAbort(e)) { stopped = true; break; }
                     results[i] = { status: 'failed', reason: 'error' };
@@ -1553,8 +1564,8 @@ async function runFixByTargetsPieces(s) {
                 + (r.problems ? '\n发现并修正：\n' + r.problems : '');
             assistantEl.querySelector('.so-bubble')?.appendChild(note2);
             // 重画保真（1.33.1）：登记应用材料，换房重画时最新一条凭它重挂（说明文一并原样重挂）。
-            registerFixApply(aEntry, { fixed: r.after, problems: '' }, r.before, fixTargetIdx, [], { active: false }, fixCaptured, spliced2, note2.textContent);
-            addFixApplyControls(assistantEl, { fixed: r.after, problems: '' }, r.before, fixTargetIdx, [], { active: false }, fixCaptured, spliced2, { entry: aEntry });
+            registerFixApply(aEntry, { fixed: r.after, problems: '' }, r.before, fixContext.targetIdx, [], { active: false }, fixContext.captured, spliced2, note2.textContent);
+            addFixApplyControls(assistantEl, { fixed: r.after, problems: '' }, r.before, fixContext.targetIdx, [], { active: false }, fixContext.captured, spliced2, { entry: aEntry });
             return;
         }
         const summary = fixPieceSummary(table.pieces, results);
@@ -1583,15 +1594,14 @@ async function runFixByTargetsPieces(s) {
         assistantEl.querySelector('.so-bubble')?.appendChild(note);
         // 应用控件：finalOverride = splice 好的整条；diff 用修好各段的 prose↔prose 拼接（keep 空、scope 关）。
         // 重画保真（1.33.1）：登记应用材料，换房重画时最新一条凭它重挂（说明文一并原样重挂）。
-        registerFixApply(aEntry, { fixed: summary.afterJoined, problems: '' }, summary.beforeJoined, fixTargetIdx, [], { active: false }, fixCaptured, spliced, note.textContent);
-        addFixApplyControls(assistantEl, { fixed: summary.afterJoined, problems: '' }, summary.beforeJoined, fixTargetIdx, [], { active: false }, fixCaptured, spliced, { entry: aEntry });
+        registerFixApply(aEntry, { fixed: summary.afterJoined, problems: '' }, summary.beforeJoined, fixContext.targetIdx, [], { active: false }, fixContext.captured, spliced, note.textContent);
+        addFixApplyControls(assistantEl, { fixed: summary.afterJoined, problems: '' }, summary.beforeJoined, fixContext.targetIdx, [], { active: false }, fixContext.captured, spliced, { entry: aEntry });
     } catch (e) {
         clearTyping();
         contentEl.textContent = '校正失败：' + (e?.message || e);
         contentEl.classList.add('so-hint-error');
     } finally {
-        setGenerating(false);
-        setAbortCtl(null);   // 交还共享中断器（与 generateReply / runFixByTargets 一致）
+        finishGeneration();
         if (soFollowStream) scrollToBottom();
     }
 }
@@ -1682,69 +1692,44 @@ export function confirmPieceWrapped(tag) {
     updateFixButtonVisual();   // ✨ 确认 → pending 琥珀清除、转正常金
 }
 
-// 一次【普通校正调用】跑一个正文片段：今天的信封、今天的提示词字节、今天的解析器（parseFixedReply)、
-// 今天的截断 / 无操作检查——只是 <text_to_transform> = 这个片段的 core。keep/drop 区在片段内层照常生效
-// （composeFixedReply 按 ⟦SO_KEEP_n⟧ 原位还原）。不碰锁 / 不写消息；signal 由调用方给（auto 用
-// beginPostReplyCall、按钮用共享 abortCtl——1.17.14 停止键教训）。模块槽 fixTargetProse / fixExtraKeep
-// 逐段就位（buildFixPrompt / buildFixPresetMessages 读它们；回复后编排持锁顺序执行，无并发之虞）。
-// onDelta（可选，1.18.3）：流式回调，收【到目前为止的全文】——按钮路径传入（气泡直播）；自动路径不传 = 字节不变。
-export async function fixPieceCall(ctx, s, a, directive, piece, signal, onDelta) {
+// 一次普通校正调用跑一个正文片段。片段正文与保留区以派生上下文显式传递，
+// 不修改 captureFixContext 返回的冻结对象。
+export async function fixPieceCall(ctx, s, a, directive, piece, signal, onDelta, fixContext) {
     const ex = extractExcludedSections(piece.core, a.keepTags, a.dropTags);
     const pieceProse = stripMechanismBlocks(ex.prose);
     if (!pieceProse.trim()) return { status: 'gated' };
-    setFixTargetProse(pieceProse);
-    setFixExtraKeep(ex.keepBlocks);
+    const pieceContext = Object.freeze({ ...fixContext, targetProse: pieceProse, extraKeep: ex.keepBlocks });
     const messages = (fixUsePresetFor(s, 'auto') && presetCurationActive(s))
-        ? buildFixPresetMessages(s, directive)
-        : maybeWrapJb([{ role: 'system', content: buildFixPrompt(ctx, s) }, { role: 'user', content: directive }], 'fixAuto', s);
+        ? buildFixPresetMessages(s, directive, pieceContext)
+        : maybeWrapJb([{ role: 'system', content: buildFixPrompt(ctx, s, pieceContext) }, { role: 'user', content: directive }], 'fixAuto', s);
     const finalText = await fixCallTransport(s, messages, signal, onDelta);
     const parsed = parseFixedReply(finalText);
     if (!parsed) return { status: 'failed', reason: fixFailureReason(finalText, undefined).kind };
     const finishHint = (/<FixedReply\b[^>]*>/i.test(finalText) && !/<\/FixedReply\s*>/i.test(finalText)) ? 'length' : undefined;
     if (fixOutputTruncated(parsed.fixed, finishHint, pieceProse).truncated) return { status: 'truncated' };
-    if (fixEffectivelyUnchanged(pieceProse, parsed.fixed)) return { status: 'clean' };   // Tier 0 ①：近抄也算 clean（自动不落回抄稿）
+    if (fixEffectivelyUnchanged(pieceProse, parsed.fixed)) return { status: 'clean' };
     return { status: 'fixed', fixedCore: composeFixedReply(parsed.fixed, piece.core, ex.keepBlocks), problems: parsed.problems || '', before: pieceProse, after: parsed.fixed };
 }
 
-// ✨「整体校正」的一次调用（fixJoinTable 的原料版 fixPieceCall）：core 已含 ⟦SO_KEEP_n⟧ 锚点、keepBlocks
-// 已备好——不再跑 extractExcludedSections（丢弃区在 fixJoinTable 已处理；用户保留区点名的块本就是守卫→锚点）。
-// fixExtraKeep = keepBlocks 让 buildFixPrompt 的既有【保留区锚点】提示自动生效（1.17.3 验证的那段话）。
-// 返回 PieceResult + anchorsMissing（模型弄丢的锚点数——compose 已兜底接回不丢内容，但要如实告知位置可能偏移）。
-// onDelta（可选，1.18.3）：流式回调，收【到目前为止的全文】——按钮路径传入（气泡直播）；自动路径不传 = 字节不变。
-// （owed A3：原来还收一个 `a`（模式归一配置）——函数体一次都没读它，而自定义路传进来的是形状完全
-//   不同的 cc，留着只会误导下一个读代码的人。已从签名与全部调用点删去；行为逐字节不变。）
-export async function fixJoinCall(ctx, s, directive, join, signal, onDelta) {
-    const pieceProse = (join && join.raw) ? join.core : stripMechanismBlocks(join.core);   // 📋 整条 raw 表：不剥 MVU
+// 整体校正的一次调用：join 的正文与保留锚点同样只进入派生上下文。
+export async function fixJoinCall(ctx, s, directive, join, signal, onDelta, fixContext) {
+    const pieceProse = (join && join.raw) ? join.core : stripMechanismBlocks(join.core);
     if (!pieceProse.trim()) return { status: 'gated' };
-    setFixTargetProse(pieceProse);
-    setFixExtraKeep(join.keepBlocks);
-    // 📋 自定义模板任务：预设 / 破限走自定义档自己的开关（fixC_usePreset），提示词由 buildFixPrompt 的 custom 分支给。
-    const custom = (ENABLE_FIX_CUSTOM_TASK && fixActiveMode === 'custom');
-    // 📋 单块守卫（MVU 地雷 ②）的判据，本函数与 fixRunJoin 共用一份（owed-wave fix round 2）。
-    // **不能**用 join.raw：沿用识别但阶梯没建出分段表的 raw:false 退路同样是 fixCustomRawTable 出的表，
-    // 契约行又点名了 <UpdateVariable>，模型伪造 / 回声一个块时若走原实参，composeFixedReply 会把原块也接回
-    // = 一条消息两个更新区块。**也不能**去掉这层判据只留 fixOutputHasMvuBlock：那会把守卫装到校正路上，
-    // 破掉不变量 2（校正路径零行为变化）。判据 =「自定义任务 且 这次的表来自 fixCustomRawTable」；
-    // 校正 / 手动路 fixActiveMode 不是 'custom' ⇒ 恒假 ⇒ composeAgainst = join.core、skipBlock 恒 false。
-    const customRawTable = (ENABLE_FIX_CUSTOM_TASK && fixActiveMode === 'custom' && !!fixCustomJoin);
+    const joinContext = Object.freeze({ ...fixContext, targetProse: pieceProse, extraKeep: join.keepBlocks });
+    const custom = (ENABLE_FIX_CUSTOM_TASK && joinContext.activeMode === 'custom');
+    // 判据必须认捕获时的 customJoin，而不是 join.raw：raw:false 退路同样来自 fixCustomRawTable。
+    const customRawTable = (custom && !!joinContext.customJoin);
     const jbMode = custom ? 'fixCustom' : 'fixAuto';
     const messages = (fixUsePresetFor(s, custom ? 'custom' : 'auto') && presetCurationActive(s))
-        ? buildFixPresetMessages(s, directive)
-        : maybeWrapJb([{ role: 'system', content: buildFixPrompt(ctx, s) }, { role: 'user', content: directive }], jbMode, s);
+        ? buildFixPresetMessages(s, directive, joinContext)
+        : maybeWrapJb([{ role: 'system', content: buildFixPrompt(ctx, s, joinContext) }, { role: 'user', content: directive }], jbMode, s);
     const finalText = await fixCallTransport(s, messages, signal, onDelta);
     const parsed = parseFixedReply(finalText);
     if (!parsed) return { status: 'failed', reason: fixFailureReason(finalText, undefined).kind };
     const finishHint = (/<FixedReply\b[^>]*>/i.test(finalText) && !/<\/FixedReply\s*>/i.test(finalText)) ? 'length' : undefined;
     if (fixOutputTruncated(parsed.fixed, finishHint, pieceProse).truncated) return { status: 'truncated' };
-    if (fixEffectivelyUnchanged(pieceProse, parsed.fixed)) return { status: 'clean' };   // Tier 0 ①：近抄也算 clean（自动不落回抄稿）
+    if (fixEffectivelyUnchanged(pieceProse, parsed.fixed)) return { status: 'clean' };
     const anchorsMissing = join.keepBlocks.filter((b, i) => !parsed.fixed.includes(fixKeepPlaceholder(i))).length;
-    // 📋 raw 表专属的单块守卫（MVU 地雷 ②）：整条路把 <UpdateVariable> 一起交给了模型，模型改写它（翻译类模板
-    // 必然如此）之后 composeFixedReply 的【逐字包含】判据会认成「块丢了」→ 把原版也接到末尾 = 一条消息两个更新区块。
-    // 药方是【只换第二个实参】：喂 stripMechanismBlocks(join.core) 让它摘不到原块（不接），而
-    // <StatusPlaceHolderImpl/> 分支照旧生效（stripMechanismBlocks 不碰占位符）——模型若把占位符弄丢仍会补回。
-    // 模型【真的】把块弄丢时 fixOutputHasMvuBlock 为假 → 走原实参 → 原块照旧接回。校正 / 手动路 customRawTable
-    // 恒假 ⇒ 字节不变。判据为什么不是 join.raw 见上面 customRawTable 处（raw:false 退路一样要守）。
     const composeAgainst = (customRawTable && fixOutputHasMvuBlock(parsed.fixed)) ? stripMechanismBlocks(join.core) : join.core;
-    // skipMvuTail = 同一个判据交给 fixRunJoin（那边还要对【拼好的成品】再测一次块），免得两处各算一遍、各漂一半。
     return { status: 'fixed', fixedCore: composeFixedReply(parsed.fixed, composeAgainst, join.keepBlocks), problems: parsed.problems || '', before: pieceProse, after: parsed.fixed, anchorsMissing, skipMvuTail: customRawTable };
 }

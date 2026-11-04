@@ -6,57 +6,40 @@ import { MVUED_LIST_META_KEY, MVUED_META_KEY, MVUED_TRAINER_META_KEY, getChatMet
 import { appendNoteToRoom } from '../chat/history.js';
 import { chatIdentityKey } from '../chat/send.js';
 import { applyMvuedEdits, buildMvuedModel, buildMvuedScanPrompt, diagUserFloorNotice, mvuIsVwdPair, mvuMsgOpts, mvuedFieldPathList, mvuedLeafKind, mvuedNoteContent, mvuedPathStr, mvuedScanLooksTruncated, parseMvuedSchema } from './auto.js';
-import { extractUpdateBlock, getMvu, getMvuStatData } from './mvu.js';
-import { maybeRunSaveHealth, mvuedEffectiveLeaf } from './schema.js';
-import { buildDiagSelectedWi, diagPickerActive } from '../lorebook/core.js';
-import { DIAG_PATCH_CLOSE, DIAG_PATCH_OPEN, ENABLE_MVU_EDITOR, ENABLE_MVU_TRAINER, ENABLE_SCHEMA_DIAG, MVU_BLOCK_DIALECTS } from '../../prompts/builtins.js';
-import { detectMvuBlockDialect } from '../../prompts/helpers.js';
+import { getMvu, getMvuStatData } from './mvu.js';
+import { maybeRunSaveHealth, mvuedEffectiveLeaf } from './diagnostics.js';
+import { diffMvuStat } from './patch.js';
+import { buildDiagSelectedWi, diagPickerActive } from '../lorebook/world-info.js';
+import { ENABLE_MVU_EDITOR, ENABLE_MVU_TRAINER, ENABLE_SCHEMA_DIAG } from '../../prompts/builtins.js';
 import { P } from '../../prompts/registry.js';
-import { buildWorldInfo, collectMvuUpdateRules, wiContextMode } from '../../st/adapters.js';
+import { buildWorldInfo, collectMvuUpdateRules, getLoadedMvu, wiContextMode } from '../../st/adapters.js';
 import { callDirect, callProfile, resolveEndpointUrl } from '../../transport/direct.js';
 import { enhanceIconBtnNode } from '../../ui/window.js';
-import { lastPrompt, nextCid, setLastPrompt, setLastPromptMeta } from '../../core/runtime-state.js';
-import { mvuedActiveTab, mvuedApplying, mvuedDirty, mvuedKindOverrides, mvuedOpenChatKey, mvuedOpenData, mvuedRefreshTimer, mvuedScanCtl, mvuedScanning, mvuedSchemaCache, setMvuedActiveTab, setMvuedApplying, setMvuedDirty, setMvuedKindOverrides, setMvuedOpenChatKey, setMvuedOpenData, setMvuedRefreshTimer, setMvuedScanCtl, setMvuedScanning, setMvuedSchemaCache, setTrainerLastRun, setTrainerRulesForRender, trainerLastRun, trainerRulesForRender } from './state.js';
-import { mvuApi } from '../../st/runtime-state.js';
-import { win } from '../../ui/state.js';
+import { nextCid } from '../../core/conversation-store.js';
+import { recordLastPrompt } from '../../core/recent-prompt.js';
+import { getHostGlobal } from '../../st/host.js';
+import { win } from '../../ui/refs.js';
 
 /* ── 🎛 变量编辑器 UI ─────────────────────────────────────────────────
- * 会话内瞬态：脏表 / 打开快照 / 当前页签都【不落盘】（同全屏阅读的做法——UI 状态不进设置）。
- * 打开时抓一份 MvuData 拷贝只用于【显示】；真正写入时（mvuedApply）重读 fresh 数据再落 applyMvuedEdits。 */
+ * 以下状态都只属于当前页面会话，不落设置、不进侧聊；应用时始终重读 fresh MvuData。 */
+let mvuedDirty = new Map();
+let mvuedOpenData = null;       // 打开时的数据副本，仅用于显示
+let mvuedSchemaCache = null;    // 当前聊天扫描出的 schema
+let mvuedActiveTab = 0;
+let mvuedKindOverrides = null;  // 存档检查跳转时指定的输入类型
 
-      // 打开时的 MvuData 拷贝（仅供展示；应用时重读 fresh）
-   // 本聊天的扫描 schema（打开时从 metadata 读）
-        // 当前页签下标（开窗归零）
- // 🩺 1.89.0：从存档检查跳来时，把那一格按卡片要求的类型渲染（{pathStr: kind}；开卡时定、关卡清空）
-// 「应用」在途标志（防连点写两次）。updateMvuedFoot 是「应用」键 disabled 的唯一写入口，故它也读这里——
-// 否则用户在写入过程中随手改个值，updateMvuedFoot 会把刚禁用的按钮又点亮。
+// 「应用」与规则扫描互不相干，分别上锁；扫描控制器还供按钮和切聊天逻辑中止请求。
+let mvuedApplying = false;
+let mvuedScanning = false;
+let mvuedScanCtl = null;
 
-// 「🔍 分析取值规则」在途标志。刻意【不】复用 mvuedApplying：两件事互不相干（扫描只读规则、应用只写变量），
-// 共用一个标志会让任一方在途时把对方的按钮也锁死，而扫描一趟最长 120 秒 —— 用户会以为「应用」坏了。
-// updateMvuedScanBtn 是扫描键 disabled + 文案的唯一写入口（在途时该键翻成「⏹ 中断扫描」，见那里）。
+// 防抖刷新必须钉住开卡时的聊天；关卡会同时清理身份和计时器。
+let mvuedOpenChatKey = null;
+let mvuedRefreshTimer = null;
 
-// 在途扫描的中断器把手（空闲时恒 null）。必须是【模块级】而非 runMvuedScan 里的局部 const：两个圈外的
-// 中断来源都得够得着它——① 用户按扫描键上的「⏹ 中断扫描」（spec §6 的可中断承诺）；② 切聊天时
-// onChatChanged——那一趟的结果已经注定要在危险点三被丢弃，让它继续跑就是白烧钱，且扫描键会
-// 在【新聊天】里僵成在途态最长 120 秒。
-
-// 开卡那一刻的聊天身份键（同 mvuedApply / runMvuedScan 用的 chatIdentityKey）。只服务于「跟随现实」的刷新：
-// onChatChanged 已经会 closeMvuEditor，正常情况下切聊天时这张卡早没了；但刷新走的是一颗 300ms 的防抖
-// 定时器，它完全可能在「切聊天」与「新聊天里又开了一张卡」之间落地。带上身份钉 = 那颗迟到的定时器
-// 绝无可能把【新聊天】的数据当成刷新结果摆进任何一张卡。开卡时写、关卡时清。
-
-// 「跟随现实」的防抖把手（空闲恒 null）。必须是模块级：关卡时要掐掉（closeMvuEditor），
-// 而事件监听器是在 init 里一次性挂的、够不着任何局部变量。
-
-// 修改器上一回合的执行结果（会话内存，不落盘、不进侧聊）。唯一消费者 = 🎛 页的读数行。
-// 形状：{ changes:[{label,from,to,kind}], skipped:string[], stamp:string, chatKey:string } | null
-// chatKey = 执行那一刻钉住的聊天身份（runTrainer 的入参、来自 chatIdentityKey()）。切聊天后这个变量
-// 依然留着【上一个】聊天的读数（它本身不随聊天切换清空）——挂上 chatKey 是让 Task 9 的渲染器能
-// 判断「这条读数是不是当前聊天的」，不把旧聊天的改动误显示成这一个聊天的「上一回合」。
-
-// 🎛 修改器：本次重画用的规则快照。renderMvuedBody 开头刷一次，叶子渲染只读它——
-// 否则每个叶子都要读一遍 chat metadata + 规范化一遍（几百个叶子 × 每次重画）。
-
+// 修改器最近一次结果与本轮渲染规则快照只驻留内存；结果自带 chatKey，避免跨聊天误显。
+let trainerLastRun = null;
+let trainerRulesForRender = [];
 
 function collectMvuedEdits() { return Array.from(mvuedDirty.values()); }
 
@@ -299,17 +282,17 @@ export async function openMvuEditor(opts) {
     if (!ENABLE_MVU_EDITOR || !win) return;
     const Mvu = await getMvu();
     if (!Mvu || typeof Mvu.getMvuData !== 'function') {
-        try { window.toastr && window.toastr.info && window.toastr.info('未检测到 MVU —— 本聊天没有可编辑的变量。', '剧情推进 · 变量编辑器'); } catch (e) { /* ignore */ }
+        try { const toastr = getHostGlobal('toastr'); toastr && toastr.info && toastr.info('未检测到 MVU —— 本聊天没有可编辑的变量。', '剧情推进 · 变量编辑器'); } catch (e) { /* ignore */ }
         return;
     }
     let data = null;
     try { data = Mvu.getMvuData(mvuMsgOpts()); } catch (e) { /* 下面按空处理 */ }
-    try { setMvuedOpenData(data ? JSON.parse(JSON.stringify(data)) : null); } catch (e) { setMvuedOpenData(null); }
-    setMvuedDirty(new Map());
-    setMvuedActiveTab(0);
-    setMvuedOpenChatKey(chatIdentityKey());   // 「跟随现实」刷新的身份钉（见 mvuedMaybeRefresh 的守卫②）
-    setMvuedSchemaCache(mvuedReadSchemaCache());
-    setMvuedKindOverrides((ENABLE_SCHEMA_DIAG && opts && Array.isArray(opts.focusPath) && opts.focusKind)
+    try { (mvuedOpenData = data ? JSON.parse(JSON.stringify(data)) : null); } catch (e) { (mvuedOpenData = null); }
+    (mvuedDirty = new Map());
+    (mvuedActiveTab = 0);
+    (mvuedOpenChatKey = chatIdentityKey());   // 「跟随现实」刷新的身份钉（见 mvuedMaybeRefresh 的守卫②）
+    (mvuedSchemaCache = mvuedReadSchemaCache());
+    (mvuedKindOverrides = (ENABLE_SCHEMA_DIAG && opts && Array.isArray(opts.focusPath) && opts.focusKind)
         ? { [mvuedPathStr(opts.focusPath)]: opts.focusKind } : null);
 
     // getMvu 是 async（可能等 TavernHelper 初始化）→ 连点两下按钮会走进两次 append。
@@ -364,7 +347,7 @@ export async function openMvuEditor(opts) {
         try {
             const stat = mvuedOpenData && (mvuedOpenData.stat_data || mvuedOpenData);
             const idx = mvuedTabIndexForPath(buildMvuedModel(stat, mvuedSchemaCache, mvuedReadListOverrides()), focus);
-            if (idx >= 0) { setMvuedActiveTab(idx); renderMvuedBody(); }
+            if (idx >= 0) { (mvuedActiveTab = idx); renderMvuedBody(); }
             for (let n = focus.length; n > 0; n--) {
                 const want = mvuedPathStr(focus.slice(0, n));
                 const el = [...overlay.querySelectorAll('[data-path]')].find((x) => x.dataset.path === want);
@@ -383,14 +366,14 @@ export async function openMvuEditor(opts) {
 export function closeMvuEditor() {
     const el = document.getElementById('so-mvued-card');
     if (el) el.remove();
-    setMvuedKindOverrides(null);
-    setMvuedDirty(new Map());
-    setMvuedOpenData(null);
-    setMvuedSchemaCache(null);
-    setMvuedOpenChatKey(null);
+    (mvuedKindOverrides = null);
+    (mvuedDirty = new Map());
+    (mvuedOpenData = null);
+    (mvuedSchemaCache = null);
+    (mvuedOpenChatKey = null);
     // 在途的「跟随现实」防抖也一起掐：卡都没了，那次刷新已无事可做（mvuedMaybeRefresh 自己也会空转，
     // 掐掉只是不留悬着的定时器）。与 cancelMvuedScan 的取舍不同——扫描的结果仍属于本聊天、值得跑完。
-    if (mvuedRefreshTimer) { clearTimeout(mvuedRefreshTimer); setMvuedRefreshTimer(null); }
+    if (mvuedRefreshTimer) { clearTimeout(mvuedRefreshTimer); mvuedRefreshTimer = null; }
 }
 
 /* ── 打开中的编辑器「跟随现实」（1.59.0）────────────────────────────────
@@ -411,8 +394,8 @@ export function closeMvuEditor() {
  * 输入重画后原样还在；脏项指向的路径若在新状态里已消失，它只是画不出来、仍留在脏表里（应用时
  * applyMvuedEdits 跳过并上报，不静默）。「还原」也因此自动变准了：它清空脏表后显示的正是刷新后的现值。
  *
- * 刻意【不 await】：卡开着就意味着 openMvuEditor 早已 await 过 getMvu，句柄就在 mvuApi 里。写成 async
- * 只会凭空多出一个「await 期间切了聊天」的窗口，而这个函数一步都不该给出去。
+ * 刻意【不 await】：卡开着就意味着 openMvuEditor 早已 await 过 getMvu，句柄可由 getLoadedMvu() 同步取得。
+ * 写成 async 只会凭空多出一个「await 期间切了聊天」的窗口，而这个函数一步都不该给出去。
  */
 export function mvuedMaybeRefresh(reason) {
     if (!ENABLE_MVU_EDITOR) return;
@@ -442,7 +425,7 @@ export function mvuedMaybeRefresh(reason) {
         mvuedScheduleRefresh(reason);
         return;
     }
-    const Mvu = mvuApi || window.Mvu;
+    const Mvu = getLoadedMvu();
     if (!Mvu || typeof Mvu.getMvuData !== 'function') return;
     let fresh = null;
     try { fresh = Mvu.getMvuData(mvuMsgOpts()); } catch (e) { return; }
@@ -461,7 +444,7 @@ export function mvuedMaybeRefresh(reason) {
     let same = false;
     try { same = JSON.stringify(rendered(copy)) === JSON.stringify(rendered(mvuedOpenData)); } catch (e) { same = false; }
     if (same) return;
-    setMvuedOpenData(copy);
+    (mvuedOpenData = copy);
     renderMvuedBody();
     // 有脏项时才出声：用户手上有没提交的改动，值在脚下换了，这件事必须让他知道（否则「我明明改的是
     // 80」会变成一桩灵异事件）。没脏项时静默——那种情况下刷新就是「显示终于对了」，说一句反而是噪音。
@@ -482,10 +465,10 @@ export function mvuedScheduleRefresh(reason) {
     if (!ENABLE_MVU_EDITOR) return;
     if (!document.getElementById('so-mvued-card')) return;
     if (mvuedRefreshTimer) clearTimeout(mvuedRefreshTimer);
-    setMvuedRefreshTimer(setTimeout(() => {
-        setMvuedRefreshTimer(null);
+    mvuedRefreshTimer = setTimeout(() => {
+        mvuedRefreshTimer = null;
         try { mvuedMaybeRefresh(reason); } catch (e) { console.warn('[Story Oracle] 🎛 变量编辑器刷新失败：', e); }
-    }, 300));
+    }, 300);
 }
 
 // 掐掉在途的「🔍 分析取值规则」扫描。两个调用者：扫描键在途时的「⏹ 中断扫描」（用户主动，spec §6）与
@@ -583,7 +566,7 @@ export async function runTrainer(chatKey, compatSession) {
     const { edits, skipped, changes } = trainerComputeEdits(stat, rules);
     if (!edits.length) {
         // 有规则但这一回合无事可做：读数如实记「无改动」，不写、不刷。
-        setTrainerLastRun({ changes: [], skipped, stamp: trainerStamp(), chatKey });
+        (trainerLastRun = { changes: [], skipped, stamp: trainerStamp(), chatKey });
         renderTrainerReadout();
         return;
     }
@@ -596,7 +579,7 @@ export async function runTrainer(chatKey, compatSession) {
         // 这一轮照常跑了，而不是刚刚失败。修改器本就是静默功能（不发 toast、不留侧聊记录），这条读数
         // 行是用户唯一能看见的痕迹，它说谎比什么都不说更糟。
         const reasonLabel = { nomvu: '未检测到 MVU', chatswitched: '聊天已切换', gone: '字段已不存在' }[w.reason] || w.reason;
-        setTrainerLastRun({ changes: [], skipped, failed: reasonLabel, stamp: trainerStamp(), chatKey });
+        (trainerLastRun = { changes: [], skipped, failed: reasonLabel, stamp: trainerStamp(), chatKey });
         renderTrainerReadout();
         return;
     }
@@ -612,7 +595,7 @@ export async function runTrainer(chatKey, compatSession) {
     // 是同一瞬间，而这条读数行会在用户很久以后打开 🎛 页时重画 —— 那时的最末楼早就不是当时写入的那一楼
     // 了（随手发一句话就变），到那时再算等于凭空断言一件从没发生过的事。读数说的是「上一回合」，
     // 落点也就该是上一回合那个落点。只有【真写了东西】的这一支记它（上面两支都没写）。
-    setTrainerLastRun({ changes, skipped, stamp: trainerStamp(), chatKey, notice: diagUserFloorNotice() });
+    (trainerLastRun = { changes, skipped, stamp: trainerStamp(), chatKey, notice: diagUserFloorNotice() });
     try { refreshLatestMvuBar(); } catch (e) {
         console.warn('[Story Oracle] 🎛 修改器：变量已写入，但状态栏刷新失败。', e);
     }
@@ -682,7 +665,7 @@ async function mvuedApply() {
     const chatKey = chatIdentityKey();
     // 上锁必须在【第一个 await 之前】：getMvu 是 async（可能在等 TavernHelper 初始化），连点两下会双双
     // 穿过这里、各写一遍 —— 同 openMvuEditor 那处双击坑，只是这一处的代价是写两次状态、留两条记录。
-    setMvuedApplying(true);
+    (mvuedApplying = true);
     updateMvuedFoot();
     try {
         const w = await writeMvuedEdits(edits, chatKey);
@@ -776,8 +759,8 @@ async function mvuedApply() {
         // 卡在这期间被关掉（✕ / 点背景；换聊天在危险点二就返回了，到不了这里）→ 只落记录，不复活会话状态。
         try {
             if (document.getElementById('so-mvued-card')) {
-                setMvuedDirty(new Map());
-                setMvuedOpenData(JSON.parse(JSON.stringify(w.applied)));
+                (mvuedDirty = new Map());
+                (mvuedOpenData = JSON.parse(JSON.stringify(w.applied)));
                 renderMvuedBody();
             }
         } catch (e) {
@@ -806,7 +789,7 @@ async function mvuedApply() {
         // 只可能是【写入之前】的失败（分水岭之后每件事都自带 try）—— 这时一个字节都没写进 MVU。
         fail('应用失败：' + (e && e.message ? e.message : e));
     } finally {
-        setMvuedApplying(false);
+        (mvuedApplying = false);
         updateMvuedFoot();
     }
 }
@@ -841,13 +824,13 @@ async function runMvuedScan() {
     if (s.mode === 'profile' && !s.profileId) { say('先在设置里选择连接配置文件。', true); return; }
     // 上锁在第一个 await 之前（getMvuStatData → getMvu 是 async，连点两下会双双穿过去、各发一次付费调用）。
     const chatKey = chatIdentityKey();
-    setMvuedScanning(true);
+    (mvuedScanning = true);
     // 中断器在【第一个 await 之前】就挂上模块级把手。从这一刻起扫描键就是「⏹ 中断扫描」，用户随时可能按下去，
     // 而前置那几步也会耗时（getMvu 首次最长等 5 秒 TavernHelper、取世界书要跑扫描/读书文件）——把手若只覆盖
     // 请求段，那几秒里按「中断」会毫无反应。中断落在前置段是安全的：已 aborted 的 signal 交给 fetch 会当场
     // reject（请求根本发不出去 = 不烧钱），下面两个危险点还各补一次判定，让它更早、更确定地落地。
     const ctl = new AbortController();
-    setMvuedScanCtl(ctl);
+    (mvuedScanCtl = ctl);
     updateMvuedScanBtn();
     let timedOut = false;
     let selfAborted = false;   // 「这一趟是我们自己掐的」——超时 / 用户按中断 / 切聊天。与 HTTP 失败彻底分家，见下面的 catch。
@@ -880,11 +863,11 @@ async function runMvuedScan() {
             { role: 'user', content: P('mvued.scanAsk', null, s) },
         ];
         // 调试提示词查看器快照（同自动诊断：无头调用也必须能在「调试提示词」面板里看到发了什么）。
-        setLastPrompt(messages.map((m) => ({ role: m.role, content: m.content })));
-        setLastPromptMeta({
+        const promptSnapshot = messages.map((m) => ({ role: m.role, content: m.content }));
+        recordLastPrompt(promptSnapshot, {
             mode: '变量编辑器扫描',
             target: s.mode === 'direct' ? (s.model || '直连') : '配置文件',
-            chars: lastPrompt.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
+            chars: promptSnapshot.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
             time: new Date().toLocaleTimeString(),
         });
         const timer = setTimeout(() => { timedOut = true; try { ctl.abort(); } catch (e) { /* ignore */ } }, 120000);
@@ -911,7 +894,7 @@ async function runMvuedScan() {
             // 错误文本猜。ctl.signal.aborted 是权威判据（我们自己的中断器），HTTP 错误正文里恰好带 "abort"
             // 字样也绝不会被误判成中断（那正是原来那条 /abort/i 正则的风险）。
             selfAborted = ctl.signal.aborted;
-            setMvuedScanCtl(null);
+            (mvuedScanCtl = null);
         }
         // 危险点三（最重的一处，暴露最长 120 秒）：切走了就【什么都不落】—— schema 是按聊天缓存的，
         // 写进新聊天的 metadata 是落盘伤害，且下次开编辑器就按它渲染，用户无从知道选项是哪来的。
@@ -937,7 +920,7 @@ async function runMvuedScan() {
             };
             saveChatMetadata();
         }
-        setMvuedSchemaCache(schema);
+        (mvuedSchemaCache = schema);
         // 卡可能在这期间被 ✕ 关掉（换聊天已在危险点三挡住）：缓存照写不误，重画则只在卡还在时做。
         if (document.getElementById('so-mvued-card')) renderMvuedBody();
         const n = Object.keys(schema.fields).length;
@@ -957,8 +940,8 @@ async function runMvuedScan() {
         // 状态机的唯一复位口（cancelMvuedScan 有意不碰这两样）：无论成功 / 失败 / 中断 / 提前 return，
         // 在途标志与按钮都回到空闲（按钮由此从「⏹ 中断扫描」翻回「分析 / 重新扫描」），把手一并清空——
         // 它现在从函数一开头就挂着，这一句是它归零的唯一保证，否则空闲期按中断会去 abort 上一趟的死把手。
-        setMvuedScanning(false);
-        setMvuedScanCtl(null);
+        (mvuedScanning = false);
+        (mvuedScanCtl = null);
         updateMvuedScanBtn();
     }
 }
@@ -1032,7 +1015,7 @@ function renderMvuedBody() {
     if (!card) return;
     const stat = mvuedOpenData && (mvuedOpenData.stat_data || mvuedOpenData);
     const model = buildMvuedModel(stat, mvuedSchemaCache, mvuedReadListOverrides());
-    setTrainerRulesForRender(ENABLE_MVU_TRAINER ? trainerReadRules() : []);
+    (trainerRulesForRender = ENABLE_MVU_TRAINER ? trainerReadRules() : []);
     const q = (card.querySelector('#so-mvued-search').value || '').trim().toLowerCase();
     const tabsEl = card.querySelector('#so-mvued-tabs');
     const bodyEl = card.querySelector('#so-mvued-body');
@@ -1044,17 +1027,17 @@ function renderMvuedBody() {
     }
     // 搜索时自动跳到第一个有命中的页（否则用户在 A 页搜 B 页的字段会看到一片空白，以为搜不到）。
     // 合成页（= model.tabs.length）是合法下标，别把它当越界踢回首页。
-    if (mvuedActiveTab > model.tabs.length || (!ENABLE_MVU_TRAINER && mvuedActiveTab >= model.tabs.length)) setMvuedActiveTab(0);
+    if (mvuedActiveTab > model.tabs.length || (!ENABLE_MVU_TRAINER && mvuedActiveTab >= model.tabs.length)) (mvuedActiveTab = 0);
     if (q && mvuedActiveTab < model.tabs.length && !mvuedTabHits(model.tabs[mvuedActiveTab].nodes, q)) {
         const hit = model.tabs.findIndex(t => mvuedTabHits(t.nodes, q) > 0);
-        if (hit >= 0) setMvuedActiveTab(hit);
+        if (hit >= 0) (mvuedActiveTab = hit);
     }
     model.tabs.forEach((t, i) => {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'so-mvued-tab' + (i === mvuedActiveTab ? ' so-mvued-tab-on' : '');
         b.textContent = t.label + (q ? `（${mvuedTabHits(t.nodes, q)}）` : '');
-        b.addEventListener('click', () => { setMvuedActiveTab(i); renderMvuedBody(); });
+        b.addEventListener('click', () => { (mvuedActiveTab = i); renderMvuedBody(); });
         tabsEl.appendChild(b);
     });
     // 数据页之后追加合成页「🎛 修改器」（ENABLE_MVU_TRAINER）。它不来自 buildMvuedModel，
@@ -1066,7 +1049,7 @@ function renderMvuedBody() {
         b.className = 'so-mvued-tab' + (mvuedActiveTab === trainerTabIdx ? ' so-mvued-tab-on' : '');
         const n = trainerRulesForRender.length;
         b.textContent = '🎛 修改器' + (n ? `（${n}）` : '');
-        b.addEventListener('click', () => { setMvuedActiveTab(trainerTabIdx); renderMvuedBody(); });
+        b.addEventListener('click', () => { (mvuedActiveTab = trainerTabIdx); renderMvuedBody(); });
         tabsEl.appendChild(b);
     }
     if (mvuedActiveTab === trainerTabIdx) { renderTrainerTab(bodyEl); updateMvuedFoot(); return; }
@@ -1603,614 +1586,4 @@ function renderMvuedList(nd, q) {
     });
     box.appendChild(add);
     return box;
-}
-
-// 纯函数：把「诊断前 → 诊断后」的 stat_data 差异折成一串【绝对值】JSONPatch 操作。
-// 为什么不把模型出的补丁原样写进正文：模型的补丁常含相对量（delta），那是按【诊断当时】的状态算的；
-// 一旦回放时的起点与当时不同（用户中途改过变量 / 别的扩展写过 / MVU 额外模型解析插过手），相对量就会漂。
-// 写进正文的是【MVU 实际算出来的结果】而非模型的意图 —— 回放多少次都落在同一个值上，且天然幂等。
-// 规则：VWD 对只出第一格标量；新增键出 add（MVU 的 set 碰到不存在的路径会直接跳过，只有 insert/add 建得了）；
-// 删除出 remove；其余出 replace。$internal 是 MVU 自己塞进 stat_data 的运行期字段（update_variables.ts:682），跳过。
-// 比较沿用本文件既有的 JSON.stringify 口径（同 autoApplyFix）。可单测。
-export function diffMvuStat(oldStat, newStat, base) {
-    const prefix = base || '';
-    const isPlainObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
-    const a = isPlainObj(oldStat) ? oldStat : {};
-    const b = isPlainObj(newStat) ? newStat : {};
-    const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-    const keys = Object.keys(a);
-    for (const k of Object.keys(b)) if (!has(a, k)) keys.push(k);
-    const ops = [];
-    for (const k of keys) {
-        if (!prefix && k === '$internal') continue;
-        const path = prefix + '/' + k;
-        if (has(a, k) && !has(b, k)) { ops.push({ op: 'remove', path }); continue; }
-        if (!has(a, k) && has(b, k)) { ops.push({ op: 'add', path, value: b[k] }); continue; }
-        const va = a[k], vb = b[k];
-        if (mvuIsVwdPair(va) && mvuIsVwdPair(vb)) {
-            if (JSON.stringify(va[0]) !== JSON.stringify(vb[0])) ops.push({ op: 'replace', path, value: vb[0] });
-            continue;
-        }
-        if (isPlainObj(va) && isPlainObj(vb)) { for (const op of diffMvuStat(va, vb, path)) ops.push(op); continue; }
-        if (JSON.stringify(va) !== JSON.stringify(vb)) ops.push({ op: 'replace', path, value: vb });
-    }
-    return ops;
-}
-
-// 纯函数：把 ops 拼成要插进区块里的那段文本（含定界注释）。ops 为空 → ''（调用方据此不注入）。可单测。
-export function buildDiagPatchPayload(ops) {
-    if (!Array.isArray(ops) || !ops.length) return '';
-    return DIAG_PATCH_OPEN + '\n<JSONPatch>\n' + JSON.stringify(ops) + '\n</JSONPatch>\n' + DIAG_PATCH_CLOSE + '\n';
-}
-
-// 纯函数：把 payload 插进【文本里最早那个】更新区块的闭标签之前（跨方言，取块沿用 extractUpdateBlock）。
-// 闭标签靠【块尾】定位，不另写 `</name` 正则 —— 那会被 </update_analysis> 抢先命中（1.40.2 同款边界坑）。
-// 没有干净闭标签（区块被截断）→ 返回 null，调用方【什么都不做】。可单测。
-export function insertDiagPatchIntoBlock(text, payload) {
-    const s = String(text == null ? '' : text);
-    if (!payload) return null;
-    const block = extractUpdateBlock(s);
-    if (!block) return null;
-    const tail = /<\/[A-Za-z_][\w.:-]*\s*>\s*$/.exec(block);
-    if (!tail) return null;
-    const at = s.indexOf(block);
-    if (at < 0) return null;
-    return s.slice(0, at + tail.index) + payload + s.slice(at + tail.index);
-}
-
-// 纯函数：把我们插进去的那段（含定界注释）整段摘掉，令正文【逐字节】回到插入前。幂等；没插过就原样返回。可单测。
-export function stripDiagPatchFromText(text) {
-    const s = String(text == null ? '' : text);
-    return s.replace(new RegExp(DIAG_PATCH_OPEN + '[\\s\\S]*?' + DIAG_PATCH_CLOSE + '\\n?', 'g'), '');
-}
-
-// 纯函数：把我们自己会发的三种 op（replace / add / remove）按【MVU 的语义】重放到 base 上，返回新状态。
-// 只需覆盖这三种——补丁是我们生成的，不会出现 move / delta。唯一的语义要点就是 VWD：路径当前值是
-// `[值,"说明"]` 时，MVU 的 set 写的是第一格（update_variables.ts:767-786），这里照做。可单测。
-function replayDiagOps(baseStat, ops) {
-    const out = (baseStat == null) ? {} : JSON.parse(JSON.stringify(baseStat));
-    for (const op of (Array.isArray(ops) ? ops : [])) {
-        const segs = String((op && op.path) || '').split('/').slice(1);
-        if (!segs.length) continue;
-        let node = out;
-        for (let i = 0; i < segs.length - 1 && node && typeof node === 'object'; i++) node = node[segs[i]];
-        if (!node || typeof node !== 'object') continue;
-        const last = segs[segs.length - 1];
-        if (op.op === 'remove') { delete node[last]; continue; }
-        if (op.op === 'replace' && mvuIsVwdPair(node[last])) { node[last][0] = op.value; continue; }
-        node[last] = (op.value === undefined) ? null : JSON.parse(JSON.stringify(op.value));
-    }
-    return out;
-}
-
-// 纯函数：比对用的归一化 —— VWD 对折成它的第一格。理由：说明槽（第二格）不是状态，而且 MVU 的标量 set
-// 【够不着】它，所以「说明变了」既不该判成差异、也不该拖累别的路径。其余结构原样递归。可单测。
-export function normalizeForVerify(v) {
-    if (mvuIsVwdPair(v)) return normalizeForVerify(v[0]);
-    if (Array.isArray(v)) return v.map(normalizeForVerify);
-    if (v && typeof v === 'object') {
-        const out = {};
-        for (const k of Object.keys(v)) { if (k !== '$internal') out[k] = normalizeForVerify(v[k]); }
-        return out;
-    }
-    return v;
-}
-
-// 纯函数：自检 —— 这串 ops 从「诊断前」按 MVU 语义重放，能不能精确落回「诊断后」？
-// 卡片的变量形状千奇百怪（各种命名、嵌套、数组、VWD、甚至键名里带斜杠），与其写一份会算出别的结果的
-// 补丁进用户存档，不如**一个字都不写**。这是本功能对「未知形状」的兜底闸门。可单测。
-export function verifyDiagOps(beforeStat, afterStat, ops) {
-    try {
-        const got = normalizeForVerify(replayDiagOps(beforeStat, ops));
-        const want = normalizeForVerify(afterStat == null ? {} : afterStat);
-        return JSON.stringify(got) === JSON.stringify(want);
-    } catch (e) { return false; }
-}
-
-/* ── 🩺 诊断加固纯函数四件套（陈旧判定 / 甲乙补充探针 / 摘块失败归因 / 逐 op 对账） ──
- * 四个都无副作用、不读全局，唯一依赖是本文件既有的口径函数（normalizeForVerify / mvuIsVwdPair /
- * detectMvuBlockDialect / MVU_BLOCK_DIALECTS）—— 口径只有一份，别另起炉灶。 */
-
-// 纯函数：stat_data 指纹（陈旧判定口径）。折 VWD 取第一格、剥 $internal（沿用 normalizeForVerify），
-// 说明槽变化 / MVU 运行期字段不算「状态变了」。可单测。
-export function diagStatKey(stat) {
-    try { return JSON.stringify(normalizeForVerify(stat == null ? null : stat)); }
-    catch (e) { return 'null'; }
-}
-
-// 纯函数（1.83.0 🧩 允许与其他脚本并写 MVU）：把补丁裁到「没被别人动过」的那部分。snapStat = 诊断时拍的
-// stat_data、liveStat = 写入前现读的那份；一条 op 的落点路径（path；move 类还看 from）在两份之间【值不同】
-// = 别人在诊断期间动过它 → 丢弃并点名，其余照留。判据是逐路径取值比对、口径沿用 normalizeForVerify（VWD 折
-// 第一格、剥 $internal），与 diagOpOutcomes 同源：整个父容器被换掉时子路径的值自然也不同，天然算冲突；新建键
-// 两边都查不到 = 没人动过。只认 <JSONPatch> / <json_patch> 里的 JSON 数组（_.set 方言回 null，调用方退回整份
-// 跳过）。ops 数组之外的字节一个不动（外壳原样，写回手法同 repairDiagPatch）。可单测。
-export function diagScopePatchToUntouched(patchText, snapStat, liveStat) {
-    const text = String(patchText == null ? '' : patchText);
-    const got = diagPatchOpsOf(text);
-    if (!got || !Array.isArray(got.ops)) return null;
-    const fp = (stat, path) => {
-        const r = diagResolvePath(stat, path, true);
-        return (r && r.ok) ? JSON.stringify(normalizeForVerify(r.value)) : null;
-    };
-    const touched = (p) => typeof p === 'string' && p !== '' && fp(snapStat, p) !== fp(liveStat, p);
-    const kept = [], dropped = [];
-    for (const op of got.ops) {
-        const dest = (op && typeof op.path === 'string') ? op.path : ((op && typeof op.to === 'string') ? op.to : '');
-        const from = (op && typeof op.from === 'string') ? op.from : '';
-        if (touched(dest) || touched(from)) dropped.push({ op: op && op.op, path: dest });
-        else kept.push(op);
-    }
-    if (!dropped.length) return { text, kept: kept.length, dropped };
-    const at = text.indexOf(got.inner, got.m.index);
-    if (at < 0) return null;
-    return {
-        text: text.slice(0, at) + '\n' + JSON.stringify(kept, null, 2) + '\n' + text.slice(at + got.inner.length),
-        kept: kept.length,
-        dropped,
-    };
-}
-
-// 纯函数：这段文本里有没有【裸】可执行 MVU 指令（不带已识别包装）——bare <json_patch> 或行首 _.set(。
-// 只喂给 甲/乙 推导闸（detectMvuBlockDialect 之外的补充探针），绝不接到 extract/strip 等其它消费者上：
-// MVU 按文本位置执行这两种形态（方言表注释），探不到就误入【乙·推导】= 已生效的回合被再算一遍。可单测。
-export function detectBareMvuOps(text) {
-    const s = String(text == null ? '' : text);
-    // 已识别方言包装在场 → 不是「裸」指令，甲/乙 闸由方言探测负责。<update> 方言【本来就】装着
-    // <json_patch>（1.40.2 重复计数那只 bug 的方言）——不先让路，整块规范回复会被误报成裸指令。
-    if (detectMvuBlockDialect(s)) return false;
-    if (/<json_patch\b/i.test(s)) return true;
-    return /(^|[\n\r])\s*_\.set\(/.test(s);
-}
-
-// 纯函数：extractUpdateBlock 摘不到时，给「为什么摘不到」分类并点名缺了什么（Prince 点单：要能看出
-// 缺哪个闭合标签）。宽松探测沿用 detectMvuBlockDialect / detectBareMvuOps；闭合标签清点只对已探测到的
-// 包装族做（wrapper + 它的 inner + 经典内标签 JSONPatch/Analysis），开>闭 即记缺。可单测。
-export function diagParseFailReason(finalText) {
-    const s = String(finalText == null ? '' : finalText);
-    if (!s.trim()) return { code: 'empty', detail: '模型没有返回内容（可能被拒答或截断）' };
-    const wrapper = detectMvuBlockDialect(s);
-    if (wrapper) {
-        const suspects = [wrapper, 'JSONPatch', 'Analysis',
-            ...(MVU_BLOCK_DIALECTS.find((d) => d.wrapper === wrapper) || { inner: [] }).inner];
-        const missing = [];
-        for (const t of suspects) {
-            const opens = (s.match(new RegExp('<' + t + '\\b[^>]*>', 'gi')) || []).length;
-            const closes = (s.match(new RegExp('<\\/' + t + '\\s*>', 'gi')) || []).length;
-            if (opens > closes) missing.push('</' + t + '>');
-        }
-        return missing.length
-            ? { code: 'unclosed', detail: '检测到 <' + wrapper + '> 区块，但缺少 ' + missing.join('、') + ' 闭合标签（换模型后常见）' }
-            : { code: 'noblock', detail: '检测到 <' + wrapper + '> 标签，但没能按已知格式摘出完整区块' };
-    }
-    // 1.69.0：拼法对齐 —— MVU 的块正则写的是 `json_?patch`（下划线【可有可无】），而
-    // detectBareMvuOps 的探针写死了下划线（它另有消费者，有意不动它，见其头注）。于是模型甩一段
-    // 无包装的 <JSONPatch> 时，归因会掉到最后那句「模型没按格式输出更新区块」= 不实：它输出了，
-    // 只是没套包装标签。这里补一道同族探针，只影响【归因文案】，不改任何闸门判定。
-    if (detectBareMvuOps(s) || /<json_?patch\b/i.test(s)) {
-        return { code: 'nonstd', detail: '检测到 <json_patch>/<JSONPatch>/_.set 指令，但没有标准包装标签' };
-    }
-    return { code: 'noblock', detail: '模型没按格式输出更新区块' };
-}
-
-// 纯函数：逐 op 对账（Prince 点单：告诉用户为什么没生效）。只认 <JSONPatch> 里的 JSON 数组（_.set 方言
-// 回 null，调用方退回整体比较文案）。result 判定：「applied」= 这条 op 【自己那条路径】上、前后两份状态
-// 的值变了没有；未变化的 op 再按 old 侧路径解析分类——路径解析不到且非 add = missing-path（set 不新建
-// 键），解析到且值已等于目标 = noop-equal，其余 unknown（诚实：不懂就说不懂）。VWD 折第一格（说明槽
-// 不是状态），口径沿用 normalizeForVerify。可单测。
-// ⚠ 判据【有意】不走 diffMvuStat 的变化集：那份差异不进列表内部（数组不是 plain object，只在外层记一条
-// 「/今日待办 变了」），于是打在列表项里的 op（/今日待办/0/状态）永远对不上自己的路径 —— 真生效了也
-// 只能报「没能从状态变化里判断」。也【不能】退而用前缀命中：同一个列表上另一条 op 造成的变化会把这条
-// 没动过的一起算成生效（diag-hardening-helpers.test.mjs 有反向钉）。逐路径取值比对两头都不沾。
-export function diagOpOutcomes(patchBlock, oldStat, newStat) {
-    let ops = null;
-    try {
-        const m = /<JSONPatch\s*>([\s\S]*?)<\/JSONPatch\s*>/i.exec(String(patchBlock == null ? '' : patchBlock));
-        if (m) ops = JSON.parse(m[1]);
-    } catch (e) { ops = null; }
-    if (!Array.isArray(ops)) return null;
-    const resolve = (stat, path) => {
-        const segs = String(path || '').split('/').filter(Boolean);
-        let node = stat, ok = true;
-        for (const seg of segs) {
-            if (node && typeof node === 'object' && Object.prototype.hasOwnProperty.call(node, seg)) node = node[seg];
-            else { ok = false; break; }
-        }
-        return ok ? { ok, value: node } : { ok };
-    };
-    // 该路径上的可比指纹；解析不到回 null（JS null，与 JSON 串 'null' 不会撞）——于是「原本没有 → 现在
-    // 有了」（insert 建键）与「原本有 → 现在没了」（remove）都天然算作变了。
-    const fingerprint = (stat, path) => {
-        const r = resolve(stat, path);
-        return r.ok ? JSON.stringify(normalizeForVerify(r.value)) : null;
-    };
-    const outcomes = ops.map((op) => {
-        const path = (op && op.path) || '';
-        // path 为空（move 这类只有 from/to 的 op）→ 不比：拿根路径比等于「别处只要变过就算它生效」。
-        if (path && fingerprint(oldStat, path) !== fingerprint(newStat, path)) {
-            return { op: op && op.op, path, result: 'applied' };
-        }
-        const cur = resolve(oldStat, path);
-        // 能建新键的动词只有 insert / add（diffMvuStat 注释同款口径：set 语义碰到不存在的路径直接跳过）。
-        // insert 是【模型真会写】的那个——DIAGNOSE_SYSTEM_PROMPT 给的词表是 replace、delta、insert、
-        // remove、move；add 是我们自己 diffMvuStat 出的。两者都不能因「路径当时不存在」判成没生效。
-        if (!cur.ok && !(op && (op.op === 'add' || op.op === 'insert'))) return { op: op && op.op, path, result: 'missing-path' };
-        if (cur.ok) {
-            const curVal = mvuIsVwdPair(cur.value) ? cur.value[0] : cur.value;
-            if (JSON.stringify(curVal) === JSON.stringify(op && op.value)) return { op: op && op.op, path, result: 'noop-equal' };
-        }
-        return { op: op && op.op, path, result: 'unknown' };
-    });
-    return { total: outcomes.length, applied: outcomes.filter((o) => o.result === 'applied').length, outcomes };
-}
-
-// 纯函数：把模型【开错根】的 JSONPatch 路径掰回 MVU 的路径空间（live 用户 2026-08-22 报「29 条指令中
-// 0 条生效」，逐条都是「路径不存在」）。MVU 只剥掉开头那一个 '/' 就把整串当作 stat_data【内部】的 lodash
-// 路径（update_variables.ts：jsonPatchPathToCommandPath → _.set(variables.stat_data, path, …)）——所以
-// 模型写的 /stat_data/世界/时间 会被找成 stat_data.stat_data.世界.时间，恒不存在：replace/remove 被
-// 静默跳过（一条都不落地），insert/add 更糟 —— _.set 会把整条父链造出来，存档里就长出一支垃圾
-// stat_data.stat_data.*。提示词里已写明「根相对路径（例如 /主角状态/修为/进度百分比）」，模型照样会漏，
-// 故硬保证放在代码侧。
-// 动手条件（三条【全中】才改，宁可不改也绝不误改）：
-//   ① 状态顶层【没有】真名叫 stat_data 的键 —— 少数卡真有，那种卡上 /stat_data/… 原样就是对的；
-//   ② 这条路径按原样在当前状态里解析不到；
-//   ③ 剥掉开头那个 stat_data 段之后解析得到（= 有证据说它只是开错根，而不是把名字写错了）。
-// 判定落点按动词分：insert/add 建的就是【还不存在】的末段（数组追加更是 `-`），只能按【父容器】判，
-// 否则这一档 —— 恰恰是唯一会污染存档的那一档 —— 永远救不了；其余（replace/delta/remove/move）按整条判。
-// move 的 from/to 与 path 同等对待。
-// 回 { text, fixed }：text = 掰过的区块（一条都没掰时【逐字节】原样返回）、fixed = 掰了几条。
-// 摘不出 <JSONPatch> JSON 数组（_.set 方言）/ 拿不到状态 → 原样返回，绝不抛。可单测。
-export function normalizeDiagPatchPaths(patchBlock, stat) {
-    const text = String(patchBlock == null ? '' : patchBlock);
-    const out = { text, fixed: 0 };
-    if (!stat || typeof stat !== 'object') return out;
-    if (Object.prototype.hasOwnProperty.call(stat, 'stat_data')) return out;   // 闸①
-    let m = null, ops = null;
-    try {
-        m = /<JSONPatch\s*>([\s\S]*?)<\/JSONPatch\s*>/i.exec(text);
-        if (m) ops = JSON.parse(m[1]);
-    } catch (e) { return out; }
-    if (!m || !Array.isArray(ops)) return out;
-    // 解析口径与 diagOpOutcomes 的 resolve 同源：own-property 逐段查，数组下标同样按 own-property 命中。
-    const resolves = (path) => {
-        const segs = String(path || '').split('/').filter(Boolean);
-        let node = stat;
-        for (const seg of segs) {
-            if (node && typeof node === 'object' && Object.prototype.hasOwnProperty.call(node, seg)) node = node[seg];
-            else return false;
-        }
-        return true;
-    };
-    // 单段路径的父容器 = 根（空串）→ resolves('') 恒真，于是「往顶层插一个新键」那档也掰得动。
-    const probe = (op, path) => {
-        if (op !== 'insert' && op !== 'add') return path;
-        const at = String(path).lastIndexOf('/');
-        return at > 0 ? path.slice(0, at) : '';
-    };
-    const reroot = (op, path) => {
-        if (typeof path !== 'string' || !/^\/stat_data\//.test(path)) return null;
-        if (resolves(probe(op, path))) return null;                             // 闸②：原样就查得到 → 不是开错根
-        const stripped = path.slice('/stat_data'.length);
-        return resolves(probe(op, stripped)) ? stripped : null;                 // 闸③：剥了才查得到，才算有证据
-    };
-    const next = ops.map((op) => {
-        if (!op || typeof op !== 'object') return op;
-        const copy = Object.assign({}, op);
-        for (const key of ['path', 'from', 'to']) {
-            const fixed = reroot(op.op, copy[key]);
-            if (fixed != null) { copy[key] = fixed; out.fixed++; }
-        }
-        return copy;
-    });
-    if (!out.fixed) return out;
-    const at = text.indexOf(m[1], m.index);
-    out.text = text.slice(0, at) + '\n' + JSON.stringify(next, null, 2) + '\n' + text.slice(at + m[1].length);
-    return out;
-}
-
-/* ── 🩺 1.67.0：MVU「受理」预检 + 确定性修复流水线 ────────────────────────────────
- * 全部纯函数、零副作用、绝不抛。依据是 MagVarUpdate@beta 与 mvu_zod 的【真源码】（2026-08-24 逐条核过），
- * 不是设计稿推测 —— 改这一族之前请先回去核源码，别按印象改：
- *   ① 块正则 /<(json_?patch)>(?:\s*```.*)?…(?:```\s*)?<\/\1>/gim：大小写不敏感（<JSONPatch> 恒命中）、
- *      允许紧贴标签的 ``` 围栏，但标签里【一个空白都不容】——「<JSONPatch >」对 MVU 完全隐形，而我们
- *      自家的摘块正则写的是 \s*，恒容忍 → 我们看得见、MVU 看不见，这是最难自查的一档。
- *   ② 内文经 parseString（YAML → JSON5 → jsonrepair 三连）解析，【宽容】；失败被 catch 吞掉 = 空命令表。
- *      所以我们的 JSON.parse 挂了【不等于】MVU 也挂 —— 那一档只敢报「判不出」，绝不敢报「一定失败」。
- *   ③ isJsonPatch 是 every：数组 + 每个元素都是 plain object + op 是字符串 + path 是字符串（move 可只有
- *      to）。一颗坏元素 → 整块指令一起被丢，好 op 全部陪葬。这就是「剔除毒元素」那一类修复存在的理由。
- *   ④ 动词表只有 replace/delta/insert/add/remove/move；认不出的动词在 switch 里没有分支 = 逐条静默丢弃。
- *   ⑤ set（replace）先 _.has，路径不存在 → outError + continue，【绝不新建】；旧值是 VWD 对 [值,"说明"]
- *      时只写第一格（旧值是数字还会 Number(新值)）—— 把整对递回去 = Number([...]) = NaN。
- *   ⑥ add（delta）同样先 _.has；增量非数字 → outError + continue。
- *   ⑦ insert/add 在 extractJsonPatch 里被拆成（容器路径, 末段键, 值）三参 —— 判定落点是【父容器】；
- *      容器不是集合（含 undefined）→ 报 assignPrimitive 跳过。1.66.1 的 probe 用的就是同一条口径。
- *   ⑧ jsonPatchPathToCommandPath 只剥开头那【一个】'/'，其余按 '/' 切、逐段解 ~1/~0，【不丢空段】：
- *      末尾多一个斜杠 = 多一个空键名，_.has 恒假（我们自家的解析 filter(Boolean) 会容忍它 → 分歧之二）。
- *   ⑨ 很多卡在 MVU 之上还挂 mvu_zod（StageDog/tavern_resource dist/util/mvu_zod.js）：路径里只要有一段
- *      以 '_' 开头就 return null【静默】不执行；整批结果 safeParse 不过也是【静默】丢弃（只有 console
- *      错误）。那份 schema 我们看不见，所以这两条只出【提示】，绝不写成「一定失败」。
- */
-
-// 纯函数：按 MVU 的路径语义把 JSONPatch 路径切成段。strict=true 忠实 MVU（不丢空段，见 ⑧）；
-// strict=false 沿用本仓既有的宽容口径（filter(Boolean)，同 diagOpOutcomes 的 resolve），供「剥掉多余
-// 斜杠之后查得到吗」这类证据闸使用。空串 = 根路径（MVU 的 set 允许 path === ''）。可单测。
-export function diagPathSegs(path, strict) {
-    const raw = String(path == null ? '' : path);
-    if (raw === '') return [];
-    const segs = (raw.startsWith('/') ? raw.slice(1) : raw).split('/')
-        .map((s) => s.replace(/~1/g, '/').replace(/~0/g, '~'));
-    return strict ? segs : segs.filter(Boolean);
-}
-
-// 纯函数：own-property 逐段走（口径同 diagOpOutcomes 的 resolve —— 数组下标同样按 own-property 命中）。
-export function diagWalkSegs(stat, segs) {
-    let node = stat;
-    for (const seg of segs) {
-        if (node && typeof node === 'object' && Object.prototype.hasOwnProperty.call(node, seg)) node = node[seg];
-        else return { ok: false };
-    }
-    return { ok: true, value: node };
-}
-
-// 纯函数：一条路径在当前状态里查不查得到。可单测。
-export function diagResolvePath(stat, path, strict) {
-    return diagWalkSegs(stat, diagPathSegs(path, strict));
-}
-
-// 纯函数：这个元素过不过得了 MVU 的 isJsonPatch 形状闸（③）。过不了的那一颗会拖着整块陪葬。可单测。
-export function diagOpShapeOk(o) {
-    return Object.prototype.toString.call(o) === '[object Object]'
-        && typeof o.op === 'string'
-        && (typeof o.path === 'string' || (o.op === 'move' && typeof o.to === 'string'));
-}
-
-// 纯函数：MVU 那条【严格】块正则现在看不看得见一块 json_patch —— 逐字照抄它的写法（标签里一个空白都
-// 不容、允许紧贴标签的 ``` 围栏、内部不得再出现开标签）。这是「标签空白」那一类修复与预检的【唯一】
-// 证据来源：看得见就说明这块 MVU 本来就吃得到，一个字节都不许动。可单测。
-function mvuSeesPatchBlock(text) {
-    return /<(json_?patch)>(?:\s*```.*)?((?:(?!<json_?patch>)[\s\S])*?)(?:```\s*)?<\/\1>/i
-        .test(String(text == null ? '' : text));
-}
-
-// 纯函数：把这块补丁【自己的】<json_patch> 开 / 闭标签里的多余空白抹掉（①）。回 { text, fixed }，
-// 形状与姊妹件 normalizeDiagPatchPaths 一致；一处没动 → text 逐字节原样返回。
-// ⚠ 有意【不】做全局替换：补丁的 value 里完全可能原样带着「<json_patch >」这几个字（比如把模型的
-//   输出记进某个日志字段），全局替换会去改用户真正要写进状态的【正文】——「没有证据就不改写模型
-//   原文」是本族的红线。所以只动我们摘到的那一块的两个定界标签，块内文字一个字节都不碰。
-// 别的标签（<Analysis > 之类）的空格与 MVU 无关，同样不碰。大小写原样保留：开 / 闭两侧各自捕获、
-// 不用反向引用，于是闭标签写成别的大小写时也保留它自己的写法（MVU 的块正则是 /i，本就不在乎）。可单测。
-export function normalizeDiagPatchTags(text) {
-    const s = String(text == null ? '' : text);
-    // 证据闸（codex 复核 FINDING）：MVU 现在【已经】看得见一块 → 这里没有任何毛病可修，一个字节都不动。
-    // 少了这道闸，`value` 里原样带着一个 `</JSONPatch >` 的补丁会被咬伤：我们的懒惰匹配会停在【值里】
-    // 那个闭标签上、把它的空格抹掉，于是它变成一个【真的】闭标签 —— MVU 的块就此被从中间截断，一条
-    // 本来跑得好好的补丁被我们改废。修坏比不修坏得多。
-    if (mvuSeesPatchBlock(s)) return { text: s, fixed: 0 };
-    const m = /<(json_?patch)(\s*)>([\s\S]*?)<\/(json_?patch)(\s*)>/i.exec(s);
-    if (!m || (!m[2] && !m[5])) return { text: s, fixed: 0 };
-    const rebuilt = '<' + m[1] + '>' + m[3] + '</' + m[4] + '>';
-    return {
-        text: s.slice(0, m.index) + rebuilt + s.slice(m.index + m[0].length),
-        fixed: (m[2] ? 1 : 0) + (m[5] ? 1 : 0),
-    };
-}
-
-/* ── 🩺 1.68.0：弱模型错误电池（768 判分格，2026-08-25）蒸馏出的三类新修复 ────────────────
- * 全部纯函数、零副作用、绝不抛，证据闸与 1.67.0 那七类同一条红线：拿不到证据宁可不改，
- * 一处没动就【逐字节】原样返回。语料频次见 tests/unit/_diag-battery/FINDINGS-2026-08-25.md。
- */
-
-// 纯函数：MVU 真会执行的【每一块】的整块原文（含定界标签）。逐字照抄它那条【严格】块正则
-// （标签里不容空白、允许紧贴围栏），/gim 全局切。MVU 的 extractCommands 用的正是 /gim ——
-// 它把【所有】块都执行，而我们的预检 / 修复只看第一块。
-// 1.69.0 起闸门要【逐块】判「这一块到底写成了没有」（第二块可以把整条回复救回甲），故切出块
-// 本身而不只是计数；diagCountPatchBlocks 从此是它的一行包装，两处口径构造性同源。可单测。
-export function diagMvuPatchBlocks(text) {
-    const s = String(text == null ? '' : text);
-    if (!s) return [];
-    return s.match(/<(json_?patch)>(?:\s*```.*)?((?:(?!<json_?patch>)[\s\S])*?)(?:```\s*)?<\/\1>/gim) || [];
-}
-
-// 纯函数：MVU 真会执行几块？双区块因此既有「重复执行」的风险，又撞卡片显示正则的状态栏吞噬
-// 地雷（CLAUDE.md 地雷条）—— 这是双区块拒绝闸的唯一判据。可单测。
-export function diagCountPatchBlocks(text) {
-    return diagMvuPatchBlocks(text).length;
-}
-
-// 纯函数：从这段文本里切出【第一个结构完整】的 JSON 数组跨度（字符串感知的括号配对 —— 值里的
-// 方括号 / 花括号骗不动它）。配不平 → null。给下面两类定界符修补当证据闸。可单测。
-function diagJsonArraySpan(text) {
-    const s = String(text == null ? '' : text);
-    const start = s.indexOf('[');
-    if (start < 0) return null;
-    let depth = 0, inStr = false, esc = false;
-    for (let i = start; i < s.length; i++) {
-        const c = s[i];
-        if (inStr) {
-            if (esc) esc = false;
-            else if (c === '\\') esc = true;
-            else if (c === '"') inStr = false;
-            continue;
-        }
-        if (c === '"') { inStr = true; continue; }
-        if (c === '[' || c === '{') depth++;
-        else if (c === ']' || c === '}') {
-            depth--;
-            if (depth === 0) return { start, end: i + 1 };
-            if (depth < 0) return null;
-        }
-    }
-    return null;
-}
-
-// 纯函数（修复类⑨）：补丁数组写完了、`</UpdateVariable>` 也在，就是【漏了 </JSONPatch>】——
-// 于是 MVU 与我们的提取器全瞎，整条回复被判「没有区块」。语料 5/768，四例是 gemini 家族；
-// 与 2026-08-15 异录战役钉死的 opus-4.8 漏闭合是同一物种（不是那只模型的怪癖，是弱模型通病）。
-// 证据闸（四条【全中】才补，宁可不补也绝不误补）：
-//   ① mvuSeesPatchBlock 现在【看不见任何块】—— 看得见就说明 MVU 本来就吃得到，一个字节都不许动。
-//      这条闸顺带挡住 normalizeDiagPatchTags 头注里那口最险的咬：value 里原样带着一个 `</JSONPatch>`
-//      时 MVU 的块正则会把它当真闭标签 → 它【看得见】一块 → 本类天生不动手。
-//   ② 开标签在，且【本来就干净】（<json_patch> / <JSONPatch>，标签里没有空白）。带空白的那档是
-//      类① 的活；开标签空白 + 缺闭合的双故障【有意】不修（两处都靠猜，风险不成比例）。
-//   ③ 从开标签起、到 </UpdateVariable>（没有就到结尾）为止，切得出一个结构完整、能 JSON.parse 的数组；
-//   ④ 数组里【每一个】元素都过得了 MVU 的 isJsonPatch 形状闸 —— 过不了的话补上闭合标签也是整块陪葬。
-// 闭合标签的拼法【跟着开标签走】（用户写 <json_patch> 就补 </json_patch>）；数组之后若只剩一个紧贴
-// 的 ``` 围栏，闭合标签排在围栏之后（MVU 的块正则明文允许围栏，排前面会把围栏甩出块外）。
-// 回 { text, fixed }，形状与姊妹件 normalizeDiagPatchTags 一致。可单测。
-export function repairDiagCloseTag(text) {
-    const s = String(text == null ? '' : text);
-    const out = { text: s, fixed: 0 };
-    if (!s || mvuSeesPatchBlock(s)) return out;                       // 闸①
-    const om = /<(json_?patch)>/i.exec(s);                            // 闸②（不容空白 = MVU 的口径）
-    if (!om) return out;
-    const after = om.index + om[0].length;
-    const tail = s.slice(after);
-    const endM = /<\/UpdateVariable\s*>/i.exec(tail);
-    const zone = endM ? tail.slice(0, endM.index) : tail;
-    const span = diagJsonArraySpan(zone);                             // 闸③
-    if (!span) return out;
-    let ops = null;
-    try { ops = JSON.parse(zone.slice(span.start, span.end)); } catch (e) { return out; }
-    if (!Array.isArray(ops) || !ops.every((o) => diagOpShapeOk(o))) return out;   // 闸④
-    let at = span.end;
-    const fence = /^\s*```\s*/.exec(zone.slice(at));
-    if (fence) at += fence[0].length;
-    out.text = s.slice(0, after + at) + '</' + om[1] + '>' + s.slice(after + at);
-    out.fixed = 1;
-    return out;
-}
-
-// 纯函数（修复类⑩）：块在、闭合标签也在，坏的是【JSON 容器本身】。语料两种形态（2/768，均 preview 臂）：
-//   (a) 几条 op 逗号排开，忘了包 `[ ]`；(b) 开了 `[`、一条完整 op 之后忘了写 `]`。
-// 旧路：JSON.parse 死 → 预检走 parse-uncertain（有意不 fatal）→ 零变化报告回 nodata → 侧聊写
-// 「本回合无需改动」，而那几条【正确】的指令被静默扔掉。这是 1.67.0 诚实回归里最后一个撒谎的洞。
-// 证据闸：补【之前】我们解析不动（got.ops === null），补【之后】解析得到一个【非空】的、每个元素都
-// 过形状闸的数组。两种候选各试一次，互斥（包一层对 (b) 无效、补一个 ] 对 (a) 无效），谁成谁算。
-// ⚠ 空数组【有意】不算成功：把 `[` 补成 `[]` 会伪造出一份「模型认为无需改动」——那是新的谎。
-// ⚠ MVU 自己的 parseString 是【宽容】的（YAML → JSON5 → jsonrepair 三连），我们解析不动不代表它也
-//   解析不动；但把定界符补齐【只会】让两边都更容易读懂，不会把它本来读得懂的东西改坏。
-// 回 { text, fixed }。可单测。
-export function repairDiagJsonWrap(text) {
-    const s = String(text == null ? '' : text);
-    const out = { text: s, fixed: 0 };
-    const got = diagPatchOpsOf(s);
-    if (!got || got.ops !== null) return out;
-    const body = String(got.inner).replace(/^\s*```[^\n]*\n?/, '').replace(/```\s*$/, '').trim();
-    if (!body) return out;
-    for (const cand of ['[' + body + ']', body + ']']) {
-        let ops = null;
-        try { ops = JSON.parse(cand); } catch (e) { continue; }
-        if (!Array.isArray(ops) || !ops.length || !ops.every((o) => diagOpShapeOk(o))) continue;
-        const at = s.indexOf(got.inner, got.m.index);
-        if (at < 0) return out;
-        out.text = s.slice(0, at) + '\n' + JSON.stringify(ops, null, 2) + '\n' + s.slice(at + got.inner.length);
-        out.fixed = 1;
-        return out;
-    }
-    return out;
-}
-
-// 纯函数（修复类⑧）：把一条 move 拆成 insert(目标, 源值) + remove(源)。
-// 依据：MagVarUpdate@beta 的 extractJsonPatch 会把 move 翻译成 type:'move' 命令，可执行 switch
-// （update_variables.ts 760–1324）里【没有 case 'move'】—— 静默丢弃。1.67.0 的预检给它判 'ok' 是
-// 假绿灯：37/768 格中招，且那 37 次 residual 文案（「问题在环境」）100% 是它，两条「常见原因」全不沾边。
-// 对照组自己给出了修法：模型自发写成 remove+insert 两步的格【全部落地且意图达成】。
-// 证据闸（全中才拆）：源路径解析得到（strict 切段、own-property 逐段走）+ 目标的【父容器】在且是集合。
-// 另外三道保守闸：源与目标同路径、互为祖先、根路径 —— 拆了会把源头连带删掉，宁可不修。
-// 值是【代码侧】从状态里深拷贝的，不经模型：VWD 的 [值,"说明"] 对整对搬走，说明槽不会掉。
-// insert 排在 remove 【之前】是刻意的：中途失败只会留下一份多余的拷贝，绝不会把数据弄丢。
-// 回 [insertOp, removeOp]；任一闸不过 → null（调用方原样保留那条 move）。可单测。
-export function diagDecomposeMove(op, dest, stat) {
-    if (!op || op.op !== 'move' || typeof op.from !== 'string' || typeof dest !== 'string') return null;
-    if (!stat || typeof stat !== 'object') return null;
-    const fromSegs = diagPathSegs(op.from, true);
-    const destSegs = diagPathSegs(dest, true);
-    if (!fromSegs.length || !destSegs.length) return null;
-    if (JSON.stringify(fromSegs) === JSON.stringify(destSegs)) return null;
-    const ancestor = (a, b) => a.length < b.length && a.every((s, i) => s === b[i]);
-    if (ancestor(fromSegs, destSegs) || ancestor(destSegs, fromSegs)) return null;
-    const src = diagWalkSegs(stat, fromSegs);
-    if (!src.ok) return null;
-    const parent = diagWalkSegs(stat, destSegs.slice(0, -1));
-    if (!parent.ok || !parent.value || typeof parent.value !== 'object') return null;
-    let value;
-    try { value = JSON.parse(JSON.stringify(src.value)); } catch (e) { return null; }
-    if (value === undefined) return null;
-    return [{ op: 'insert', path: dest, value }, { op: 'remove', path: op.from }];
-}
-
-// 内部：摘出 <JSONPatch> 里的 JSON 数组。摘块正则脱胎于 diagOpOutcomes / normalizeDiagPatchPaths，
-// 另兼容 <json_patch> 拼法与紧贴标签的 ``` 围栏（MVU 的块正则明文允许两者，见 ①）。
-// ⚠ 已知的口径不对称（有意，1.67.0 不扩）：1.64.0 的 diagOpOutcomes 只认 <JSONPatch> 这一种拼法，
-//   本族认两种（MVU 自己两种都执行）。后果只有一个方向：碰上 <json_patch> 拼法的块，本族照修
-//   （对用户是净收益），而逐 op 对账仍回 null → 走「没有对账依据」那条老路，与 1.67.0 之前逐字一致。
-//   要拉齐就得连 diagOpOutcomes 一起改，那是另一批的事。（开错根那一道闸已经拉齐了 —— repairDiagPatch
-//   把 ops 包进合成外壳再喂 normalizeDiagPatchPaths，见那里的注释。）
-// 回 null = 根本没有这种块（_.set 方言）；ops === null = 我们解析不动（MVU 未必也解析不动，见 ②）。
-export function diagPatchOpsOf(text) {
-    const s = String(text == null ? '' : text);
-    // 先按 MVU 的【严格】块正则切一刀，切不到再退回宽容版。次序承重（codex 复核 FINDING）：宽容版的
-    // `<\/\1\s*>` 会被【值里】一个 `</JSONPatch >` 骗停 —— 而 MVU 根本不认那个带空格的东西、照常读到
-    // 整块。先严格后宽容 = 只要 MVU 读得到，我们就跟它读到同一段；MVU 也读不到时才轮到宽容版去救场。
-    const m = /<(json_?patch)>(?:\s*```.*)?((?:(?!<json_?patch>)[\s\S])*?)(?:```\s*)?<\/\1>/i.exec(s)
-        || /<(json_?patch)\s*>([\s\S]*?)<\/\1\s*>/i.exec(s);
-    if (!m) return null;
-    const body = m[2].replace(/^\s*```[^\n]*\n?/, '').replace(/```\s*$/, '').trim();
-    try { return { m, inner: m[2], ops: JSON.parse(body) }; }
-    catch (e) { return { m, inner: m[2], ops: null }; }
-}
-
-// 纯函数：值的类型对不对得上（⑨ 的启发式提示，不是判决）。任一侧 null/undefined → 不表态（MVU 明文
-// 允许把数值字段设成 null）。数字 ↔ 【整串都是数字】的字符串不算不符：MVU 自己会强转。可单测。
-export function diagTypeMismatch(cur, val) {
-    if (cur == null || val == null) return false;
-    const kind = (v) => (Array.isArray(v) ? 'array' : typeof v);
-    const a = kind(cur), b = kind(val);
-    if (a === b) return false;
-    const numish = (v) => (typeof v === 'number' ? true
-        : (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v.trim()))));
-    if (numish(cur) && numish(val)) return false;
-    return true;
-}
-
-/* ── 🩺 1.77.3：schema 感知的两条判定 ────────────────────────────────────────────
- * 我们手里【本来就有】那份 schema —— applyFix / autoApplyFix 的 snapshot 就是整份 MvuData，
- * 里面的 .schema 从 1.67.0 起一直没人看过。而 MVU 的 generateSchema 默认把每一个对象【和】数组都
- * 标成 extensible:false（除非卡片写了 $meta.extensible / recursiveExtensible / $__META_EXTENSIBLE__$），
- * 于是「往没标可扩展的容器里新增一个键」是一条【可预测】的失败 —— 1.77.2 之前它被判 'creates' →
- * 落进 residual → 文案甩锅给「酒馆助手版本偏旧 / mvu_zod」（2026-09-06 Discord 报障那一张）。
- * 【红线】schema 缺席、或不是普通对象（mvu_zod 每轮把它设成字符串 '没有用别管这个'）时，这两条判定
- * 一律不启用 —— 判定权那时不在 MVU 原生执行器手里，行为必须与 1.77.2 逐字节相同。
- */
-
-// 纯函数：按 MVU 的 getSchemaForPath（schema.ts:209）逐段走 schema 树。纯数字段 → 数组节点的
-// elementType；其余 → 对象节点的 properties[段]；走不到回 null（null 在 MVU 那边 = 【不做】schema
-// 检查，只剩父路径存在性那道闸）。空段数组 = 根节点。可单测。
-export function diagSchemaNodeAt(schema, segs) {
-    if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return null;
-    let node = schema;
-    for (const seg of (segs || [])) {
-        if (!node || typeof node !== 'object') return null;
-        const s = String(seg);
-        if (/^\d+$/.test(s)) {
-            if (node.type === 'array' && node.elementType) node = node.elementType;
-            else return null;
-        } else if (node.type === 'object' && node.properties && node.properties[s]) {
-            node = node.properties[s];
-        } else return null;
-    }
-    return (node && typeof node === 'object') ? node : null;
-}
-
-// 纯函数：MVU 的 add 执行器（update_variables.ts:1324，= JSONPatch 的 delta）认不认这个【现值】。
-// 认：数字 / VWD 对的第一格是数字 / Date 对象 / 「new Date 解析得动且不是纯数字串」的字符串（按毫秒加减）。
-// 都不是 → addUnsupportedValue 报错跳过，一个字都写不进去。可单测。
-export function diagDeltaTargetOk(cur) {
-    const v = mvuIsVwdPair(cur) ? cur[0] : cur;
-    if (typeof v === 'number') return true;
-    if (Object.prototype.toString.call(v) === '[object Date]') return true;
-    if (typeof v === 'string') {
-        const d = new Date(v);
-        return !isNaN(d.getTime()) && isNaN(Number(v));   // 纯数字串【有意】不算日期（源码原话）
-    }
-    return false;
 }

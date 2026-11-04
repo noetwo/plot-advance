@@ -6,12 +6,12 @@ import { populateDiagWiBooks, reflectDiagPickerVisible } from '../diagnose/picke
 import { clampFixAutoMinChars, detectInnerBlocks, detectScopeTag, fixConfigWarnings, fixCustomRawTable, fixCustomVerdictText, fixGuardSummary, fixKeepNameSet, fixScanBlocks, fixScopeVerdict, fixSegmentReply, fixTableCounts, resolveFixPieces } from './algorithms.js';
 import { mergeKeepTags, recentAiReplies, resolveFixScope } from './capture.js';
 import { confirmPieceBare, confirmPieceWrapped } from './selection.js';
-import { findFixTemplate, fixUsePresetFor, getEffectiveFixCfg, getFixCfg, normalizeFixTemplates, resolveFixCustomCfg, resolveFixModeCfg, setFixCfg } from './templates.js';
+import { claimFixTemplateDraft, findFixTemplate, fixTplDirty, fixTplDirtyFor, fixUsePresetFor, getEffectiveFixCfg, getFixCfg, normalizeFixTemplates, resolveFixCustomCfg, resolveFixModeCfg, setFixCfg } from './templates.js';
 import { ENABLE_DIAG_WI_PICKER, ENABLE_FIX_CUSTOM_TASK, ENABLE_FIX_PIECEWISE, FIX_SAMPLE_TEMPLATES } from '../../prompts/builtins.js';
 import { updateFixButtonVisual } from '../../ui/mode-shell.js';
-import { diagnoseMode, lastPrompt, lastPromptMeta } from '../../core/runtime-state.js';
-import { fixTplDirty, fixTplDirtyFor, setFixTplDirtyFor } from './state.js';
-import { win } from '../../ui/state.js';
+import { diagnoseMode } from '../../core/oracle-modes.js';
+import { lastPrompt, lastPromptMeta } from '../../core/recent-prompt.js';
+import { win } from '../../ui/refs.js';
 
 /* ------------------------------------------------------------------ *
  * ✨ 校正模式 Phase 4：把校正控件（#so-fix-bar 里的目标 / 约束 / 上下文开关 / 自动）
@@ -452,7 +452,7 @@ export function seedFixControls() {
             set('#so-fixc-template', 'value', cc.template);
             const t = findFixTemplate(getSettings(), cc.template);
             set('#so-fixc-prompt', 'value', t ? t.prompt : '');
-            setFixTplDirtyFor(cc.template);   // 不变量：凡是【从模板回填 tplBox.value 的地方】都同时记下归属
+            claimFixTemplateDraft(cc.template);   // 不变量：凡是【从模板回填 tplBox.value 的地方】都同时记下归属
         }
         updateFixTplDirtyMarker();   // 重种子后标记必须与旗一致（脏着回来时它得还在）
         set('#so-fixc-mech', 'checked', cc.useMechanic);

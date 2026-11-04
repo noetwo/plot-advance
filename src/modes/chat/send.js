@@ -3,29 +3,31 @@ import { getCtx, getSettings } from '../../core/settings.js';
 
 import { addBriefControls, addPathCards, addSystemNote, modeEntryNote, parseStoryPlans, peekNoteOpts, registerNoteOpts, showTyping } from '../advisor/cards.js';
 import { activeDraftContent, draftWithPatchedActive, getBuilderState, setBuilderState } from '../advisor/metadata.js';
-import { applyOutputRegex, assembleExternalWorld, buildMessages, renderAdvisorReplyHtml, renderMarkdownOnly, renderReplyHtml, stripMechanismBlocks, stripReasoningTags, warmLwbSummaryIfCold } from './context.js';
+import { applyOutputRegex, assembleExternalWorld, buildMessages, renderAdvisorReplyHtml, renderMarkdownOnly, renderReplyHtml, replaceAdvisorStatData, replaceChatStatData, replaceChatWorldData, replacePresetWorldInfo, replaceWorldInfoBlock, stripMechanismBlocks, stripReasoningTags, warmLwbSummaryIfCold, worldInfoBlock } from './context.js';
 import { autoGrowInput, scrollToBottom } from './history.js';
-import { diagStatKey } from '../diagnose/editor.js';
-import { extractUpdateBlock, getLatestAiMessage, getLatestAiMessageText, getMvuStatData } from '../diagnose/mvu.js';
+import { diagStatKey } from '../diagnose/patch.js';
+import { captureManualDiagnoseContext, extractUpdateBlock, getLatestAiMessage, getLatestAiMessageText, getMvuStatData } from '../diagnose/mvu.js';
 import { captureFixContext, isFixSwipe, renderFixCard } from '../fix/capture.js';
-import { setGenerating, stopGeneration } from '../fix/staging.js';
 import { diagSelHasRules } from '../fix/templates.js';
-import { applyDraftPatchOps, buildBuilderContext, buildDiagSelectedWi, buildLorebookContext, builderVariantKey, classifyBuilderReply, diagPickerActive, parseLorebookBlocks, renderBuilderReplyHtml, sanitizePersonaDraft } from '../lorebook/core.js';
+import { buildBuilderContext, captureBuilderStatData, clearBuilderStatData } from '../builder/context.js';
+import { applyDraftPatchOps, builderVariantKey, classifyBuilderReply, renderBuilderReplyHtml, sanitizePersonaDraft } from '../builder/model.js';
+import { buildLorebookContext } from '../lorebook/context.js';
+import { parseLorebookBlocks } from '../lorebook/operations.js';
+import { buildDiagSelectedWi, diagPickerActive } from '../lorebook/world-info.js';
 import { ENABLE_DIAG_BODY_INJECT, ENABLE_DRAFT_CONDENSE, ENABLE_SCHEMA_DIAG, ENABLE_WI_EJS_RENDER } from '../../prompts/builtins.js';
 import { fixEffMaxTokens } from '../../prompts/helpers.js';
 import { buildWorldInfo, buildWorldInfoSplit, collectMvuUpdateRules, loadRegexEngine, sideChatScanBlob, wiContextMode } from '../../st/adapters.js';
 import { callDirect, callProfile, callProfileStream, explainProviderError, gemini3MaxTokensFloor, isEmptyLengthReply, resolveEndpointUrl, streamDirect } from '../../transport/direct.js';
-import { addApplyControls, addLorebookApplyControls, addMessage, addRetryControl, diagSchemaAfterManualReply } from '../../ui/messages.js';
+import { addApplyControls, addLorebookApplyControls, addMessage, addRetryControl, diagSchemaAfterManualReply, soFollowStream } from '../../ui/messages.js';
 import { refreshDraftCard } from '../../ui/mode-shell.js';
 import { presetCurationActive } from '../../ui/settings.js';
-import { abortCtl, advisorMode, builderMode, convo, convoStreamKey, diagnoseMode, fixMode, isGenerating, lastPrompt, lorebookMode, nextCid, setAbortCtl, setLastPrompt, setLastPromptMeta } from '../../core/runtime-state.js';
-import { setAdvStatData } from '../advisor/state.js';
-import { setBldStatData } from '../builder/state.js';
-import { setChatStatData, setChatWorldData, setWiAfter, setWiBefore, setWorldInfoBlock, worldInfoBlock } from './state.js';
-import { setDiagLatestUpdate, setDiagStatData } from '../diagnose/state.js';
-import { fixTargetIdx } from '../fix/state.js';
-import { setSoLastFinishReason, soLastFinishReason } from '../../transport/state.js';
-import { inputEl, soFollowStream, win } from '../../ui/state.js';
+import { appendConvo, convoStreamKey, nextCid } from '../../core/conversation-store.js';
+import { beginGeneration, finishGeneration, isGenerating, stopGeneration } from '../../core/generation.js';
+import { advisorMode, builderMode, diagnoseMode, fixMode, lorebookMode } from '../../core/oracle-modes.js';
+import { recordLastPrompt } from '../../core/recent-prompt.js';
+
+import { getLastFinishReason, resetLastFinishReason } from '../../transport/direct.js';
+import { inputEl, win } from '../../ui/refs.js';
 
 /* ------------------------------------------------------------------ *
  * Sending
@@ -49,7 +51,7 @@ export async function onSend() {
     inputEl.value = '';
     autoGrowInput();                                        // #4 清空后把输入框收回下限高度
     const entry = { id: nextCid(), role: 'user', content: text };
-    convo.push(entry);
+    appendConvo(entry);
     persistConvo();
     entry._el = addMessage('user', text, entry);
     await generateReply();
@@ -92,14 +94,16 @@ function errChainMessage(err) {
 
 // Generate one assistant reply for the current tail of `convo` (which must already
 // end with the user turn being answered). Shared by send / edit / regenerate.
-export async function generateReply() {
+export async function generateReply(options = {}) {
     if (isGenerating) return;
-    const s = getSettings();
+    const s = options.settings || getSettings();
     // 🩺 陈旧印章的取样槽（Task 5，审计簇 F）：诊断分支建提示词时算一次状态指纹，定稿时钉到卡片上。
     // 取样点【必须】是这里而不是回复回来之后：补丁是模型对着【喂进去的那一份】算的，等回复回来再取
     // 一次，会把这次调用期间发生的变化算成「没变过」= 正是这道闸要防的那一类。与自动诊断的
     // captured.statKey 同源同时刻（runAutoDiagnose）。
     let diagStampKey = null;
+    let fixContext = null;
+    if (!options.messages) {
     if (s.applyRegex) await loadRegexEngine(); // ensure engine is ready before building context
     await warmLwbSummaryIfCold();   // 小白X 记忆桥(b)：缓存空且开关开时，建提示词前破例暖一份（受保护自降级）
 
@@ -108,23 +112,25 @@ export async function generateReply() {
             // 精选模式（用户功能请求）：只喂【本聊天挑选】的世界书条目（无视启用 / 禁用；L2 混合再并入主聊天
             // 此刻命中的绿灯）。所见即所得——不自动补 [mvu_update] 规则；若一条规则都没选，给个温和提醒。
             const picked = await buildDiagSelectedWi();
-            setWorldInfoBlock(picked.block);
+            replaceWorldInfoBlock(picked.block);
             if (!diagSelHasRules(picked.selectedEntries)) {
                 addSystemNote('⚠ 当前精选里没有选中任何变量规则（[mvu_update]）条目，诊断可能不准确——可在上方选条目栏勾选规则条目（含已禁用的）。');
             }
         } else {
             // 原行为：强制一次世界书扫描（保留 'all' 选择），再从原始书补回 [mvu_update] 规则——buildWorldInfo
             // 按设计会剥掉它们（聊天 / 参谋不想要），且 MVU 额外模型解析模式还会把它们从扫描里藏掉，而诊断正需要它们。
-            setWorldInfoBlock(await buildWorldInfo(wiContextMode(s)));
+            replaceWorldInfoBlock(await buildWorldInfo(wiContextMode(s)));
             const mvuRules = await collectMvuUpdateRules(worldInfoBlock);
             if (mvuRules.length) {
-                setWorldInfoBlock([worldInfoBlock, ...mvuRules].filter(Boolean).join('\n\n'));
+                replaceWorldInfoBlock([worldInfoBlock, ...mvuRules].filter(Boolean).join('\n\n'));
             }
         }
         const stat = await getMvuStatData();
-        setDiagStatData(stat ? JSON.stringify(stat, null, 2) : '');
+        captureManualDiagnoseContext(
+            stat ? JSON.stringify(stat, null, 2) : '',
+            extractUpdateBlock(getLatestAiMessageText()),
+        );
         diagStampKey = diagStatKey(stat);   // 🩺 陈旧印章：这一轮诊断是按【这一份】状态算的
-        setDiagLatestUpdate(extractUpdateBlock(getLatestAiMessageText()));
     } else if (lorebookMode) {
         // Read the selected world book(s) fresh so the model sees the current
         // state, and remember which books are in scope for the apply step.
@@ -133,71 +139,71 @@ export async function generateReply() {
         // 参谋现在遵循设置面板的「世界书」选择，包括「关」——不传 forceMode = 用
         // s.worldInfoMode，'off' 返回空串（与普通聊天分支同款）。剧情概要仍在 buildAdvisorPrompt 里默认读取，
         // 对话记录也改为遵循「上下文深度」设置（见 buildAdvisorPrompt）。侧聊最近问答参与绿灯扫描（1.31.0）。
-        setWorldInfoBlock(await buildWorldInfo(undefined, await sideChatScanBlob(), { renderEjs: ENABLE_WI_EJS_RENDER && !!s.wiRenderEjs }));   // 参谋 = READ 家族，opt-in 时执行世界书 EJS
+        replaceWorldInfoBlock(await buildWorldInfo(undefined, await sideChatScanBlob(), { renderEjs: ENABLE_WI_EJS_RENDER && !!s.wiRenderEjs }));   // 参谋 = READ 家族，opt-in 时执行世界书 EJS
         // Live MVU variable state (好感度 / 时间 / 资源…) — hard story facts the
         // proposed beats must not contradict. Silently absent for non-MVU cards.
         const stat = await getMvuStatData();
-        setAdvStatData(stat ? JSON.stringify(stat, null, 2) : '');
+        replaceAdvisorStatData(stat ? JSON.stringify(stat, null, 2) : '');
     } else if (fixMode) {
         // 校正模式（手动 / 引导式：在输入框直接说要改什么）：抓待校正回复 + 手动那套上下文（卡 / 世界书 / 概要 / 全部前文）。
         // wholeFloor:true = 整篇手动（思考块保护 W1 只在这条分支生效；✂️ 选段家族同以 mode:'manual' 调用但不传）。
-        const fixCap = await captureFixContext(s, { mode: 'manual', wholeFloor: true });
-        if (fixCap && fixCap.manualScopeMissed) addSystemNote(`这条回复里没找到 <${fixCap.manualScopeMissed}> 标签，本次按整条回复校正。`);
+        fixContext = await captureFixContext(s, { mode: 'manual', wholeFloor: true });
+        if (fixContext.manualScopeMissed) addSystemNote(`这条回复里没找到 <${fixContext.manualScopeMissed}> 标签，本次按整条回复校正。`);
         // R2 双重校正（手动）：目标当前 swipe 已是校正结果 → 提醒；仍继续（在其基础上再校正）。
-        if (isFixSwipe((getCtx().chat || [])[fixTargetIdx])) addSystemNote('这条回复当前显示的已是一次校正结果；将在其基础上再次校正（如需校正原文请先左滑回原文）。');
+        if (isFixSwipe((getCtx().chat || [])[fixContext.targetIdx])) addSystemNote('这条回复当前显示的已是一次校正结果；将在其基础上再次校正（如需校正原文请先左滑回原文）。');
     } else if (builderMode) {
         // 角色工坊：读勾选的世界书条目（原样投喂），并按需取权威变量状态（与普通聊天 chatStatData 同源）。
         await buildBuilderContext();
-        setBldStatData('');
+        clearBuilderStatData();
         if (s.bldIncludeStat) {
             const st = await getMvuStatData();
-            setBldStatData(st ? JSON.stringify(st, null, 2) : '');
+            captureBuilderStatData(st ? JSON.stringify(st, null, 2) : '');
         }
     } else if (presetCurationActive(s)) {
         // Faithful assembly needs WI split into the Before/After-Char-Defs slots.
         const split = await buildWorldInfoSplit(undefined, await sideChatScanBlob(), { renderEjs: ENABLE_WI_EJS_RENDER && !!s.wiRenderEjs });   // 侧聊问答参与绿灯扫描（1.31.0）；普通聊天 = READ 家族，opt-in 时执行世界书 EJS
-        setWiBefore(split.before);
-        setWiAfter(split.after);
-        setWorldInfoBlock(''); // legacy single-block path unused while preset is active
+        replacePresetWorldInfo(split.before, split.after);
+        replaceWorldInfoBlock(''); // legacy single-block path unused while preset is active
     } else {
-        setWorldInfoBlock(await buildWorldInfo(undefined, await sideChatScanBlob(), { renderEjs: ENABLE_WI_EJS_RENDER && !!s.wiRenderEjs })); // 'off' 时仍空串；侧聊问答参与绿灯扫描（1.31.0）；普通聊天 = READ 家族，opt-in 时执行世界书 EJS
+        replaceWorldInfoBlock(await buildWorldInfo(undefined, await sideChatScanBlob(), { renderEjs: ENABLE_WI_EJS_RENDER && !!s.wiRenderEjs })); // 'off' 时仍空串；侧聊问答参与绿灯扫描（1.31.0）；普通聊天 = READ 家族，opt-in 时执行世界书 EJS
     }
 
     // Normal chat mode only: fetch the authoritative variable state (or leave ''
     // so the prompt builders emit the honest-refusal caveat instead).
-    setChatStatData('');
+    replaceChatStatData('');
     if (!diagnoseMode && !lorebookMode && !advisorMode && !fixMode && s.chatIncludeStat) {
         const st = await getMvuStatData();
-        setChatStatData(st ? JSON.stringify(st, null, 2) : '');
+        replaceChatStatData(st ? JSON.stringify(st, null, 2) : '');
     }
 
     // 外部扩展世界信息（世界引擎等）——普通聊天与剧情参谋两种模式都附带（用户功能请求）；
     // 诊断 / 世界书模式不需要。无相关扩展时 assembleExternalWorld() 返回 ''，整段省略。
-    setChatWorldData('');
+    replaceChatWorldData('');
     if (!diagnoseMode && !lorebookMode && !fixMode && s.chatIncludeWorld) {
-        setChatWorldData(assembleExternalWorld());
+        replaceChatWorldData(assembleExternalWorld());
+    }
     }
 
-    const messages = buildMessages();
+    const messages = options.messages || buildMessages(fixContext);
     // Snapshot the exact prompt for the debug viewer (both modes).
-    setLastPrompt(messages.map((m) => ({ role: m.role, content: m.content })));
-    setLastPromptMeta({
+    const promptSnapshot = messages.map((m) => ({ role: m.role, content: m.content }));
+    recordLastPrompt(promptSnapshot, {
         mode: diagnoseMode ? '诊断' : (lorebookMode ? '世界书' : (advisorMode ? '参谋' : (fixMode ? '校正' : (builderMode ? '角色工坊' : '聊天')))),
         target: s.mode === 'direct' ? (s.model || '直连') : '配置文件',
-        chars: lastPrompt.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
+        chars: promptSnapshot.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
         time: new Date().toLocaleTimeString(),
     });
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
-    const assistantEl = addMessage('assistant', '', aEntry);
+    const assistantEl = options.assistantEl || addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
     const contentEl = assistantEl.querySelector('.so-content');
-    const clearTyping = showTyping(contentEl);
-    setGenerating(true);
-    setAbortCtl(new AbortController());
+    const clearTyping = (options.showTyping || showTyping)(contentEl);
+    const generation = beginGeneration();
 
     try {
         let finalText = '';
-        setSoLastFinishReason('');   // FIX 4：每轮复位，防上一轮 finish_reason 漏进本轮空回复判据
+        const transport = options.transport || {};
+        resetLastFinishReason();   // FIX 4：每轮复位，防上一轮 finish_reason 漏进本轮空回复判据
         // Diagnose audits are long, and reasoning models spend part of the budget
         // "thinking" before any visible output — too small a cap yields an empty
         // reply (budget gone during thinking) or a patch cut off mid-token. Give
@@ -216,14 +222,14 @@ export async function generateReply() {
             if (s.sendTemperature) body.temperature = s.temperature;
             if (s.stream) {
                 contentEl.classList.add('so-streaming');
-                finalText = await streamDirect(url, s.apiKey, body, abortCtl.signal, (delta) => {
+                finalText = await (transport.streamDirect || streamDirect)(url, s.apiKey, body, generation.signal, (delta) => {
                     clearTyping();
                     contentEl.textContent += delta;
                     if (soFollowStream) scrollToBottom();   // #1 只在用户跟随到底部时才自动滚
                 });
                 contentEl.classList.remove('so-streaming');
             } else {
-                finalText = await callDirect(url, s.apiKey, body, abortCtl.signal);
+                finalText = await (transport.callDirect || callDirect)(url, s.apiKey, body, generation.signal);
                 clearTyping();
                 contentEl.textContent = finalText;
             }
@@ -231,14 +237,14 @@ export async function generateReply() {
             const override = s.sendTemperature ? { temperature: s.temperature } : {};
             if (s.stream) {
                 contentEl.classList.add('so-streaming');
-                finalText = await callProfileStream(s.profileId, messages, effMaxTokens, override, abortCtl.signal, (full) => {
+                finalText = await (transport.callProfileStream || callProfileStream)(s.profileId, messages, effMaxTokens, override, generation.signal, (full) => {
                     clearTyping();
                     contentEl.textContent = full;
                     if (soFollowStream) scrollToBottom();   // #1 只在用户跟随到底部时才自动滚
                 });
                 contentEl.classList.remove('so-streaming');
             } else {
-                finalText = await callProfile(s.profileId, messages, effMaxTokens, override, abortCtl.signal);
+                finalText = await (transport.callProfile || callProfile)(s.profileId, messages, effMaxTokens, override, generation.signal);
                 clearTyping();
                 contentEl.textContent = finalText;
             }
@@ -255,8 +261,8 @@ export async function generateReply() {
                   '② 触发了 Gemini 安全过滤 → 换个说法，或开破限 / 换个模型再试。\n' +
                   '③ 公益站 PvP';
             // FIX 4（cause D）：直连路已读到 finish_reason；若确证是「思考吃光输出预算」就给一句明确提示，压在通用三因之前
-            //（配置文件路读不到 finish_reason，soLastFinishReason 恒空 → 判据为假 → 仍走通用三因，不误报）。
-            if (isEmptyLengthReply(finalText, soLastFinishReason)) {
+            //（配置文件路读不到 finish_reason，传输层 finish reason 恒空 → 判据为假 → 仍走通用三因，不误报）。
+            if (isEmptyLengthReply(finalText, getLastFinishReason())) {
                 // 文案待 Prince 否决权
                 emptyNote = '本次输出额度被模型的思考过程吃光了（finish_reason=length）——请把设置里的「最大 token 数」调到 4096 以上再试。\n\n' + emptyNote;
             }
@@ -329,7 +335,7 @@ export async function generateReply() {
             }
             aEntry.content = historyText;
             // 🩺 陈旧印章（Task 5，审计簇 F）：把「这份诊断是按【哪个聊天】、按【哪份状态】算的」钉在
-            // 条目上——应用按钮据此判断「诊断之后世界又变过没有」。必须钉在 convo.push / persistConvo
+            // 条目上——应用按钮据此判断「诊断之后世界又变过没有」。必须钉在 appendConvo / persistConvo
             // 【之前】：它跟着这条记录同一次写入落盘，重载后那道闸才有依据（serializeConvo 会带上它）。
             // 指纹取【建提示词时】那一份（diagStampKey）；那一份缺席（模式在生成途中被切进来）→ 现取
             // 一次兜底，绝不留空。
@@ -344,7 +350,7 @@ export async function generateReply() {
                 // 供手动「应用」把修正折成绝对值补丁插回那条回复（与自动路同一味药，见 addApplyControls）。
                 // 【有意只活在会话注册表里、不落盘】——与撤销按钮同半径：重载后注册表为空 → 不注入，行为
                 // 与今天逐字相同；而 injectDiagPatchIntoMessage 的 expectText 守卫让任何陈旧尝试都只是一次
-                // 静默跳过，所以「跨重载留着」既没有收益也不安全。写在 convo.push / addApplyControls 之前
+                // 静默跳过，所以「跨重载留着」既没有收益也不安全。写在 appendConvo / addApplyControls 之前
                 // （注册表按 房间::记录id + 内容 校验，aEntry.content 上面刚定稿）。
                 // ⚠ 跨聊天由注册表自身兜住：onChatChanged 的 clearNoteOpts() 会连靶子一起作废，所以
                 // aiIdx 绝不可能落到【另一个聊天】的同号楼上（与撤销快照同一条不变量）。
@@ -357,7 +363,7 @@ export async function generateReply() {
                     }));
                 }
             }
-            convo.push(aEntry);
+            appendConvo(aEntry);
             persistConvo();
             if (diagnoseMode) {
                 // 第 4 参 finalText（1.68.0）：双区块闸要数「MVU 会执行几块」，而 block 只是最早那一个
@@ -375,7 +381,7 @@ export async function generateReply() {
                 if (plans.length) addPathCards(assistantEl, plans);
             } else if (fixMode) {
                 // 失败时 .so-content 已显示剥离机制/思维链后的 cleanText，不覆盖它——只补一条说明 note。
-                const fixStatus = renderFixCard(assistantEl, contentEl, aEntry, finalText);
+                const fixStatus = renderFixCard(assistantEl, contentEl, aEntry, finalText, fixContext);
                 if (fixStatus === 'truncated') {
                     addSystemNote('校正稿似乎被截断了（模型没写完就断了）——把设置里的「最大 token 数」调大些，或点 ↻ 重试。');
                 } else if (fixStatus !== 'ok') {
@@ -438,8 +444,7 @@ export async function generateReply() {
         }
         console.error('[Story Oracle]', err);
     } finally {
-        setGenerating(false);
-        setAbortCtl(null);
+        finishGeneration();
         if (soFollowStream) scrollToBottom();   // #1 定稿后只在用户跟随到底部时才滚；否则保持固定顶部（从头读）
     }
 }
