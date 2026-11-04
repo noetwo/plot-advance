@@ -131,51 +131,51 @@ function extraParamsOverride(extra) {
 
 // 附加参数弹窗：仿 ST 的按钮弹出三框（标签用 ST 官方中文译名——包括主体参数 / 排除主体参数 /
 // 包含请求标头——用户在两边对得上号）。文本原样存设置、输入即持久化；这里只做即时提示不拦截，
-// 发送时 resolveExtraParams 统一抛错。骨架 / 逃生阀仿 #so-curate（顶部 ✕ + 点遮罩关闭，卡片
+// 发送时 resolveExtraParams 统一抛错。骨架 / 逃生阀仿 #pad-curate（顶部 ✕ + 点遮罩关闭，卡片
 // 高度被窗口封顶、正文内部滚动——短视口手机不锁死）。
 export function openExtraParams() {
     const s = getSettings();
-    let modal = win.querySelector('#so-extraparams');
+    let modal = win.querySelector('#pad-extraparams');
     if (!modal) {
         modal = document.createElement('div');
-        modal.id = 'so-extraparams';
+        modal.id = 'pad-extraparams';
         win.appendChild(modal);
     }
     modal.innerHTML = `
-        <div id="so-xp-card">
-            <div id="so-xp-head">
-                <div id="so-xp-title"><i class="fa-solid fa-sliders"></i> 附加参数</div>
-                <div class="so-iconbtn" id="so-xp-x" title="关闭"><i class="fa-solid fa-xmark"></i></div>
+        <div id="pad-xp-card">
+            <div id="pad-xp-head">
+                <div id="pad-xp-title"><i class="fa-solid fa-sliders"></i> 附加参数</div>
+                <div class="pad-iconbtn" id="pad-xp-x" title="关闭"><i class="fa-solid fa-xmark"></i></div>
             </div>
-            <div id="so-xp-body">
-                <div id="so-xp-warn">⚠️ 生效范围：<b>直连模式</b>（含「经酒馆后端转发」）全部生效；<b>连接配置文件</b>模式下，只有 API 类型为「自定义（兼容 OpenAI）」的配置档才会生效——OpenAI / Claude / Gemini 等官方接口会忽略这里的全部内容。</div>
-                <label class="so-xp-field"><span>包括主体参数</span>
-                    <textarea id="so-extra-include-body" rows="4" placeholder="随每次请求一起发送的参数（YAML 或 JSON 对象）&#10;&#10;例：给 DeepSeek 类中转关掉思维链&#10;enable_thinking: false"></textarea>
-                    <div class="so-hint so-xp-err" data-box="extraIncludeBody"></div>
+            <div id="pad-xp-body">
+                <div id="pad-xp-warn">⚠️ 生效范围：<b>直连模式</b>（含「经酒馆后端转发」）全部生效；<b>连接配置文件</b>模式下，只有 API 类型为「自定义（兼容 OpenAI）」的配置档才会生效——OpenAI / Claude / Gemini 等官方接口会忽略这里的全部内容。</div>
+                <label class="pad-xp-field"><span>包括主体参数</span>
+                    <textarea id="pad-extra-include-body" rows="4" placeholder="随每次请求一起发送的参数（YAML 或 JSON 对象）&#10;&#10;例：给 DeepSeek 类中转关掉思维链&#10;enable_thinking: false"></textarea>
+                    <div class="pad-hint pad-xp-err" data-box="extraIncludeBody"></div>
                 </label>
-                <label class="so-xp-field"><span>排除主体参数</span>
-                    <textarea id="so-extra-exclude-body" rows="3" placeholder="要从请求里剔除的参数名（YAML 列表）&#10;&#10;例：&#10;- frequency_penalty&#10;- presence_penalty"></textarea>
-                    <div class="so-hint so-xp-err" data-box="extraExcludeBody"></div>
+                <label class="pad-xp-field"><span>排除主体参数</span>
+                    <textarea id="pad-extra-exclude-body" rows="3" placeholder="要从请求里剔除的参数名（YAML 列表）&#10;&#10;例：&#10;- frequency_penalty&#10;- presence_penalty"></textarea>
+                    <div class="pad-hint pad-xp-err" data-box="extraExcludeBody"></div>
                 </label>
-                <label class="so-xp-field"><span>包含请求标头</span>
-                    <textarea id="so-extra-include-headers" rows="3" placeholder="额外的请求头（YAML 或 JSON 对象）&#10;&#10;例：&#10;X-Custom-Header: some-value"></textarea>
-                    <div class="so-hint so-xp-err" data-box="extraIncludeHeaders"></div>
+                <label class="pad-xp-field"><span>包含请求标头</span>
+                    <textarea id="pad-extra-include-headers" rows="3" placeholder="额外的请求头（YAML 或 JSON 对象）&#10;&#10;例：&#10;X-Custom-Header: some-value"></textarea>
+                    <div class="pad-hint pad-xp-err" data-box="extraIncludeHeaders"></div>
                 </label>
             </div>
-            <div id="so-xp-foot"><button type="button" class="so-cur-btn" id="so-xp-close">完成</button></div>
+            <div id="pad-xp-foot"><button type="button" class="pad-cur-btn" id="pad-xp-close">完成</button></div>
         </div>`;
 
     const FIELDS = [
-        ['#so-extra-include-body', 'extraIncludeBody', 'object'],
-        ['#so-extra-exclude-body', 'extraExcludeBody', 'array'],
-        ['#so-extra-include-headers', 'extraIncludeHeaders', 'object'],
+        ['#pad-extra-include-body', 'extraIncludeBody', 'object'],
+        ['#pad-extra-exclude-body', 'extraExcludeBody', 'array'],
+        ['#pad-extra-include-headers', 'extraIncludeHeaders', 'object'],
     ];
     const showErr = (key, kind) => {
-        const el = modal.querySelector(`.so-xp-err[data-box="${key}"]`);
+        const el = modal.querySelector(`.pad-xp-err[data-box="${key}"]`);
         if (!el) return;
         const r = parseExtraParams(getSettings()[key], kind);
         el.textContent = r.ok ? '' : `⚠ ${r.error}`;
-        el.classList.toggle('so-hint-error', !r.ok);
+        el.classList.toggle('pad-hint-error', !r.ok);
     };
     for (const [sel, key, kind] of FIELDS) {
         const ta = modal.querySelector(sel);
@@ -190,8 +190,8 @@ export function openExtraParams() {
         showErr(key, kind);
     }
     const close = () => { modal.style.display = 'none'; };
-    modal.querySelector('#so-xp-x').addEventListener('click', close);
-    modal.querySelector('#so-xp-close').addEventListener('click', close);
+    modal.querySelector('#pad-xp-x').addEventListener('click', close);
+    modal.querySelector('#pad-xp-close').addEventListener('click', close);
     modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
     modal.style.display = 'flex';
     updateExtraParamsHint();
@@ -199,7 +199,7 @@ export function openExtraParams() {
 
 // 设置行的一句状态读数：让「设了没设」在不打开弹窗时也看得见（静默设置是地雷）。
 export function updateExtraParamsHint() {
-    const hint = win?.querySelector?.('#so-extraparams-hint');
+    const hint = win?.querySelector?.('#pad-extraparams-hint');
     if (!hint) return;
     const s = getSettings();
     const parts = [];
@@ -327,15 +327,15 @@ async function fetchModelsViaBackend(endpoint, apiKey, raw, signal) {
 
 export async function onFetchModels() {
     const s = getSettings();
-    const hint = win.querySelector('#so-model-hint');
-    const sel = win.querySelector('#so-model-list');
-    const btn = win.querySelector('#so-model-fetch');
+    const hint = win.querySelector('#pad-model-hint');
+    const sel = win.querySelector('#pad-model-list');
+    const btn = win.querySelector('#pad-model-fetch');
 
-    if (!s.endpoint) { hint.textContent = '请先填写端点 URL。'; hint.classList.add('so-hint-error'); return; }
+    if (!s.endpoint) { hint.textContent = '请先填写端点 URL。'; hint.classList.add('pad-hint-error'); return; }
 
-    hint.classList.remove('so-hint-error');
+    hint.classList.remove('pad-hint-error');
     hint.textContent = '正在加载模型…';
-    btn.classList.add('so-busy');
+    btn.classList.add('pad-busy');
 
     try {
         const signal = (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(20000) : undefined;
@@ -381,11 +381,11 @@ export async function onFetchModels() {
     } catch (err) {
         const aborted = err?.name === 'TimeoutError' || err?.name === 'AbortError';
         hint.textContent = aborted ? '请求超时。' : `获取模型失败：${err?.message || err}`;
-        hint.classList.add('so-hint-error');
+        hint.classList.add('pad-hint-error');
         sel.style.display = 'none';
-        console.error('[Story Oracle] model fetch failed:', err);
+        console.error('[剧情推进] model fetch failed:', err);
     } finally {
-        btn.classList.remove('so-busy');
+        btn.classList.remove('pad-busy');
     }
 }
 
@@ -449,8 +449,8 @@ function yzmTripwireWarn(kind) {
     if (yzmTripwireWarned[kind]) return;
     yzmTripwireWarned[kind] = true;
     console.warn(kind === 'list'
-        ? '[Story Oracle] 柚月记忆的清理函数仍会删掉已垫过的消息——它的记忆标题表大概改了（神谕钉的是 0.9.2 那五条）；本条已改用兜底（每个「【」后插零宽空格）。请更新 YZM_MEMORY_MARKERS。'
-        : '[Story Oracle] 柚月记忆的清理函数连兜底后的消息也会删——它的判据已不是「【」开头的子串匹配；兼容垫已失效，请对着它的新源码重做。');
+        ? '[剧情推进] 柚月记忆的清理函数仍会删掉已垫过的消息——它的记忆标题表大概改了（神谕钉的是 0.9.2 那五条）；本条已改用兜底（每个「【」后插零宽空格）。请更新 YZM_MEMORY_MARKERS。'
+        : '[剧情推进] 柚月记忆的清理函数连兜底后的消息也会删——它的判据已不是「【」开头的子串匹配；兼容垫已失效，请对着它的新源码重做。');
 }
 
 // 消息数组：柚月不在场 / 没有一条含标题 → 原数组原引用；否则新数组、只复制被改的那几条（原对象不动）。

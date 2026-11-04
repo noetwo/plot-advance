@@ -85,7 +85,7 @@ function fullscreenEscShouldExit(state) {
 // 这只是临时贴合显示，不覆盖用户拖 / 拽存下来的几何。
 export function ensureWindowInView() {
     if (!win || win.style.display === 'none') return;
-    if (win.classList.contains('so-fullscreen')) { fitFullscreen(); autoGrowInput(); return; }   // 全屏：铺满可见视口，跳过夹取
+    if (win.classList.contains('pad-fullscreen')) { fitFullscreen(); autoGrowInput(); return; }   // 全屏：铺满可见视口，跳过夹取
     autoGrowInput();                                        // #4 窗口尺寸变化时重算输入框高度上限（上限=窗口高度一半）
     const s = getSettings();
     const view = currentView();
@@ -104,12 +104,12 @@ export function ensureWindowInView() {
     win.style.right = 'auto';
 }
 
-// 全屏阅读模式的尺寸器：把 #so-window 铺满【可见】视口（visualViewport-aware，故手机软键盘弹出时
+// 全屏阅读模式的尺寸器：把 #pad-window 铺满【可见】视口（visualViewport-aware，故手机软键盘弹出时
 // 是缩小而非把输入框藏到键盘后面）。只写内联几何、【绝不 save()】——用户拖/拽存下的悬浮窗几何
 // （winLeft/winTop/winWidth/winHeight）原样保留，退出全屏即复原。经 ensureWindowInView 的全屏分支
 // 触达，故 resize/旋屏/键盘等视口变化都会自动保持铺满。单测 fullscreen.test.mjs。
 function fitFullscreen() {
-    const el = win || document.getElementById('so-window');
+    const el = win || document.getElementById('pad-window');
     if (!el) return;
     const vv = window.visualViewport;
     const box = fullscreenBox({
@@ -127,7 +127,7 @@ function fitFullscreen() {
 
 // 变形标题栏的全屏按钮：展开 ⇄ 收缩图标 + 中文标签 + aria-pressed。按 id 直取（id 唯一）。
 function updateFullscreenBtn(on) {
-    const btn = document.getElementById('so-fullscreen-btn');
+    const btn = document.getElementById('pad-fullscreen-btn');
     if (!btn) return;
     const icon = btn.querySelector('i');
     if (icon) icon.className = on
@@ -146,18 +146,18 @@ function updateFullscreenBtn(on) {
 
 // 全屏阅读模式的唯一写入口。on 省略=切换。显示级切换、会话内瞬态、【绝不落盘】。
 export function setFullscreen(on) {
-    const el = win || document.getElementById('so-window');
+    const el = win || document.getElementById('pad-window');
     if (!el) return;
-    const cur = el.classList.contains('so-fullscreen');
+    const cur = el.classList.contains('pad-fullscreen');
     const next = (on === undefined) ? !cur : !!on;
     if (next === cur) { updateFullscreenBtn(next); return; }   // 已是该态：别重复快照（否则会把全屏几何存成"悬浮"快照）
     if (next) {
         preFullscreenGeometry = { left: el.style.left, top: el.style.top, right: el.style.right, width: el.style.width, height: el.style.height };
-        el.classList.add('so-fullscreen');
+        el.classList.add('pad-fullscreen');
         updateFullscreenBtn(true);
         fitFullscreen();                                       // 铺满可见视口
     } else {
-        el.classList.remove('so-fullscreen');
+        el.classList.remove('pad-fullscreen');
         updateFullscreenBtn(false);
         if (preFullscreenGeometry) {                                    // 逐字还原进入前的内联样式（含"无 left/top、纯 CSS 定位"的默认态）
             el.style.left = preFullscreenGeometry.left;
@@ -171,21 +171,21 @@ export function setFullscreen(on) {
     }
 }
 
-// 全屏时按 ESC 退出——【零改动】设计：捕获阶段注册 + gated on so-fullscreen，故在每一条【非全屏】流里
+// 全屏时按 ESC 退出——【零改动】设计：捕获阶段注册 + gated on pad-fullscreen，故在每一条【非全屏】流里
 // 立即 return，对既有 ESC 行为零影响；且捕获阶段能在冒泡处理器清掉 .open 之前【读到】更近 UI 的开合状态。
 // 让位于本文件仅有的三个 ESC 消费者（grep 确认无他）：⋯ 工具菜单、✂️ 选段卡、聚焦中的编辑框。
-// 绝不 preventDefault/stopPropagation——ST 自己的 ESC 照常收到。#so-input 主输入框不算编辑框（在里面按 ESC 也退出）。
+// 绝不 preventDefault/stopPropagation——ST 自己的 ESC 照常收到。#pad-input 主输入框不算编辑框（在里面按 ESC 也退出）。
 export function onFullscreenEscKeydown(e) {
     if (e.key !== 'Escape') return;
     if (!win || win.style.display === 'none') return;
-    if (!win.classList.contains('so-fullscreen')) return;   // 非全屏流：立即 no-op（零回归的结构性保证）
+    if (!win.classList.contains('pad-fullscreen')) return;   // 非全屏流：立即 no-op（零回归的结构性保证）
     const ae = document.activeElement;
-    const editorFocused = !!(ae && ae !== win && win.contains(ae) && ae.id !== 'so-input'
+    const editorFocused = !!(ae && ae !== win && win.contains(ae) && ae.id !== 'pad-input'
         && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT' || ae.isContentEditable));
     if (fullscreenEscShouldExit({
         fullscreen: true,
-        toolsMenuOpen: !!win.querySelector('#so-tools-menu.open'),
-        fixselOpen: !!win.querySelector('#so-fixsel.open'),
+        toolsMenuOpen: !!win.querySelector('#pad-tools-menu.open'),
+        fixselOpen: !!win.querySelector('#pad-fixsel.open'),
         editorFocused,
     })) setFullscreen(false);
 }
@@ -201,8 +201,8 @@ export function scheduleEnsureInView() {
 // Drag the window by its header. Pointer events cover mouse + touch + pen in one
 // path; pointer capture keeps tracking even when the finger leaves the header.
 // 拖动 vs 轻点判定（纯函数，单测钉 plan-float-drag.test.mjs）：
-// dragShouldBegin —— 一次 pointerdown 该不该开始拖动。落在按钮 / .so-iconbtn 上时默认不拖（让它响应点击）；
-//   但折叠态的「指南针小药丸」整张可点面就是那颗罗盘按钮（#so-plan-float-collapse），靠 dragFromButtons=true
+// dragShouldBegin —— 一次 pointerdown 该不该开始拖动。落在按钮 / .pad-iconbtn 上时默认不拖（让它响应点击）；
+//   但折叠态的「指南针小药丸」整张可点面就是那颗罗盘按钮（#pad-plan-float-collapse），靠 dragFromButtons=true
 //   放行「在按钮上也能起拖」，再用下面的位移阈值区分轻点（展开）/拖动（移动）。真机 bug 修复点（Discord 白鳥三津枝）。
 // dragExceededThreshold —— 指针自按下点的位移是否已超过「这是拖动而非轻点」的阈值（按 hypot 距离，避免手指微抖被当拖动）。
 //
@@ -285,8 +285,8 @@ export function makeDraggable(panel, handle, keys = { left: 'winLeft', top: 'win
     let sx, sy, sl, st, sw, sh, pid = null, moved = false, fromButton = false;
     handle.style.touchAction = 'none';   // stop the page scrolling under a drag
     handle.addEventListener('pointerdown', (e) => {
-        if (panel.classList.contains('so-fullscreen')) return;   // 全屏时不拖动（否则移动窗口并存下坏几何）
-        const onButton = !!(e.target.closest('button') || e.target.closest('.so-iconbtn'));
+        if (panel.classList.contains('pad-fullscreen')) return;   // 全屏时不拖动（否则移动窗口并存下坏几何）
+        const onButton = !!(e.target.closest('button') || e.target.closest('.pad-iconbtn'));
         const dragFromButtons = typeof opts.dragFromButtons === 'function' && opts.dragFromButtons();
         if (!dragShouldBegin({ onButton, secondaryButton: e.button != null && e.button > 0, dragFromButtons })) return;
         pid = e.pointerId;
@@ -338,7 +338,7 @@ export function makeResizable(panel, grip) {
     if (!grip) return;
     let sx, sy, sw, sh, left, top, pid = null;
     grip.addEventListener('pointerdown', (e) => {
-        if (panel.classList.contains('so-fullscreen')) return;   // 全屏时不缩放
+        if (panel.classList.contains('pad-fullscreen')) return;   // 全屏时不缩放
         if (e.button != null && e.button > 0) return;
         pid = e.pointerId;
         const r = panel.getBoundingClientRect();

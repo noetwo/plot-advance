@@ -14,8 +14,7 @@
  * 剧情脉络（节点 + 推进速度，2.5.0 起取代单拍方案与序列）、引导暂停、连接存档改进、输入框上方的模型切换栏与快捷回复栏按钮。
  * 原版的弧线、落拍感应、下一拍建议、数据库联动、插件接口（StoryOracleAPI）、更新检查不在本版。
  *
- * 与原版共用同一套设置和聊天数据（同一个 MODULE 键、同一批聊天元数据），因此两者
- * 不能同时启用。
+ * 与原版使用彼此独立的设置、聊天元数据、界面与浏览器存储命名空间，可同时启用。
  *
  * 两种连接模式（均兼容 OpenAI 接口）：
  *   - "direct"  ：浏览器直接请求你的端点（需自行填写 URL + 密钥 + 模型）。
@@ -25,10 +24,11 @@
  */
 
 import { maybePostReply, mvuCompatLifecycleMark, postReplyHandlesType, supersedePostReply, supersedePostReplyOnChatSwitch } from './core/post-reply.js';
+import { migrateChatNamespace, migrateGlobalNamespace } from './core/namespace-migration.js';
 import { closeModelMenu, closeQpMenu, getCtx, getSettings, renderConnPresets, renderModelBar, renderQpManager, save } from './core/settings.js';
 import { observeGenerationState } from './core/generation.js';
 
-import { checkPlanReminder, ensureSoSeqCleanupRegex, onChatChanged } from './modes/advisor/story-path.js';
+import { checkPlanReminder, onChatChanged } from './modes/advisor/story-path.js';
 import { captureLwbSnapshot } from './modes/chat/context.js';
 import { mvuedScheduleRefresh } from './modes/diagnose/editor.js';
 import { refreshWiCustomUI } from './modes/diagnose/pickers.js';
@@ -39,7 +39,7 @@ import { migrateBuiltinJbDefault, migrateFixLeanDefaults } from './modes/loreboo
 import { BUILTIN_JB_AUTHOR } from './presets/builtin-jailbreak.js';
 import { ENABLE_INJECT_GLUE, ENABLE_LWB_BRIDGE, ENABLE_MVU_EDITOR, ENABLE_WI_CUSTOM_PICK } from './prompts/builtins.js';
 import { getLoadedMvu, loadRegexEngine } from './st/adapters.js';
-import { getHostGlobal, getHostStorage, setHostGlobal } from './st/host.js';
+import { getHostGlobal, getHostStorage } from './st/host.js';
 import { callDirect, callProfile, callProfileStream, resolveEndpointUrl, streamDirect } from './transport/direct.js';
 import { applyWindowSkin, syncChatBarButton, syncFixSelBarButton, syncQrButton } from './ui/chat-entry.js';
 import { renderGenerationState } from './ui/generation-view.js';
@@ -51,7 +51,7 @@ import { win } from './ui/refs.js';
 
 // ---------- 设置面板：分页 ----------
 const SETTINGS_TABS = ['conn', 'ctx', 'persona', 'prompt', 'qp', 'ui'];
-const SETTINGS_TAB_KEY = 'so.settings.tab';   // 记住上次打开的页（只存在本浏览器）
+const SETTINGS_TAB_KEY = 'pad.settings.tab';   // 记住上次打开的页（只存在本浏览器）
 let settingsTab = 'conn';
 
 function restoreSettingsTab() {
@@ -69,12 +69,12 @@ export function setSettingsTab(tab) {
     settingsTab = tab;
     try { getHostStorage()?.setItem(SETTINGS_TAB_KEY, tab); } catch (e) { /* 同上 */ }
     if (!win) return;
-    for (const b of win.querySelectorAll('.so-set-tab')) {
+    for (const b of win.querySelectorAll('.pad-set-tab')) {
         const on = b.dataset.tab === tab;
         b.classList.toggle('active', on);
         b.setAttribute('aria-selected', on ? 'true' : 'false');
     }
-    for (const p of win.querySelectorAll('.so-set-page')) p.classList.toggle('active', p.dataset.tab === tab);
+    for (const p of win.querySelectorAll('.pad-set-page')) p.classList.toggle('active', p.dataset.tab === tab);
     if (tab === 'prompt') renderPromptNav();
     if (tab === 'qp') renderQpManager();
 }
@@ -82,9 +82,9 @@ export function setSettingsTab(tab) {
 // 打开 / 关闭设置（open 不传 = 切换）。打开时铺满窗口，并刷新几处要现取的列表。
 export function toggleSettings(open, tab) {
     if (!win) return;
-    const panel = win.querySelector('#so-settings');
+    const panel = win.querySelector('#pad-settings');
     const on = panel.classList.toggle('open', open);
-    win.classList.toggle('so-settings-open', on);   // CSS 据此让出消息区、输入区与模式栏
+    win.classList.toggle('pad-settings-open', on);   // CSS 据此让出消息区、输入区与模式栏
     closeModelMenu();
     closeQpMenu();
     renderModelBar();
@@ -102,16 +102,16 @@ export function toggleSettings(open, tab) {
 // 默认关（toolsInHeader）；开时省一次点击，⋯ 菜单默认保留给未来的小模式。原生化自二创 tools-expand。
 export function applyToolsInHeader() {
     if (!win) return false;
-    const wrap = win.querySelector('.so-tools-wrap');
-    const menu = win.querySelector('#so-tools-menu');
-    const header = win.querySelector('#so-header-btns');
+    const wrap = win.querySelector('.pad-tools-wrap');
+    const menu = win.querySelector('#pad-tools-menu');
+    const header = win.querySelector('#pad-header-btns');
     if (!wrap || !menu || !header) return false;
     // 插到两条分组线【之间】（⋯ 原来住的位置）——搬完仍是 模式│工具│🗑✕ 三组。插在第一条线前的
     // 旧插法，删掉 ⋯ 包裹后两条线会贴成「‖」双线、模式和工具挤成一团（1.37.1）。
-    const dividers = header.querySelectorAll('.so-hdr-div');
+    const dividers = header.querySelectorAll('.pad-hdr-div');
     const divider = dividers[1] || dividers[0];
-    menu.querySelectorAll('.so-tools-item').forEach((btn) => {
-        btn.classList.remove('so-tools-item');
+    menu.querySelectorAll('.pad-tools-item').forEach((btn) => {
+        btn.classList.remove('pad-tools-item');
         btn.querySelector('span')?.remove();
         header.insertBefore(btn, divider);
     });
@@ -143,70 +143,26 @@ export async function soCallModel(messages, opts = {}, deps = {}) {
     return await profileCall(s.profileId, messages, eff, override, signal);
 }
 
-// 精简版与原版共用设置键、聊天元数据键和界面元素 id（这样原版的参谋记录、已采用的方案 / 序列、
-// 连接配置能直接带过来），代价是两者不能同时启用。原版先跑完会留下 #so-window / StoryOracleAPI；
-// 原版还没跑时，它的脚本标签也已经在页面上（酒馆按 /scripts/extensions/third-party/<目录>/ 加载）。
-// 末尾的 / 让它匹配不到 story-oracle-lite 自己。
-// 自己这份入口脚本的路径由 index.js 传入；bootstrap 求值时不读取宿主或 import.meta。
-let SO_SELF_PATH = '';
-let SO_FORKS = [];
-// 二创版（不论装在哪个文件夹、装了几份）在 init 时登记自己的路径；先登记的那份是「主位」，
-// 其余让路。不能靠脚本标签互认：酒馆会把同一批（loading_order 相同）扩展的脚本标签先一起挂上再并行求值，
-// 两份二创版都看得见对方的标签，就会双双退出（2.2.2 实测）。原版没有这套登记，靠它先建的 #so-window /
-// StoryOracleAPI 认出来——它的 loading_order 是 100，比我们早一批，正常情况下总是先跑完。
-function registerOracleFork(entryUrl) {
+
+// 启动时先完成全局与当前聊天的旧命名空间迁移，再读取任何设置或聊天元数据。
+export function init() {
     try {
-        SO_SELF_PATH = decodeURIComponent(new URL(entryUrl).pathname);
-        const list = Array.isArray(getHostGlobal('__storyOracleForks')) ? getHostGlobal('__storyOracleForks') : [];
-        setHostGlobal('__storyOracleForks', list);
-        if (SO_SELF_PATH && !list.includes(SO_SELF_PATH)) list.push(SO_SELF_PATH);
-        SO_FORKS = list;
+        const ctx = getCtx();
+        const globalMigration = migrateGlobalNamespace({
+            extensionSettings: ctx.extensionSettings,
+            storage: getHostStorage(),
+        });
+        if (globalMigration.changed && typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+        if (migrateChatNamespace(ctx.chatMetadata)) {
+            const persistMetadata = ctx.saveMetadataDebounced || ctx.saveMetadata;
+            if (typeof persistMetadata === 'function') persistMetadata.call(ctx);
+        }
+        restoreSettingsTab();
+        initNow();
     } catch (e) {
-        SO_SELF_PATH = '';
-        SO_FORKS = [];
+        console.error('[剧情推进] init failed:', e);
     }
 }
-const SO_ORIGINAL_WAIT_MS = 8000;
-// 原版「故事神谕」或另一份剧情推进在跑吗？'other' = 该让路；'none' = 放心启动；'wait' = 有个叫 story-oracle 的文件夹（原版的
-// 名字）挂了脚本、但它既没登记成二创版也还没建窗口——多半是原版还没跑到初始化，等它一会儿再判。
-// 只认文件夹名【正好是】story-oracle：社区的 story-oracle-next-beat 这类配套插件不该让我们白等。
-function otherOracleState() {
-    try {
-        if (document.getElementById('so-window') || getHostGlobal('StoryOracleAPI')) return 'other';
-        if (SO_FORKS.length && SO_FORKS[0] !== SO_SELF_PATH) return 'other';
-        const pending = [...document.querySelectorAll('script[src*="/third-party/story-oracle/"]')].some((el) => {
-            try {
-                const p = decodeURIComponent(new URL(el.getAttribute('src'), location.href).pathname);
-                return /\/third-party\/story-oracle\/[^/]+$/.test(p) && p !== SO_SELF_PATH && !SO_FORKS.includes(p);
-            } catch (e) { return false; }
-        });
-        return pending ? 'wait' : 'none';
-    } catch (e) { return 'none'; }
-}
-
-// 启动：先确认没有原版「故事神谕」或另一份剧情推进在跑（otherOracleState），再正式初始化（initNow）。
-export function init(entryUrl) {
-    restoreSettingsTab();
-    registerOracleFork(entryUrl);
-    const startedAt = Date.now();
-    const check = () => {
-        const st = otherOracleState();
-        if (st === 'wait' && Date.now() - startedAt < SO_ORIGINAL_WAIT_MS) { setTimeout(check, 200); return; }
-        if (st === 'other') {
-            const msg = '检测到原版「故事神谕」或另一份「剧情推进」也已启用。两者不能同时使用，请在扩展管理里只留一个启用，然后刷新页面。';
-            console.error('[剧情推进] ' + msg);
-            try { const toastr = getHostGlobal('toastr'); toastr && toastr.error && toastr.error(msg, '剧情推进', { timeOut: 0, extendedTimeOut: 0 }); } catch (e) { /* toastr 缺席 */ }
-            return;
-        }
-        try {
-            initNow();
-        } catch (e) {
-            console.error('[Story Oracle] init failed:', e);
-        }
-    };
-    check();
-}
-
 function initNow() {
     const s = getSettings();
     // Tier 0 ④（1.25.0，Prince 定案）：一次性把老用户仍停在旧默认（-1 全部前文 / 世界书 / 概要 开）的手动校正键迁到
@@ -220,7 +176,7 @@ function initNow() {
                 toastr.info('手动校正默认已改为精简上下文（' + mig.hit.join(' / ') + ' 已关，角色卡保留）——长聊天下更稳更省。如需全量前文，可在「校正设置」把「加载前文条数」改回 -1。', '剧情推进', { timeOut: 12000 });
             }
         }
-    } catch (e) { console.warn('[Story Oracle] fix lean 迁移失败：', e); }
+    } catch (e) { console.warn('[剧情推进] fix lean 迁移失败：', e); }
     // 内置破限（1.40.0）：一次性把「没选任何预设」的用户预选到内置破限。同样放在 buildWindow 之前
     // → UI 直接显示迁移后的选择。已有【有效且已策展】预设的用户完全不动。
     try {
@@ -234,7 +190,7 @@ function initNow() {
                     '剧情推进', { timeOut: 15000 });
             }
         }
-    } catch (e) { console.warn('[Story Oracle] 内置破限迁移失败：', e); }
+    } catch (e) { console.warn('[剧情推进] 内置破限迁移失败：', e); }
     applyWindowSkin(getSettings());   // 1.45.0：先上皮肤再建窗，避免开窗瞬间闪一下旧配色
     injectWandButton();
     buildWindow();
@@ -244,7 +200,6 @@ function initNow() {
     syncQrButton();        // 精简版 1.2：快捷回复栏里的「剧情推进」按钮
     syncFixSelBarButton();   // ✂️ 按设置在输入框上方那一排放 / 撤「选段校正」快捷按钮（1.44.0）
     loadRegexEngine(); // warm the cache so it's ready by first send
-    ensureSoSeqCleanupRegex();   // 1.3.0：旧回复里残留的落拍感应状态行，显示和提示词里都剥掉
 
     // Advisor plan lifecycle: re-register (or clear) the injection whenever a
     // chat loads, and run the staleness check as the main chat grows. These are
@@ -277,9 +232,9 @@ function initNow() {
             // 开场白（type 'first_message'：打开只有开场白的聊天时 ST 会发）不是新回复 → 跳过（postReplyHandlesType）。
             ctx.eventSource.on(et.MESSAGE_RECEIVED || 'message_received', (id, type) => {
                 if (!postReplyHandlesType(type)) return;
-                Promise.resolve(maybePostReply(id)).catch((e) => console.warn('[Story Oracle] 回复后编排调度失败：', e));
+                Promise.resolve(maybePostReply(id)).catch((e) => console.warn('[剧情推进] 回复后编排调度失败：', e));
             });
-            // 新的用户输入令旧回复的后台工作失去语义基础：静默作废 Story Oracle 自己的等待 / LLM，
+            // 新的用户输入令旧回复的后台工作失去语义基础：静默作废 剧情推进 自己的等待 / LLM，
             // 但不碰 MVU 的外部解析（它没有公开 cancel API）。这与用户点提示的“手动中断”分开，
             // 因而不会冒出“已中断”toast；下一条 AI 回复到达后会照常建立新一轮。
             ctx.eventSource.on(et.MESSAGE_SENT || 'message_sent', () => supersedePostReply());
@@ -289,7 +244,7 @@ function initNow() {
             try {
                 ctx.eventSource.on('mag_variable_update_started', () => mvuCompatLifecycleMark('started', getLoadedMvu()));
                 ctx.eventSource.on('mag_variable_update_ended', () => mvuCompatLifecycleMark('ended', getLoadedMvu()));
-            } catch (e) { console.debug('[Story Oracle] MVU 兼容生命周期事件未接上：', e); }
+            } catch (e) { console.debug('[剧情推进] MVU 兼容生命周期事件未接上：', e); }
             if (ENABLE_LWB_BRIDGE) {
                 // 小白X 记忆桥：主聊天生成期（小白X 已写注入槽、尚未清）抓一份总结缓存。只读、不改提示词。
                 // ST 真实事件名是 GENERATE_*（events.js 无 GENERATION_AFTER_COMBINE_PROMPTS 这个键）。
@@ -349,11 +304,11 @@ function initNow() {
                     const rt = Mvu && Mvu.events && Mvu.events.VARIABLE_INITIALIZED;
                     if (rt && !mvuEvts.includes(rt)) mvuEvts.push(rt);
                     mvuEvts.forEach((ev) => ctx.eventSource.on(ev, () => mvuedScheduleRefresh(ev)));
-                } catch (e) { console.debug('[Story Oracle] MVU 自有事件未接上（不影响编辑器刷新主路）：', e); }
+                } catch (e) { console.debug('[剧情推进] MVU 自有事件未接上（不影响编辑器刷新主路）：', e); }
             }
         }
     } catch (e) {
-        console.warn('[Story Oracle] event wiring failed (plan injection will only refresh on reload):', e);
+        console.warn('[剧情推进] event wiring failed (plan injection will only refresh on reload):', e);
     }
     // Cover the chat that may already be loaded by the time the extension inits.
     onChatChanged();

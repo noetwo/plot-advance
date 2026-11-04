@@ -4,6 +4,7 @@ import test, { after } from 'node:test';
 import { serializeDiagSel } from '../src/core/chat-metadata.js';
 import { runAutoDiagnose } from '../src/core/post-reply.js';
 import { setHostForTests } from '../src/st/host.js';
+import { buildDiagPatchPayload, stripDiagPatchFromText } from '../src/modes/diagnose/patch.js';
 
 const FIRST_REWRITE = '<UpdateVariable>\n<JSONPatch>[{"op":"replace","path":"/x","value":1}]</JSONPatch>\n</UpdateVariable>';
 const SECOND_REWRITE = '<UpdateVariable>\n<JSONPatch>[]</JSONPatch>\n</UpdateVariable>';
@@ -30,7 +31,7 @@ const context = {
     chatId: 'chat',
     groupId: '',
     chatMetadata: {},
-    extensionSettings: { storyOracle: {} },
+    extensionSettings: { plotAdvance: {} },
     substituteParams: (text) => text,
     saveChat: async () => {},
     saveMetadataDebounced: () => {},
@@ -152,7 +153,7 @@ test('发送入口参数矩阵：自动诊断及被 schema 拒绝后的重写', 
     for (const mode of ['direct', 'profile']) for (const stream of [false, true]) for (const temperature of [false, true]) {
         for (const rewrite of [false, true]) {
             const settings = sendSettings(mode, stream, temperature, rewrite);
-            context.extensionSettings.storyOracle = settings;
+            context.extensionSettings.plotAdvance = settings;
             context.chatMetadata = {};
             calls = [];
             if (rewrite) {
@@ -181,6 +182,16 @@ test('发送入口参数矩阵：自动诊断及被 schema 拒绝后的重写', 
             assert.equal(active.size, 0);
         }
     }
+});
+
+test('诊断补丁新写 pad 标记，读取时兼容 so 与 pad 两代标记', () => {
+    const payload = buildDiagPatchPayload([{ op: 'replace', path: '/x', value: 1 }]);
+    assert.match(payload, /^<!--pad-diag-->/);
+    assert.match(payload, /<!--\/pad-diag-->\n$/);
+    assert.equal(stripDiagPatchFromText('前' + payload + '后'), '前后');
+
+    const legacy = '<!--so-diag-->\n<JSONPatch>\n[]\n</JSONPatch>\n<!--/so-diag-->\n';
+    assert.equal(stripDiagPatchFromText('前' + legacy + '后'), '前后');
 });
 
 test('诊断条目序列化固定值：null、空 Set、乱序、字符串 uid 与非有限数', () => {

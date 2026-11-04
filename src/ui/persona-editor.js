@@ -9,15 +9,15 @@ let fleshUndo = null;
 
 function personaEditorElements() {
     return {
-        editor: win.querySelector('#so-persona-editor'),
-        sel: win.querySelector('#so-pe-sel'),
-        name: win.querySelector('#so-pe-name'),
-        voice: win.querySelector('#so-pe-voice'),
-        example: win.querySelector('#so-pe-example'),
-        flesh: win.querySelector('#so-pe-flesh'),
-        undo: win.querySelector('#so-pe-undo'),
-        save: win.querySelector('#so-pe-save'),
-        del: win.querySelector('#so-pe-del'),
+        editor: win.querySelector('#pad-persona-editor'),
+        sel: win.querySelector('#pad-pe-sel'),
+        name: win.querySelector('#pad-pe-name'),
+        voice: win.querySelector('#pad-pe-voice'),
+        example: win.querySelector('#pad-pe-example'),
+        flesh: win.querySelector('#pad-pe-flesh'),
+        undo: win.querySelector('#pad-pe-undo'),
+        save: win.querySelector('#pad-pe-save'),
+        del: win.querySelector('#pad-pe-del'),
     };
 }
 
@@ -155,12 +155,12 @@ async function fleshPersonaFromEditor() {
 
 export function bindPersonaEditor() {
     if (!ENABLE_CUSTOM_PERSONAS) return;
-    win.querySelector('#so-persona-edit')?.addEventListener('click', openPersonaEditor);
-    win.querySelector('#so-pe-sel')?.addEventListener('change', loadPersonaEditorFields);
-    win.querySelector('#so-pe-save')?.addEventListener('click', savePersonaFromEditor);
-    win.querySelector('#so-pe-del')?.addEventListener('click', deletePersonaFromEditor);
-    win.querySelector('#so-pe-flesh')?.addEventListener('click', fleshPersonaFromEditor);
-    win.querySelector('#so-pe-undo')?.addEventListener('click', () => {
+    win.querySelector('#pad-persona-edit')?.addEventListener('click', openPersonaEditor);
+    win.querySelector('#pad-pe-sel')?.addEventListener('change', loadPersonaEditorFields);
+    win.querySelector('#pad-pe-save')?.addEventListener('click', savePersonaFromEditor);
+    win.querySelector('#pad-pe-del')?.addEventListener('click', deletePersonaFromEditor);
+    win.querySelector('#pad-pe-flesh')?.addEventListener('click', fleshPersonaFromEditor);
+    win.querySelector('#pad-pe-undo')?.addEventListener('click', () => {
         const elements = personaEditorElements();
         if (!fleshUndo) return;
         elements.voice.value = fleshUndo.voice;
@@ -171,7 +171,7 @@ export function bindPersonaEditor() {
 }
 
 export function populatePersonas() {
-    const select = win.querySelector('#so-persona');
+    const select = win.querySelector('#pad-persona');
     if (!select) return;
     select.innerHTML = '';
     for (const persona of PERSONAS) {

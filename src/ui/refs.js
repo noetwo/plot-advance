@@ -10,8 +10,8 @@ export function registerWindowRoot(element) {
 }
 
 export function registerWindowControls() {
-    messagesEl = win.querySelector('#so-messages');
-    inputEl = win.querySelector('#so-input');
-    sendBtn = win.querySelector('#so-send');
-    modeBadge = win.querySelector('#so-mode-badge');
+    messagesEl = win.querySelector('#pad-messages');
+    inputEl = win.querySelector('#pad-input');
+    sendBtn = win.querySelector('#pad-send');
+    modeBadge = win.querySelector('#pad-mode-badge');
 }

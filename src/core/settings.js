@@ -120,7 +120,7 @@ const defaults = {
     // 'content'，且【仅当回复里确有该标签时才生效】——简单卡（无此标签）自动回退到「校正整条」的旧行为。
     // 留空 = 关闭作用域、校正整条回复。卡片若用别的标签包正文，改成那个标签名。
     fixA_scopeTag: 'content',
-    // ✨ 自动配置 Phase 5（D+E）：这个作用域标签是【用户手填】的吗？true = 用户在 #so-fix-scope 里亲手打过字，
+    // ✨ 自动配置 Phase 5（D+E）：这个作用域标签是【用户手填】的吗？true = 用户在 #pad-fix-scope 里亲手打过字，
     // 之后 resolveFixScope 永不代替用户改写（只建议、不采纳）；false = 还是默认值 / 上次由自动检测采纳写入的——
     // 缓存未命中时可以自我纠正。默认 false（默认标签 'content' 视作「尚未手动确认过」）。
     fixA_scopeManual: false,
@@ -313,7 +313,7 @@ const defaults = {
     // Whether advisor mode runs THROUGH the curated preset (directive layered on
     // top, RP markers skipped) — same opt-in pattern as lorebookUsePreset.
     advisorUsePreset: false,
-    // 引导条（剧情引导运行时的 #so-plan-bar）停靠窗口内时默认【收起】——只留标题行，省纵向空间、
+    // 引导条（剧情引导运行时的 #pad-plan-bar）停靠窗口内时默认【收起】——只留标题行，省纵向空间、
     // 不挡聊天视图（用户反馈）；点标题栏箭头可展开，选择会记住。浮窗版有自己的折叠机制，不受此项影响。
     planBarCollapsed: true,
     // ✨ 校正模式（手动 + 自动）是否经【自定义补全预设】发送——仅破限 / 越狱用（同 advisorUsePreset 模式：保留预设的
@@ -349,7 +349,7 @@ export async function uiConfirm(message) {
             return Boolean(result); // AFFIRMATIVE=1 → true；取消 / 关闭 → null|0 → false
         }
     } catch (e) {
-        console.warn('[Story Oracle] uiConfirm 弹窗失败，回退原生 confirm：', e);
+        console.warn('[剧情推进] uiConfirm 弹窗失败，回退原生 confirm：', e);
     }
     return typeof confirm === 'function' ? confirm(message) : true;
 }
@@ -368,7 +368,7 @@ export async function uiPrompt(message, defaultValue = '') {
             return (result === false || result == null) ? null : String(result);
         }
     } catch (e) {
-        console.warn('[Story Oracle] uiPrompt 弹窗失败，回退原生 prompt：', e);
+        console.warn('[剧情推进] uiPrompt 弹窗失败，回退原生 prompt：', e);
     }
     return typeof prompt === 'function' ? prompt(message, defaultValue) : null;
 }
@@ -514,7 +514,7 @@ function connPresetRemove(list, name) {
 }
 export function renderConnPresets() {
     if (!win) return;
-    const box = win.querySelector('#so-conn-preset-list');
+    const box = win.querySelector('#pad-conn-preset-list');
     if (!box) return;
     const s = getSettings();
     const presets = s.connPresets || [];
@@ -523,7 +523,7 @@ export function renderConnPresets() {
         connPickerOpen = false;
         connPickerQuery = '';
         const empty = document.createElement('div');
-        empty.className = 'so-hint';
+        empty.className = 'pad-hint';
         empty.textContent = '还没有存档。填好下面的端点、密钥和模型后，在这里起个名字存起来，以后一键切换。';
         box.appendChild(empty);
         return;
@@ -531,22 +531,22 @@ export function renderConnPresets() {
     const st = connPresetState(s);
     const head = document.createElement('button');
     head.type = 'button';
-    head.className = 'so-preset-head';
+    head.className = 'pad-preset-head';
     head.setAttribute('aria-haspopup', 'listbox');
     head.setAttribute('aria-expanded', connPickerOpen ? 'true' : 'false');
     head.title = connPickerOpen ? '收起存档列表' : '展开存档列表，点哪个就用哪个';
-    head.innerHTML = '<span class="so-preset-main"><span class="so-preset-name"></span><span class="so-preset-sub"></span></span>'
-        + `<span class="so-preset-count">${presets.length} 个存档</span><i class="fa-solid fa-chevron-down"></i>`;
-    const nameEl = head.querySelector('.so-preset-name');
+    head.innerHTML = '<span class="pad-preset-main"><span class="pad-preset-name"></span><span class="pad-preset-sub"></span></span>'
+        + `<span class="pad-preset-count">${presets.length} 个存档</span><i class="fa-solid fa-chevron-down"></i>`;
+    const nameEl = head.querySelector('.pad-preset-name');
     nameEl.textContent = st ? st.preset.name : '当前连接未存档';
     if (st && st.modified) {
         const tag = document.createElement('span');
-        tag.className = 'so-preset-dirty';
+        tag.className = 'pad-preset-dirty';
         tag.textContent = '已修改';
         nameEl.appendChild(tag);
     }
     // 副标题显示的是【当前】连接：改过的模型也看得见
-    head.querySelector('.so-preset-sub').textContent = st
+    head.querySelector('.pad-preset-sub').textContent = st
         ? [s.model || '（未填模型）', s.endpoint].filter(Boolean).join(' · ')
         : (s.mode === 'profile' ? '正在用酒馆连接配置文件' : (s.model || '未设置模型'));
     head.addEventListener('click', (e) => {
@@ -558,39 +558,39 @@ export function renderConnPresets() {
     });
     // 弹出框挂在 anchor 上（紧贴存档栏下沿），盖住下面的「已修改」提示条和设置，不挤压它们
     const anchor = document.createElement('div');
-    anchor.className = 'so-preset-anchor';
+    anchor.className = 'pad-preset-anchor';
     anchor.appendChild(head);
     box.appendChild(anchor);
     if (st && st.modified) box.appendChild(buildConnDirtyBar(st.preset));
     if (!connPickerOpen) return;
 
     const pop = document.createElement('div');
-    pop.className = 'so-preset-dropdown';
+    pop.className = 'pad-preset-dropdown';
     const search = document.createElement('input');
     search.type = 'search';
-    search.className = 'so-preset-search';
+    search.className = 'pad-preset-search';
     search.placeholder = '搜索名称或模型…';
     search.value = connPickerQuery;
     const rows = document.createElement('div');
-    rows.className = 'so-preset-rows';
+    rows.className = 'pad-preset-rows';
     rows.setAttribute('role', 'listbox');
     for (const p of presets) {
         const on = connPresetIsCurrent(p, s);
         const edited = !on && !!st && st.modified && st.preset.name === p.name;   // 当前连接是在它上面改的
         const row = document.createElement('div');
-        row.className = 'so-preset-opt' + (on || edited ? ' current' : '');
+        row.className = 'pad-preset-opt' + (on || edited ? ' current' : '');
         row.setAttribute('role', 'option');
         row.setAttribute('aria-selected', on ? 'true' : 'false');
         row.dataset.q = [p.name, p.model, p.endpoint].filter(Boolean).join(' ').toLowerCase();
         const pick = document.createElement('button');
         pick.type = 'button';
-        pick.className = 'so-preset-pick';
+        pick.className = 'pad-preset-pick';
         pick.title = on ? '正在使用' : (edited ? `丢掉改动，还原成「${p.name}」里存的设置` : `切换到「${p.name}」`);
-        pick.innerHTML = '<span class="so-preset-mark"></span><span class="so-preset-main"><span class="so-preset-name"></span><span class="so-preset-sub"></span></span>';
-        pick.querySelector('.so-preset-mark').innerHTML = on ? '<i class="fa-solid fa-check"></i>'
+        pick.innerHTML = '<span class="pad-preset-mark"></span><span class="pad-preset-main"><span class="pad-preset-name"></span><span class="pad-preset-sub"></span></span>';
+        pick.querySelector('.pad-preset-mark').innerHTML = on ? '<i class="fa-solid fa-check"></i>'
             : (edited ? '<i class="fa-solid fa-pen" title="当前连接基于它，但改过"></i>' : '');
-        pick.querySelector('.so-preset-name').textContent = p.name;
-        const sub = pick.querySelector('.so-preset-sub');
+        pick.querySelector('.pad-preset-name').textContent = p.name;
+        const sub = pick.querySelector('.pad-preset-sub');
         sub.textContent = [p.model || '（未填模型）', p.endpoint].filter(Boolean).join(' · ');
         sub.title = sub.textContent;
         pick.addEventListener('click', () => {
@@ -601,7 +601,7 @@ export function renderConnPresets() {
         });
         const del = document.createElement('button');
         del.type = 'button';
-        del.className = 'so-icon-btn';
+        del.className = 'pad-icon-btn';
         del.title = `删除存档「${p.name}」`;
         del.innerHTML = '<i class="fa-solid fa-trash"></i>';
         del.addEventListener('click', async () => {
@@ -616,14 +616,14 @@ export function renderConnPresets() {
         rows.appendChild(row);
     }
     const none = document.createElement('div');
-    none.className = 'so-preset-none';
+    none.className = 'pad-preset-none';
     none.textContent = '没有匹配的存档';
     rows.appendChild(none);
     const filter = () => {
         connPickerQuery = search.value;
         const q = search.value.trim().toLowerCase();
         let shown = 0;
-        for (const row of rows.querySelectorAll('.so-preset-opt')) {
+        for (const row of rows.querySelectorAll('.pad-preset-opt')) {
             row.hidden = !!q && !row.dataset.q.includes(q);
             if (!row.hidden) shown++;
         }
@@ -633,8 +633,8 @@ export function renderConnPresets() {
     search.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter') return;   // 回车 = 选第一个匹配项
         e.preventDefault();
-        const first = [...rows.querySelectorAll('.so-preset-opt')].find((r) => !r.hidden);
-        if (first) first.querySelector('.so-preset-pick').click();
+        const first = [...rows.querySelectorAll('.pad-preset-opt')].find((r) => !r.hidden);
+        if (first) first.querySelector('.pad-preset-pick').click();
     });
     filter();
     pop.append(search, rows);
@@ -646,21 +646,21 @@ export function renderConnPresets() {
 // 「已修改」提示条：当前连接和最近用的存档不一致时，出现在存档栏下面。
 function buildConnDirtyBar(p) {
     const bar = document.createElement('div');
-    bar.className = 'so-preset-dirtybar';
+    bar.className = 'pad-preset-dirtybar';
     const msg = document.createElement('span');
-    msg.className = 'so-preset-dirtymsg';
+    msg.className = 'pad-preset-dirtymsg';
     msg.textContent = `当前连接改过，和存档「${p.name}」不一样了`;
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
-    saveBtn.id = 'so-conn-preset-update';
-    saveBtn.className = 'so-mini-btn so-primary';
+    saveBtn.id = 'pad-conn-preset-update';
+    saveBtn.className = 'pad-mini-btn pad-primary';
     saveBtn.textContent = '保存到此存档';
     saveBtn.title = `把现在的端点、密钥、模型、高级选项和生成参数写回「${p.name}」`;
     saveBtn.addEventListener('click', () => saveToActiveConnPreset());
     const revert = document.createElement('button');
     revert.type = 'button';
-    revert.id = 'so-conn-preset-revert';
-    revert.className = 'so-mini-btn';
+    revert.id = 'pad-conn-preset-revert';
+    revert.className = 'pad-mini-btn';
     revert.textContent = '还原';
     revert.title = `丢掉改动，恢复「${p.name}」里存的设置`;
     revert.addEventListener('click', () => applyConnPreset(p.name));
@@ -679,7 +679,7 @@ export function closeConnPicker() {
  * ⚡ 快捷指令（二创版 2.2）：存好的话，一键发给当前模式。显示在输入框上方、模型右边：
  * 宽窗口直接排成一行（点名字 = 直接发送；放不下就左右滑，⋯ 打开完整列表）；窄窗口 / 手机收成一个
  * 「⚡ 快捷指令」按钮，点开往上弹出列表（行尾 ✎ = 先填进输入框改一改再发）。宽窄按模型栏自身的宽度判断
- * （CSS 容器查询 so-mbar），不按设备。每个模式只显示自己的；管理在设置的「快捷指令」页。
+ * （CSS 容器查询 pad-mbar），不按设备。每个模式只显示自己的；管理在设置的「快捷指令」页。
  * 存在 settings.quickPrompts = [{ id, mode, label, text }]：缺键 = 预置（QP_DEFAULTS），[] = 用户删光了、不再补。
  * text 里的 {{user}} / {{char}} 等宏在发送 / 填入时才展开，所以同一条指令换卡也能用。
  * ------------------------------------------------------------------ */
@@ -776,7 +776,7 @@ async function qpSaveFromInput() {
     s.quickPrompts.push({ id: qpNewId(), mode, label: name.trim() || text.slice(0, 12), text });
     save();
     renderModelBar();
-    if (win && win.querySelector('#so-settings.open')) renderQpManager();
+    if (win && win.querySelector('#pad-settings.open')) renderQpManager();
     try { const toastr = getHostGlobal('toastr'); toastr && toastr.success && toastr.success(`已存为「${qpModeLabel(mode)}」模式的快捷指令。`, '快捷指令'); } catch (e) { /* ignore */ }
 }
 // 模型栏右侧：宽 = 一排名字 + ⋯；窄 = 一个「⚡ 快捷指令」按钮（两套都渲染，CSS 容器查询决定显示哪套）。
@@ -784,11 +784,11 @@ function renderQuickPrompts(bar) {
     const mode = currentOracleMode();
     const items = qpForMode(mode);
     const chips = document.createElement('div');
-    chips.className = 'so-qp-chips';
+    chips.className = 'pad-qp-chips';
     for (const q of items) {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'so-qp-chip';
+        b.className = 'pad-qp-chip';
         b.title = '点一下直接发送：\n' + q.text;
         b.innerHTML = '<i class="fa-solid fa-bolt"></i><span></span>';
         b.querySelector('span').textContent = q.label;
@@ -803,7 +803,7 @@ function renderQuickPrompts(bar) {
     };
     const more = document.createElement('button');
     more.type = 'button';
-    more.className = 'so-qp-more';
+    more.className = 'pad-qp-more';
     more.title = items.length ? '全部快捷指令 / 存新的 / 管理' : '快捷指令：把常说的话存起来，一键发送';
     more.setAttribute('aria-haspopup', 'true');
     more.setAttribute('aria-expanded', qpMenuOpen ? 'true' : 'false');
@@ -811,42 +811,42 @@ function renderQuickPrompts(bar) {
     more.addEventListener('click', toggleMenu);
     const tog = document.createElement('button');
     tog.type = 'button';
-    tog.className = 'so-qp-toggle';
+    tog.className = 'pad-qp-toggle';
     tog.setAttribute('aria-haspopup', 'true');
     tog.setAttribute('aria-expanded', qpMenuOpen ? 'true' : 'false');
-    tog.innerHTML = '<i class="fa-solid fa-bolt"></i><span>快捷指令</span>' + (items.length ? `<span class="so-qp-count">${items.length}</span>` : '') + '<i class="fa-solid fa-chevron-up"></i>';
+    tog.innerHTML = '<i class="fa-solid fa-bolt"></i><span>快捷指令</span>' + (items.length ? `<span class="pad-qp-count">${items.length}</span>` : '') + '<i class="fa-solid fa-chevron-up"></i>';
     tog.addEventListener('click', toggleMenu);
     bar.append(chips, more, tog);
     if (!qpMenuOpen) return;
 
     const menu = document.createElement('div');
-    menu.className = 'so-model-menu so-qp-menu';
+    menu.className = 'pad-model-menu pad-qp-menu';
     menu.setAttribute('role', 'menu');
     const head = document.createElement('div');
-    head.className = 'so-model-menu-group';
+    head.className = 'pad-model-menu-group';
     head.textContent = `快捷指令 · ${qpModeLabel(mode)}（点名字直接发送，✎ 先填进输入框）`;
     menu.appendChild(head);
     if (!items.length) {
         const none = document.createElement('div');
-        none.className = 'so-model-menu-empty';
+        none.className = 'pad-model-menu-empty';
         none.textContent = '这个模式还没有快捷指令。在输入框写好要说的话，点下面「存成快捷指令」；或到设置的「快捷指令」页新建。';
         menu.appendChild(none);
     }
     for (const q of items) {
         const row = document.createElement('div');
-        row.className = 'so-qp-row';
+        row.className = 'pad-qp-row';
         const send = document.createElement('button');
         send.type = 'button';
-        send.className = 'so-model-opt';
+        send.className = 'pad-model-opt';
         send.setAttribute('role', 'menuitem');
         send.title = '直接发送';
-        send.innerHTML = '<span class="so-model-opt-mark"><i class="fa-solid fa-bolt"></i></span><span class="so-model-opt-main"><span class="so-model-opt-name"></span><span class="so-model-opt-sub"></span></span>';
-        send.querySelector('.so-model-opt-name').textContent = q.label;
-        send.querySelector('.so-model-opt-sub').textContent = q.text.replace(/\s+/g, ' ').trim();
+        send.innerHTML = '<span class="pad-model-opt-mark"><i class="fa-solid fa-bolt"></i></span><span class="pad-model-opt-main"><span class="pad-model-opt-name"></span><span class="pad-model-opt-sub"></span></span>';
+        send.querySelector('.pad-model-opt-name').textContent = q.label;
+        send.querySelector('.pad-model-opt-sub').textContent = q.text.replace(/\s+/g, ' ').trim();
         send.addEventListener('click', (e) => { e.stopPropagation(); qpSend(q); });
         const fill = document.createElement('button');
         fill.type = 'button';
-        fill.className = 'so-qp-fill';
+        fill.className = 'pad-qp-fill';
         fill.title = '先填进输入框，改一改再发';
         fill.setAttribute('aria-label', `把「${q.label}」填进输入框`);
         fill.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
@@ -855,15 +855,15 @@ function renderQuickPrompts(bar) {
         menu.appendChild(row);
     }
     const sep = document.createElement('div');
-    sep.className = 'so-model-menu-sep';
+    sep.className = 'pad-model-menu-sep';
     menu.appendChild(sep);
     const action = (icon, label, fn) => {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'so-model-opt';
+        b.className = 'pad-model-opt';
         b.setAttribute('role', 'menuitem');
-        b.innerHTML = `<span class="so-model-opt-mark"><i class="fa-solid ${icon}"></i></span><span class="so-model-opt-main"><span class="so-model-opt-name"></span></span>`;
-        b.querySelector('.so-model-opt-name').textContent = label;
+        b.innerHTML = `<span class="pad-model-opt-mark"><i class="fa-solid ${icon}"></i></span><span class="pad-model-opt-main"><span class="pad-model-opt-name"></span></span>`;
+        b.querySelector('.pad-model-opt-name').textContent = label;
         b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
         menu.appendChild(b);
     };
@@ -875,8 +875,8 @@ function renderQuickPrompts(bar) {
 // 设置「快捷指令」页：按模式分开管理（名字 / 内容 / 所属模式 / 顺序 / 删除）。改动即存、模型栏即时跟着变。
 export function renderQpManager() {
     if (!win) return;
-    const segEl = win.querySelector('#so-qp-modes');
-    const listEl = win.querySelector('#so-qp-list');
+    const segEl = win.querySelector('#pad-qp-modes');
+    const listEl = win.querySelector('#pad-qp-list');
     if (!segEl || !listEl) return;
     const s = getSettings();
     const all = s.quickPrompts;
@@ -885,25 +885,25 @@ export function renderQpManager() {
     for (const [m, label] of QP_MODES) {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'so-pgroup' + (m === mode ? ' active' : '');
+        b.className = 'pad-pgroup' + (m === mode ? ' active' : '');
         b.textContent = label;
         const n = all.filter((q) => q && q.mode === m).length;
         if (n) {
             const c = document.createElement('span');
-            c.className = 'so-pgroup-count';
+            c.className = 'pad-pgroup-count';
             c.textContent = String(n);
             b.appendChild(c);
         }
         b.addEventListener('click', () => { qpManageMode = m; renderQpManager(); });
         segEl.appendChild(b);
     }
-    const sum = win.querySelector('#so-qp-summary');
+    const sum = win.querySelector('#pad-qp-summary');
     if (sum) sum.textContent = all.length ? `共 ${all.length} 条` : '';
     listEl.innerHTML = '';
     const items = all.filter((q) => q && q.mode === mode);
     if (!items.length) {
         const none = document.createElement('div');
-        none.className = 'so-hint';
+        none.className = 'pad-hint';
         none.textContent = `「${qpModeLabel(mode)}」模式还没有快捷指令，点下面「＋ 新建一条」。`;
         listEl.appendChild(none);
     }
@@ -919,18 +919,18 @@ export function renderQpManager() {
     };
     items.forEach((q, i) => {
         const card = document.createElement('div');
-        card.className = 'so-qp-card';
-        card.innerHTML = '<div class="so-qp-card-head"><input type="text" class="so-qp-name" maxlength="30" placeholder="名字（显示在按钮上）">'
-            + '<select class="so-qp-mode"></select>'
-            + '<button type="button" class="so-icon-btn so-qp-up" title="上移"><i class="fa-solid fa-arrow-up"></i></button>'
-            + '<button type="button" class="so-icon-btn so-qp-down" title="下移"><i class="fa-solid fa-arrow-down"></i></button>'
-            + '<button type="button" class="so-icon-btn so-qp-del" title="删除"><i class="fa-solid fa-trash"></i></button></div>'
-            + '<textarea class="so-qp-text" rows="5" spellcheck="false" placeholder="点一下就发出去的那段话。可以写 {{user}}、{{char}}，发送时换成当前的名字。"></textarea>';
-        const nameEl = card.querySelector('.so-qp-name');
+        card.className = 'pad-qp-card';
+        card.innerHTML = '<div class="pad-qp-card-head"><input type="text" class="pad-qp-name" maxlength="30" placeholder="名字（显示在按钮上）">'
+            + '<select class="pad-qp-mode"></select>'
+            + '<button type="button" class="pad-icon-btn pad-qp-up" title="上移"><i class="fa-solid fa-arrow-up"></i></button>'
+            + '<button type="button" class="pad-icon-btn pad-qp-down" title="下移"><i class="fa-solid fa-arrow-down"></i></button>'
+            + '<button type="button" class="pad-icon-btn pad-qp-del" title="删除"><i class="fa-solid fa-trash"></i></button></div>'
+            + '<textarea class="pad-qp-text" rows="5" spellcheck="false" placeholder="点一下就发出去的那段话。可以写 {{user}}、{{char}}，发送时换成当前的名字。"></textarea>';
+        const nameEl = card.querySelector('.pad-qp-name');
         nameEl.value = q.label || '';
         nameEl.addEventListener('input', () => { q.label = nameEl.value; changed(); });
         nameEl.addEventListener('blur', () => { if (!nameEl.value.trim()) { q.label = String(q.text || '').trim().slice(0, 12) || '未命名'; nameEl.value = q.label; changed(); } });
-        const sel = card.querySelector('.so-qp-mode');
+        const sel = card.querySelector('.pad-qp-mode');
         for (const [m, label] of QP_MODES) {
             const o = document.createElement('option');
             o.value = m; o.textContent = label;
@@ -938,16 +938,16 @@ export function renderQpManager() {
         }
         sel.value = q.mode;
         sel.addEventListener('change', () => { q.mode = sel.value; changed(); renderQpManager(); });
-        const ta = card.querySelector('.so-qp-text');
+        const ta = card.querySelector('.pad-qp-text');
         ta.value = q.text || '';
         ta.addEventListener('input', () => { q.text = ta.value; changed(); });
-        const up = card.querySelector('.so-qp-up');
-        const down = card.querySelector('.so-qp-down');
+        const up = card.querySelector('.pad-qp-up');
+        const down = card.querySelector('.pad-qp-down');
         up.disabled = i === 0;
         down.disabled = i === items.length - 1;
         up.addEventListener('click', () => move(q, -1));
         down.addEventListener('click', () => move(q, 1));
-        card.querySelector('.so-qp-del').addEventListener('click', async () => {
+        card.querySelector('.pad-qp-del').addEventListener('click', async () => {
             if (!(await uiConfirm(`删除快捷指令「${q.label || '未命名'}」？`))) return;
             const idx = all.indexOf(q);
             if (idx >= 0) all.splice(idx, 1);
@@ -960,7 +960,7 @@ export function renderQpManager() {
 
 
 export function renderModelBar() {
-    const bar = win && win.querySelector('#so-model-bar');
+    const bar = win && win.querySelector('#pad-model-bar');
     if (!bar) return;
     const s = getSettings();
     const st = connPresetState(s);
@@ -980,41 +980,41 @@ export function renderModelBar() {
     bar.innerHTML = '';
     const pill = document.createElement('button');
     pill.type = 'button';
-    pill.className = 'so-model-pill';
+    pill.className = 'pad-model-pill';
     pill.title = st && st.modified ? `切换连接存档（当前连接改过，还没保存到「${st.preset.name}」）` : '切换连接存档';
     pill.setAttribute('aria-haspopup', 'true');
     pill.setAttribute('aria-expanded', modelMenuOpen ? 'true' : 'false');
-    pill.innerHTML = '<i class="fa-solid fa-plug"></i><span class="so-model-pill-name"></span><span class="so-model-pill-sub"></span><i class="fa-solid fa-chevron-up"></i>';
-    pill.querySelector('.so-model-pill-name').textContent = name;
-    pill.querySelector('.so-model-pill-sub').textContent = sub;
+    pill.innerHTML = '<i class="fa-solid fa-plug"></i><span class="pad-model-pill-name"></span><span class="pad-model-pill-sub"></span><i class="fa-solid fa-chevron-up"></i>';
+    pill.querySelector('.pad-model-pill-name').textContent = name;
+    pill.querySelector('.pad-model-pill-sub').textContent = sub;
     pill.addEventListener('click', (e) => { e.stopPropagation(); modelMenuOpen = !modelMenuOpen; qpMenuOpen = false; renderModelBar(); });
     bar.appendChild(pill);
     renderQuickPrompts(bar);   // ⚡ 二创版 2.2：模型右边的快捷指令
     if (!modelMenuOpen) return;
 
     const menu = document.createElement('div');
-    menu.className = 'so-model-menu';
+    menu.className = 'pad-model-menu';
     menu.setAttribute('role', 'menu');
     const head = document.createElement('div');
-    head.className = 'so-model-menu-group';
+    head.className = 'pad-model-menu-group';
     head.textContent = '连接存档';
     menu.appendChild(head);
     const presets = s.connPresets || [];
     if (!presets.length) {
         const none = document.createElement('div');
-        none.className = 'so-model-menu-empty';
+        none.className = 'pad-model-menu-empty';
         none.textContent = '还没有连接存档——在设置的「连接」页里存一个。';
         menu.appendChild(none);
     }
     const addOpt = (mark, label, subText, current, onPick) => {
         const opt = document.createElement('button');
         opt.type = 'button';
-        opt.className = 'so-model-opt' + (current ? ' current' : '');
+        opt.className = 'pad-model-opt' + (current ? ' current' : '');
         opt.setAttribute('role', 'menuitem');
-        opt.innerHTML = '<span class="so-model-opt-mark"></span><span class="so-model-opt-main"><span class="so-model-opt-name"></span><span class="so-model-opt-sub"></span></span>';
-        opt.querySelector('.so-model-opt-mark').innerHTML = mark;
-        opt.querySelector('.so-model-opt-name').textContent = label;
-        const subEl = opt.querySelector('.so-model-opt-sub');
+        opt.innerHTML = '<span class="pad-model-opt-mark"></span><span class="pad-model-opt-main"><span class="pad-model-opt-name"></span><span class="pad-model-opt-sub"></span></span>';
+        opt.querySelector('.pad-model-opt-mark').innerHTML = mark;
+        opt.querySelector('.pad-model-opt-name').textContent = label;
+        const subEl = opt.querySelector('.pad-model-opt-sub');
         if (subText) subEl.textContent = subText; else subEl.remove();
         opt.addEventListener('click', (e) => { e.stopPropagation(); modelMenuOpen = false; onPick(); renderModelBar(); });
         menu.appendChild(opt);
@@ -1026,7 +1026,7 @@ export function renderModelBar() {
         addOpt(mark, p.name, p.model || '（未填模型）', on || edited, () => { if (!on) switchConnPreset(p.name); });
     }
     const sep = document.createElement('div');
-    sep.className = 'so-model-menu-sep';
+    sep.className = 'pad-model-menu-sep';
     menu.appendChild(sep);
     addOpt('<i class="fa-solid fa-gear"></i>', '管理连接…', '', false, () => toggleSettings(true, 'conn'));
     bar.appendChild(menu);

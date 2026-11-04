@@ -558,15 +558,15 @@ export function fixTableCounts(table) {
 // 有模板：把如常那句原样加一个前缀标明是预览。判据只有 preview 这一个形参，其余分支逐字节不动。
 export function fixCustomVerdictText({ template, exists, useMechanic, mode, tag, pieces, prose, guards, keepCount, preview }) {
     const name = `模板〔${template || ''}〕`;
-    if (preview && !exists) return { cls: 'so-fix-verdict so-fix-verdict-neutral', text: 'ⓘ 本聊天目前跑的是校正。要改用模板，先在下方选或新建一份，再勾「每条新回复自动运行模板」。' };
-    if (!exists) return { cls: 'so-fix-verdict so-fix-verdict-warn', text: `⚠ ${name}不存在或正文为空，本条不会处理——先在下方选或新建一份模板。` };
+    if (preview && !exists) return { cls: 'pad-fix-verdict pad-fix-verdict-neutral', text: 'ⓘ 本聊天目前跑的是校正。要改用模板，先在下方选或新建一份，再勾「每条新回复自动运行模板」。' };
+    if (!exists) return { cls: 'pad-fix-verdict pad-fix-verdict-warn', text: `⚠ ${name}不存在或正文为空，本条不会处理——先在下方选或新建一份模板。` };
     const pre = preview ? '（预览·本聊天目前跑校正）' : '';
-    if (!useMechanic) return { cls: 'so-fix-verdict so-fix-verdict-neutral', text: `${pre}ⓘ 本条回复将：整条交给${name}（保留区 ${keepCount | 0} 块原位保留）。` };
+    if (!useMechanic) return { cls: 'pad-fix-verdict pad-fix-verdict-neutral', text: `${pre}ⓘ 本条回复将：整条交给${name}（保留区 ${keepCount | 0} 块原位保留）。` };
     if (mode === 'wrapped' || mode === 'bare') {
         const where = mode === 'wrapped' ? `命中 <${tag}> → ` : '散文正文 → ';
-        return { cls: 'so-fix-verdict so-fix-verdict-ok', text: `${pre}✓ ${where}沿用识别：${pieces | 0} 段正文（共 ${prose | 0} 字）交给${name}；${guards | 0} 块结构原样保留。` };
+        return { cls: 'pad-fix-verdict pad-fix-verdict-ok', text: `${pre}✓ ${where}沿用识别：${pieces | 0} 段正文（共 ${prose | 0} 字）交给${name}；${guards | 0} 块结构原样保留。` };
     }
-    return { cls: 'so-fix-verdict so-fix-verdict-neutral', text: `${pre}ⓘ 这条回复没有包裹标签也没有结构块 → 整条正文交给${name}。` };
+    return { cls: 'pad-fix-verdict pad-fix-verdict-neutral', text: `${pre}ⓘ 这条回复没有包裹标签也没有结构块 → 整条正文交给${name}。` };
 }
 
 // 纯函数：✨ 检测收据（1.18.3）——把分段表里的守卫段重扫成「本条已自动保留」清单，供保留区上方的
@@ -1112,15 +1112,15 @@ function diffSegments(before, after) {
     return segments;
 }
 
-// 把 diffSegments(before, after) 渲染成一张内联差异卡（<div.so-diff-card>）：equal 段普通文字、del 段
+// 把 diffSegments(before, after) 渲染成一张内联差异卡（<div.pad-diff-card>）：equal 段普通文字、del 段
 // 划掉红、ins 段绿。文本一律走 textContent（差异文本不可信，绝不 innerHTML）。返回未挂载的元素，由调用方插入。
 export function renderDiffCard(before, after) {
     const card = document.createElement('div');
-    card.className = 'so-diff-card';
+    card.className = 'pad-diff-card';
     for (const seg of diffSegments(String(before == null ? '' : before), String(after == null ? '' : after))) {
         const span = document.createElement('span');
-        if (seg.type === 'del') span.className = 'so-diff-del';
-        else if (seg.type === 'ins') span.className = 'so-diff-ins';
+        if (seg.type === 'del') span.className = 'pad-diff-del';
+        else if (seg.type === 'ins') span.className = 'pad-diff-ins';
         span.textContent = seg.text;
         card.appendChild(span);
     }
@@ -1257,13 +1257,13 @@ export async function applyFix(patchBlock, statusEl, expectStatKey, replyText) {
     const nBlocks = Math.max(diagCountPatchBlocks(patchBlock), diagCountPatchBlocks(replyText));
     if (nBlocks >= 2) {
         statusEl.textContent = diagDoubleBlockNotice(nBlocks);
-        statusEl.classList.add('so-hint-error');
+        statusEl.classList.add('pad-hint-error');
         return null;
     }
     const Mvu = await getMvu();
     if (!Mvu || typeof Mvu.parseMessage !== 'function') {
         statusEl.textContent = '未检测到 MVU —— 无法自动应用。';
-        statusEl.classList.add('so-hint-error');
+        statusEl.classList.add('pad-hint-error');
         return null;
     }
     const opts = mvuMsgOpts();   // F4：读写共用同一解析结果（消掉 TOCTOU），别在写之前再解析一次
@@ -1273,7 +1273,7 @@ export async function applyFix(patchBlock, statusEl, expectStatKey, replyText) {
     // 「没有 stat_data 的退化 MvuData」上与读侧永久失和 → 这道闸恒触发、且给的建议永远无效。
     if (expectStatKey != null && diagStatKey(mvuStatOf(oldData)) !== expectStatKey) {
         statusEl.textContent = '状态已变化（这份补丁是按当时的状态算的），未写入。请重新诊断。';
-        statusEl.classList.add('so-hint-error');
+        statusEl.classList.add('pad-hint-error');
         return null;
     }
     // 修复流水线（1.67.0；含 1.66.1 的开错根掰正 —— 顺序与证据闸见 repairDiagPatch 头注）。必须在交给
@@ -1281,13 +1281,13 @@ export async function applyFix(patchBlock, statusEl, expectStatKey, replyText) {
     // 标签空白 / 毒元素那两类更是「跑完就整块没了」。逐 op 对账吃的也是修过的这一份 —— 两边共用同一个
     // 路径空间与同一份动词，绝不能一边看模型原文一边看修好的那份。
     let patch = repairDiagPatch(patchBlock, mvuStatOf(oldData));
-    if (patch.fixed) console.warn('[Story Oracle] 诊断补丁自动修正：', patch);
+    if (patch.fixed) console.warn('[剧情推进] 诊断补丁自动修正：', patch);
     // 🩺 1.89.0 A（同 autoApplyFix）：全被拒 → 一个字不写、说清楚；部分被拒 → 只写能过的，成功文案末尾附原因。
     const sf = diagSchemaFilterPatch(patch.text, oldData);
     if (sf) {
         if (!sf.dry.passOps.length) {
             statusEl.textContent = '这份修复里的每一处都过不了这张卡的规则 —— 未写入。' + diagSchemaDryLines(sf.dry);
-            statusEl.classList.add('so-hint-error');
+            statusEl.classList.add('pad-hint-error');
             if (sf.dry.poisoned) maybeRunSaveHealth('failure');
             return null;
         }
@@ -1298,7 +1298,7 @@ export async function applyFix(patchBlock, statusEl, expectStatKey, replyText) {
     const newData = await Mvu.parseMessage(patch.text, oldData);
     if (!newData) {
         statusEl.textContent = '补丁未解析出任何改动 —— 请检查指令。';
-        statusEl.classList.add('so-hint-error');
+        statusEl.classList.add('pad-hint-error');
         return null;
     }
     // 诚实闸（审计簇 C）：parseMessage 回了对象 ≠ 有任何值变了。空转绝不报「已应用」、绝不给撤销按钮。
@@ -1325,7 +1325,7 @@ export async function applyFix(patchBlock, statusEl, expectStatKey, replyText) {
     // swipe 钉（审计簇 M1）：解析等待期间换了楼 / 划了 swipe → 放弃，绝不把 A swipe 算的状态写进 B。
     if (diagPinMoved(swipePin, diagCaptureSwipe())) {
         statusEl.textContent = '这条消息在应用期间被切换（楼层或 swipe 已变），未写入。请重试。';
-        statusEl.classList.add('so-hint-error');
+        statusEl.classList.add('pad-hint-error');
         return null;
     }
     await Mvu.replaceMvuData(newData, opts);

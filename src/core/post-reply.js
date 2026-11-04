@@ -73,7 +73,7 @@ export function postReplyShouldStop() {
     return postReplyCancelled || !!(activePostReplyRun && activePostReplyRun.superseded);
 }
 
-// MESSAGE_SENT 专用：静默让旧轮失效并撤掉尚未开跑的旧 AI pending。只中止 Story Oracle 自己的请求；
+// MESSAGE_SENT 专用：静默让旧轮失效并撤掉尚未开跑的旧 AI pending。只中止 剧情推进 自己的请求；
 // MVU 外部解析没有公开 cancel，仍可在后台自行收尾。返回值只供测试 / 诊断，不参与业务判断。
 export function supersedePostReply() {
     pendingPostReplyRun = null;
@@ -118,12 +118,12 @@ export function drainPendingPostReply() {
     if (pending
         && pending.chatKey === chatIdentityKey()
         && (pendingCtx?.chat || [])[pending.messageId] === pending.messageRef) {
-        Promise.resolve(maybePostReply(pending.messageId)).catch((e) => console.warn('[Story Oracle] pending 回复后编排失败：', e));
+        Promise.resolve(maybePostReply(pending.messageId)).catch((e) => console.warn('[剧情推进] pending 回复后编排失败：', e));
     }
     // ✨/📋 1.77.0（复审 minor #9）：暂存的成品若因为「有一轮在飞」而被 fixDrainParked 让过，这里是锁刚
     // 释放的那一刻——补唤一次。放在补跑【之后】：补跑那一轮若真开跑会同步把锁重新置真，我们就再让一次，
     // 由它自己的 finally 把这条链接下去（不会丢，也永远不会与在飞的一轮交错写）。
-    Promise.resolve(fixDrainParked()).catch((e) => console.warn('[Story Oracle] 暂存的校正结果落地失败：', e));
+    Promise.resolve(fixDrainParked()).catch((e) => console.warn('[剧情推进] 暂存的校正结果落地失败：', e));
 }
 
 // 纯决策核（零回归证据核，单测在 fix-orchestrator.test.mjs）：给定杀死开关 flags={fix,diag,trainer,custom}
@@ -249,7 +249,7 @@ async function awaitMvuCompatBatch(mvu, opts = {}) {
 }
 
 // 每条回复只建一份兼容会话；promise 在 MESSAGE_RECEIVED 编排入口立刻起跑，故既能覆盖 MVU 的
-// 3s throttle，又能与 Story Oracle 既有 settle / fixer LLM 重叠。wait 可被校正与诊断重复消费，
+// 3s throttle，又能与 剧情推进 既有 settle / fixer LLM 重叠。wait 可被校正与诊断重复消费，
 // 但真正的生命周期观察只执行一次。disabled 会立即 resolve，默认关闭没有轮询也没有四秒延时。
 function createMvuCompatSession(mvu, enabled) {
     const active = !!enabled;
@@ -378,7 +378,7 @@ export async function maybePostReply(messageId) {
             } catch (e) {
                 if (postReplyShouldStop()) break;               // abort / supersede → 静默收尾，不当报错
                 const stepName = step === 'fix' ? '自动校正' : (step === 'custom' ? '📋 模板任务' : (step === 'diag' ? '自动诊断' : '🎛 修改器'));
-                console.warn(`[Story Oracle] ${stepName}失败：`, e);
+                console.warn(`[剧情推进] ${stepName}失败：`, e);
                 // 沿用诊断的「每会话一次」错误 toast（校正的失败已在其侧聊记录里反映，不再额外打扰；
                 // 修改器有意静默——不弹 toast，只留上面这行 console.warn）。
                 if (step === 'diag' && !autoDiagErrorToasted) {
@@ -459,7 +459,7 @@ async function runAutoDiagnoseWithRetry(ctx, s, targetId, chatKey, compatSession
             if (thrown) throw thrown;
             return;
         }
-        console.warn(`[Story Oracle] 自动诊断这一跳没跑成（${thrown ? '调用失败' : String(outcome && outcome.status)}），自动重试 ${used + 1}/${max}…`, thrown || '');
+        console.warn(`[剧情推进] 自动诊断这一跳没跑成（${thrown ? '调用失败' : String(outcome && outcome.status)}），自动重试 ${used + 1}/${max}…`, thrown || '');
     }
 }
 
@@ -482,7 +482,7 @@ export async function runAutoDiagnose(ctx, s, targetId, chatKey, compatSession, 
         const compat = await compatSession.wait();
         if (postReplyShouldStop()) return;
         if (compat && (compat.status === 'timed-out' || compat.status === 'cancelled')) {
-            console.debug(`[Story Oracle] 自动诊断：MVU 额外解析兼容等待 ${compat.status}，本轮安全跳过（未写入）。`);
+            console.debug(`[剧情推进] 自动诊断：MVU 额外解析兼容等待 ${compat.status}，本轮安全跳过（未写入）。`);
             return;
         }
     }
@@ -619,7 +619,7 @@ export async function runAutoDiagnose(ctx, s, targetId, chatKey, compatSession, 
         // 而用户完全看不出是哪一道拦的 —— 一处彻底静默、一处弹提示，等于同一个动作有两种随机结果。
         // 两处共用 toastDiagChatSwitched（记录=聊天级持久物，恒不写；toast=会话级环境提示，恒发）。
         toastDiagChatSwitched();
-        console.debug('[Story Oracle] 自动诊断：聊天已切换，本轮作废（未写入）。');
+        console.debug('[剧情推进] 自动诊断：聊天已切换，本轮作废（未写入）。');
         return;
     }
 
@@ -757,7 +757,7 @@ async function autoApplyFix(Mvu, patchBlock, expectStatKey, expectChatKey, reply
     // 修复流水线 —— 与 applyFix 【同一条】（repairDiagPatch，1.67.0；含 1.66.1 的开错根掰正）。自动诊断
     // 是另一个写入口，且才是每回合都跑的那个；只接手动那条等于漏掉大头。
     if (!patch) patch = repairDiagPatch(patchBlock, mvuStatOf(oldData));
-    if (patch.fixed) console.warn('[Story Oracle] 自动诊断补丁自动修正：', patch);
+    if (patch.fixed) console.warn('[剧情推进] 自动诊断补丁自动修正：', patch);
     // 🩺 1.89.0 A：按卡片规则预演，只写能过的指令（spec §4.2）。拿不到规则 → sf=null，下面逐字节照旧。
     const sf = diagSchemaFilterPatch(patch.text, oldData);
     if (sf) {
@@ -815,7 +815,7 @@ export function refreshMessageBar(idx) {
     const m = (ctx.chat || [])[idx];
     if (!m) return;
     try { if (typeof ctx.updateMessageBlock === 'function') ctx.updateMessageBlock(idx, m); }
-    catch (e) { console.warn('[Story Oracle] 自动诊断后重渲染消息失败：', e); }
+    catch (e) { console.warn('[剧情推进] 自动诊断后重渲染消息失败：', e); }
     // updateMessageBlock 只把 .mes_text 重渲染成状态栏 HTML 代码块；【酒馆助手】要收到 MESSAGE_UPDATED 才会把那段
     // HTML 真正渲染成 iframe（运行其 <script>）——其消息 iframe 渲染器（JS-Slash-Runner store/iframe_runtimes/
     // message.ts）正监听 CHARACTER/USER_MESSAGE_RENDERED / MESSAGE_UPDATED / MESSAGE_SWIPED。不补发它，状态栏就停在
@@ -838,7 +838,7 @@ export function refreshMessageBar(idx) {
                 : (et.CHARACTER_MESSAGE_RENDERED || 'character_message_rendered');
             Promise.resolve(ctx.eventSource.emit(rendered, idx)).catch(() => {});
         }
-    } catch (e) { console.warn('[Story Oracle] 自动诊断后发 MESSAGE_UPDATED 失败：', e); }
+    } catch (e) { console.warn('[剧情推进] 自动诊断后发 MESSAGE_UPDATED 失败：', e); }
 }
 
 // 手动诊断「应用 / 撤销」后刷新楼层状态栏。手动 applyFix / undoFix 也走 Mvu.replaceMvuData 写库，它同样【不发】
@@ -850,7 +850,7 @@ export function refreshLatestMvuBar() {
     try {
         const { idx } = getLatestAiMessage();
         if (idx >= 0) refreshMessageBar(idx);
-    } catch (e) { console.warn('[Story Oracle] 诊断应用 / 撤销后刷新状态栏失败：', e); }
+    } catch (e) { console.warn('[剧情推进] 诊断应用 / 撤销后刷新状态栏失败：', e); }
 }
 
 // 纯函数：把 block（+ 可选状态栏占位符 placeholder）幂等追加到 m.mes，并【镜像到当前 swipe 槽】。
@@ -896,14 +896,14 @@ async function writeUpdateBlockToMessage(idx, block, expectText) {
     const m = (ctx.chat || [])[idx];
     if (!m || typeof m.mes !== 'string' || !block) return false;
     if (expectText != null && m.mes !== expectText) {
-        console.warn('[Story Oracle] 自动诊断推导块未写回：这条回复在诊断期间被改动过（已跳过，变量修正照常生效）。');
+        console.warn('[剧情推进] 自动诊断推导块未写回：这条回复在诊断期间被改动过（已跳过，变量修正照常生效）。');
         return false;
     }
     const before = m.mes;
     applyBlockToCurrentSwipe(m, block, STATUS_PLACEHOLDER);
     if (m.mes !== before) {                                  // 确有追加才存盘
         try { if (typeof ctx.saveChat === 'function') await ctx.saveChat(); }
-        catch (e) { console.warn('[Story Oracle] 自动诊断写回消息后保存失败：', e); }
+        catch (e) { console.warn('[剧情推进] 自动诊断写回消息后保存失败：', e); }
     }
     refreshMessageBar(idx);
     // 返回「这次是否真把 block 追加进去了」——撤销据此决定该不该把它摘掉（幂等守卫可能压根没追加）。

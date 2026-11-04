@@ -15,7 +15,7 @@ const hostContext = {
     chatId: 'chat',
     groupId: '',
     chatMetadata: {},
-    extensionSettings: { storyOracle: {} },
+    extensionSettings: { plotAdvance: {} },
     name1: '用户',
     name2: '角色',
     substituteParams: (text) => text,
@@ -73,7 +73,7 @@ function assistantElement() {
         style: {},
         classList: { add() {}, remove() {} },
     };
-    return { content, element: { querySelector: (selector) => selector === '.so-content' ? content : null } };
+    return { content, element: { querySelector: (selector) => selector === '.pad-content' ? content : null } };
 }
 
 function abortError() {
@@ -182,7 +182,7 @@ test('captureFixContext 返回冻结的单轮上下文并覆盖旧捕获槽字�
         fixA_promptFlavor: 'deepseek',
         fixA_task: 'fix',
     };
-    hostContext.extensionSettings.storyOracle = settings;
+    hostContext.extensionSettings.plotAdvance = settings;
     hostContext.chatMetadata = {};
     const context = await captureFixContext(settings, { mode: 'auto', targetId: 0 });
     assert.equal(Object.isFrozen(context), true);
@@ -211,7 +211,7 @@ test('发送入口参数矩阵：runFixByTargets / runAutoFix', async () => {
     for (const mode of ['direct', 'profile']) for (const stream of [false, true]) for (const temperature of [false, true]) {
 
         const settings = sendSettings(mode, stream, temperature);
-        hostContext.extensionSettings.storyOracle = settings;
+        hostContext.extensionSettings.plotAdvance = settings;
         hostContext.chatMetadata = {};
 
         const manual = transportHarness();

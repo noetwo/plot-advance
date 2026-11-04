@@ -1,6 +1,6 @@
 /* ==================== 🌐 模板广场（ENABLE_FIX_TEMPLATE_HUB，1.86.0）==================== */
-/* overlay 骨架（#so-fixhub / #so-fixshare）并在上面 #so-smartsel 那一条里；这里只写卡片本身。工作卡语义，跟随主题——绝不钉死浅色。 */
-#so-fixhub-card {
+/* overlay 骨架（#pad-fixhub / #pad-fixshare）并在上面 #pad-smartsel 那一条里；这里只写卡片本身。工作卡语义，跟随主题——绝不钉死浅色。 */
+#pad-fixhub-card {
     display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 560px; max-height: 100%; min-height: 0;
     box-sizing: border-box; border-radius: 12px; border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
     background-color: var(--SmartThemeBlurTintColor, #1b1d23);
@@ -8,46 +8,46 @@
     box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.7); padding: 16px 18px;
     color: var(--SmartThemeBodyColor, #e6e6e6);
 }
-#so-fixhub-head { font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; }   /* 含逃生 ✕，不被压缩 */
-.so-fixhub-headbtns { display: flex; gap: 4px; }
-#so-fixhub-search {
+#pad-fixhub-head { font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; }   /* 含逃生 ✕，不被压缩 */
+.pad-fixhub-headbtns { display: flex; gap: 4px; }
+#pad-fixhub-search {
     width: 100%; box-sizing: border-box; border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 0.9em;
-    background: var(--so-field); color: var(--SmartThemeBodyColor, #e6e6e6);
+    background: var(--pad-field); color: var(--SmartThemeBodyColor, #e6e6e6);
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18)); flex: 0 0 auto;
 }
-#so-fixhub-tags { display: flex; flex-wrap: wrap; gap: 6px; flex: 0 0 auto; }
-.so-fixhub-chip {
+#pad-fixhub-tags { display: flex; flex-wrap: wrap; gap: 6px; flex: 0 0 auto; }
+.pad-fixhub-chip {
     padding: 3px 10px; border-radius: 999px; font-size: 0.82em; cursor: pointer;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2)); background: rgba(var(--so-ink), 0.06); color: inherit;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2)); background: rgba(var(--pad-ink), 0.06); color: inherit;
 }
-.so-fixhub-chip.so-on { background: var(--so-lb-accent); color: #1a1a1a; border-color: transparent; font-weight: 600; }
-#so-fixhub-status:empty { display: none; }
-#so-fixhub-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
-.so-fixhub-item { border: 1px solid rgba(var(--so-ink), 0.12); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
-.so-fixhub-item-head { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
-.so-fixhub-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
-.so-fixhub-meta, .so-fixhub-tagline { font-size: 0.8em; opacity: 0.75; overflow-wrap: anywhere; }
-.so-fixhub-meta { flex: 0 1 auto; text-align: right; }
-.so-fixhub-desc { font-size: 0.88em; overflow-wrap: anywhere; }
-.so-fixhub-item-btns, .so-fixhub-confirm { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; align-items: center; }
-.so-fixhub-confirm-q { font-size: 0.85em; margin-right: auto; }
-.so-fixhub-btn {
+.pad-fixhub-chip.pad-on { background: var(--pad-lb-accent); color: #1a1a1a; border-color: transparent; font-weight: 600; }
+#pad-fixhub-status:empty { display: none; }
+#pad-fixhub-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+.pad-fixhub-item { border: 1px solid rgba(var(--pad-ink), 0.12); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
+.pad-fixhub-item-head { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+.pad-fixhub-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.pad-fixhub-meta, .pad-fixhub-tagline { font-size: 0.8em; opacity: 0.75; overflow-wrap: anywhere; }
+.pad-fixhub-meta { flex: 0 1 auto; text-align: right; }
+.pad-fixhub-desc { font-size: 0.88em; overflow-wrap: anywhere; }
+.pad-fixhub-item-btns, .pad-fixhub-confirm { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; align-items: center; }
+.pad-fixhub-confirm-q { font-size: 0.85em; margin-right: auto; }
+.pad-fixhub-btn {
     padding: 5px 12px; border-radius: 8px; font-size: 0.84em; cursor: pointer; max-width: 100%; overflow-wrap: anywhere;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2)); background: rgba(var(--so-ink), 0.06); color: inherit;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2)); background: rgba(var(--pad-ink), 0.06); color: inherit;
 }
-.so-fixhub-btn:hover:not(:disabled) { background: rgba(var(--so-ink), 0.12); }
-.so-fixhub-btn:disabled { opacity: 0.55; cursor: default; }
-.so-fixhub-update { border-color: var(--so-lb-accent); }
-.so-fixhub-prompt {
+.pad-fixhub-btn:hover:not(:disabled) { background: rgba(var(--pad-ink), 0.12); }
+.pad-fixhub-btn:disabled { opacity: 0.55; cursor: default; }
+.pad-fixhub-update { border-color: var(--pad-lb-accent); }
+.pad-fixhub-prompt {
     white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.82em; max-height: 30vh; overflow-y: auto; margin: 0;
-    padding: 6px 8px; border-radius: 6px; background: var(--so-field); overscroll-behavior: contain;
+    padding: 6px 8px; border-radius: 6px; background: var(--pad-field); overscroll-behavior: contain;
 }
-#so-fixhub-foot { flex: 0 0 auto; }
+#pad-fixhub-foot { flex: 0 0 auto; }
 
-/* 📤 分享卡：骨架同上（并在 #so-smartsel 那一条里）。hidden 属性必须压过 .so-lb-check 等类的 display:flex，
-   否则「更新」勾选行 / 提交按钮 / 复制兜底框永远可见（同 #so-wi-custom[hidden] 的教训）。 */
-#so-fixshare [hidden] { display: none; }
-#so-fixshare-card {
+/* 📤 分享卡：骨架同上（并在 #pad-smartsel 那一条里）。hidden 属性必须压过 .pad-lb-check 等类的 display:flex，
+   否则「更新」勾选行 / 提交按钮 / 复制兜底框永远可见（同 #pad-wi-custom[hidden] 的教训）。 */
+#pad-fixshare [hidden] { display: none; }
+#pad-fixshare-card {
     display: flex; flex-direction: column; width: 100%; max-width: 560px; max-height: 100%; min-height: 0;
     box-sizing: border-box; border-radius: 12px; border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
     background-color: var(--SmartThemeBlurTintColor, #1b1d23);
@@ -55,20 +55,20 @@
     box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.7); padding: 16px 18px;
     color: var(--SmartThemeBodyColor, #e6e6e6);
 }
-#so-fixshare-head { font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; flex: 0 0 auto; }   /* 含逃生 ✕ */
-#so-fixshare-body { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
-#so-fixshare-body input[type="text"], #so-fixshare-body textarea, #so-fixshare-body select {
+#pad-fixshare-head { font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; flex: 0 0 auto; }   /* 含逃生 ✕ */
+#pad-fixshare-body { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+#pad-fixshare-body input[type="text"], #pad-fixshare-body textarea, #pad-fixshare-body select {
     width: 100%; box-sizing: border-box; border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 0.9em;
-    background: var(--so-field); color: var(--SmartThemeBodyColor, #e6e6e6);
+    background: var(--pad-field); color: var(--SmartThemeBodyColor, #e6e6e6);
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18)); flex: 0 0 auto;
 }
-#so-fixshare-body textarea { resize: vertical; }
-.so-fixshare-label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85em; }
-#so-fixshare-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.so-fixshare-errors { white-space: pre-wrap; opacity: 1; color: color-mix(in srgb, var(--crimson70a, #e07c7c) 82%, var(--SmartThemeBodyColor)); }
-#so-fixshare-btns { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; flex: 0 0 auto; }
-/* 写成 .so-fixhub-btn.so-fixshare-go（0,3,0）且排在 .so-fixhub-btn:hover:not(:disabled) 之后：否则悬停时底色被换回半透明灰、
+#pad-fixshare-body textarea { resize: vertical; }
+.pad-fixshare-label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85em; }
+#pad-fixshare-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.pad-fixshare-errors { white-space: pre-wrap; opacity: 1; color: color-mix(in srgb, var(--crimson70a, #e07c7c) 82%, var(--SmartThemeBodyColor)); }
+#pad-fixshare-btns { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; flex: 0 0 auto; }
+/* 写成 .pad-fixhub-btn.pad-fixshare-go（0,3,0）且排在 .pad-fixhub-btn:hover:not(:disabled) 之后：否则悬停时底色被换回半透明灰、
    字仍是 #1a1a1a → 暗皮上深底深字几乎看不见（Task 8 :8003 眼检实测）。悬停只提一点亮度。 */
-.so-fixhub-btn.so-fixshare-go:not(:disabled) { background: var(--so-lb-accent); border-color: transparent; color: #1a1a1a; font-weight: 600; }
-.so-fixhub-btn.so-fixshare-go:not(:disabled):hover { filter: brightness(1.08); }
+.pad-fixhub-btn.pad-fixshare-go:not(:disabled) { background: var(--pad-lb-accent); border-color: transparent; color: #1a1a1a; font-weight: 600; }
+.pad-fixhub-btn.pad-fixshare-go:not(:disabled):hover { filter: brightness(1.08); }
 

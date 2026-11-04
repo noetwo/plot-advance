@@ -84,7 +84,7 @@ async function buildBldScanWiText(s) {
         }
         return blocks.join('\n\n').trim();
     } catch (e) {
-        console.warn('[Story Oracle] 工坊关键词扫描失败：', e);
+        console.warn('[剧情推进] 工坊关键词扫描失败：', e);
         return '';
     }
 }

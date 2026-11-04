@@ -1,6 +1,6 @@
 
 
-export const MODULE = 'storyOracle';
+export const MODULE = 'plotAdvance';
 
 export const DEFAULT_SYSTEM_PROMPT =
 `你是「剧情推进」，一个为正在进行的角色扮演/故事服务的“戏外”分析者。
@@ -839,7 +839,7 @@ export const FIX_CUSTOM_LEAD = '请按系统提示处理 <text_to_transform> 里
 export const FIX_CUSTOM_RAW_NOTE = '原文里的所有标签与结构块（如 <content>、<status>、<UpdateVariable> 及其中的 _.set 行）必须原样保留、留在原位——不翻译、不改写、不删除、不重复；只处理它们之外的正文。';
 
 // 📋 内置示例模板（1.77.0 owed wave；2026-09-05 产品负责人改判：直接列进模板下拉，不再有「示例…」按钮）。
-// 两份【真模型电池交付物】——在 #so-fixc-template 末尾的 optgroup「内置示例」里，选中即可用。
+// 两份【真模型电池交付物】——在 #pad-fixc-template 末尾的 optgroup「内置示例」里，选中即可用。
 // 正文的唯一源头是 `tests/unit/_custom-tpl-battery/SAMPLES.md` 的「### 最终文本」两个围栏块
 // （dialog r4 = 对白 / layout r2 = 排版），由 `fix-custom-samples.test.mjs` 读那份 md 逐字节钉住
 // —— 电池验过的字一个都不许在这里「顺手改好一点」。**只读**：`fixTemplates`（用户库）里永远没有它们，
@@ -1057,7 +1057,7 @@ export const PERSONA_STRUCT_GUARD_WI =
 
 // Chat Completion preset as system-prompt source.
 // When a preset is selected, the user curates which of its blocks to keep
-// (manual checklist + drag-reorder), and Story Oracle assembles a faithful,
+// (manual checklist + drag-reorder), and 剧情推进 assembles a faithful,
 // role-preserving, marker-aware prompt from that frozen curated copy.
 export const ENABLE_SYSPROMPT_PRESET = true;
 
@@ -1139,8 +1139,8 @@ export const ENABLE_DIAG_BODY_INJECT = true;
 // 注释对它完全透明；② 卡片显示正则把整块交给 $1 时，注释在渲染结果里【不可见】（实测 1734 张真卡：1724 张
 // 注释原样保留＝不可见、10 张连整块一起隐藏、0 张只剩半边）；③ 给撤销 / 重跑一个可精确定位的边界，于是
 // stripDiagPatchFromText 能把正文【逐字节】还原成插入前的样子。
-export const DIAG_PATCH_OPEN = '<!--so-diag-->';
-export const DIAG_PATCH_CLOSE = '<!--/so-diag-->';
+export const DIAG_PATCH_OPEN = '<!--pad-diag-->';
+export const DIAG_PATCH_CLOSE = '<!--/pad-diag-->';
 
 
 // 戏外守卫（1.32.0）总开关：普通聊天 + 剧情参谋的「高上下文续写失守」修复——transcript 数据
@@ -1172,7 +1172,7 @@ export const MVU_BLOCK_DIALECTS = [
     { wrapper: 'update', inner: ['json_patch', 'update_analysis'] },
 ];
 
-// 诊断模式「精选世界书条目」总开关（用户功能请求）。开时诊断模式多出一条选条目栏（#so-diag-bar）：
+// 诊断模式「精选世界书条目」总开关（用户功能请求）。开时诊断模式多出一条选条目栏（#pad-diag-bar）：
 // 可【按本聊天】挑选哪些世界书条目喂给诊断（手动 + 自动），无视条目在 ST 里的启用 / 禁用状态——
 // 解决「把变量规则条目禁用后诊断就看不到」与「全量太吵」的两难。关掉（=false）时：选条目栏不渲染、
 // 覆盖永不被读、两个开关被忽略，诊断完全退回原行为（worldInfoMode 扫描 + collectMvuUpdateRules）。
@@ -1219,9 +1219,9 @@ export const ENABLE_FIXSEL_CHAT_ENTRY = true;
 // false → 点选层 / 头部切换 / 贴底操作条一件不建、一个监听不挂、localStorage 一次不碰，卡与 1.78.0 逐字节
 // 相同。读者：fixSelResolveMode（模式解析）+ buildFixSelCard（建件与布线）+ openFixSelectCard（开卡套用）。
 export const ENABLE_FIX_TAP_SELECT = true;
-// 角色工坊（第 6 模式）总开关。关 → ⋯ 菜单不显示入口、toggleBuilder no-op、设置栏 #so-bld-bar 恒 display:none
-// （so-bld-on 永不加上，模式不可达）、侧聊流恒主流、草稿卡随隐藏栏不可见——整模式对用户完全隐形。
-// 【1.25.0 发布暂时下架整个模式】= false：本次随其它修复发布 Story Oracle，工坊（含用户角色分家 + v2 锻造提示词）
+// 角色工坊（第 6 模式）总开关。关 → ⋯ 菜单不显示入口、toggleBuilder no-op、设置栏 #pad-bld-bar 恒 display:none
+// （pad-bld-on 永不加上，模式不可达）、侧聊流恒主流、草稿卡随隐藏栏不可见——整模式对用户完全隐形。
+// 【1.25.0 发布暂时下架整个模式】= false：本次随其它修复发布 剧情推进，工坊（含用户角色分家 + v2 锻造提示词）
 // 留在代码里继续打磨；门控齐全、纯函数与单测照常存在（不依赖本旗）。打磨达标后拨回 true 即整模式复出。
 export const ENABLE_CHAR_BUILDER = true;
 // 角色工坊「用户角色分家」总开关（1.25.0，设计 docs/superpowers/specs/2026-07-08-builder-persona-split-design.md）：
@@ -1322,7 +1322,7 @@ export const ENABLE_WI_EJS_RENDER = true;
 export const BUILDER_LOOK_MUSTASK = '【外貌素材·必问】已有材料（用户描述、世界书、对话记录、角色卡）里还没有「一眼认得出TA」的外貌素材时，必须问过一次外貌特征才可以交付 CharBrief；问时顺带提醒用户：不给真素材，AI 写外貌爱给谁都安上伤疤、老茧这类通用件，TA 的日子留在身上的痕迹（常年做的活、常待的地方、打理自己的习惯）才认得出TA。不必第一轮就问、也别为它挤掉更要紧的缺口；用户答不上来或让你随意，就不再追问，在 desc 里记一句「外貌交给锻造从TA的经历推导」。';
 // 🌐 世界书范围「自定义」（ENABLE_WI_CUSTOM_PICK，1.81.0）：「世界书 / 知识库」下拉第五档——按【本聊天】记忆的
 // 多选书 + 逐条勾选，神谕只发勾选的条目（Discord 基米：全蓝灯书靠插件限流、神谕整本照发）。
-// 设计 docs/superpowers/specs/2026-09-13-wi-custom-scope-design.md。旗关：option 与 #so-wi-custom 不渲染、
+// 设计 docs/superpowers/specs/2026-09-13-wi-custom-scope-design.md。旗关：option 与 #pad-wi-custom 不渲染、
 // 任何来源的 'custom' 落回 'st'、四档出站字节与上一发布版相同。
 export const ENABLE_WI_CUSTOM_PICK = true;
 // 世界书「智能选书/选条」助手（ENABLE_LB_SMART_SELECT，2026-08-08）：📖 选择器工具栏里一个 🪄 入口 + 指令

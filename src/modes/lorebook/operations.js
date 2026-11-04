@@ -251,7 +251,7 @@ export function fuzzyReplace(content, anchor, replace) {
             return { result: src.slice(0, spanStart) + repl + src.slice(spanEnd), matched: true, spanStart, spanEnd, multi };
         }
     } catch (e) {
-        console.warn('[Story Oracle] patch anchor match failed:', e);
+        console.warn('[剧情推进] patch anchor match failed:', e);
     }
     return { result: src, matched: false };
 }
@@ -453,12 +453,12 @@ function lbOpVerdict(op, booksMap, scope, opts) {
 
 // 纯函数（可单测）：把 lbOpVerdict 判定压成一条预检行模型，供 DOM 薄接线渲染。line 复用 lbFormatApplyLine
 // （✓/⤫ 与应用结果同款）；note = 信息附注（改锚 / 同名转编辑 / 自动常驻）；warn = 警示附注（暗条目 / 常驻目标）。
-// cls：通过=so-lb-ok（带 warn 时 so-lb-warn）、未通过=so-lb-skip（灰）。
+// cls：通过=pad-lb-ok（带 warn 时 pad-lb-warn）、未通过=pad-lb-skip（灰）。
 export function lbVerdictRow(v) {
-    if (!v) return { ok: false, cls: 'so-lb-skip', line: '', note: '', warn: '' };
+    if (!v) return { ok: false, cls: 'pad-lb-skip', line: '', note: '', warn: '' };
     return {
         ok: !!v.ok,
-        cls: v.ok ? (v.warn ? 'so-lb-warn' : 'so-lb-ok') : 'so-lb-skip',
+        cls: v.ok ? (v.warn ? 'pad-lb-warn' : 'pad-lb-ok') : 'pad-lb-skip',
         line: lbFormatApplyLine({ ok: v.ok, label: v.label, reason: v.reason, chars: v.chars }),
         note: v.note || '',
         warn: v.warn || '',

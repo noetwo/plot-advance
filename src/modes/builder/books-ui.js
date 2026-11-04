@@ -13,12 +13,12 @@ let bldSelHydrated = false;
 // Fill the book checklist: every known book as a checkbox (active ones marked ★).
 /* ==== 角色工坊选书 / 选条目器（Task 4）====
  * 与世界书选条目器同构（★ 激活标记、失效 uid 剪除、Set/null 物化语义完全一致），只是
- * 用设置键 bldBooks、内存镜像 bldEntryFilter、`#so-bld-*` 元素 id，并去掉蓝 / 绿灯快捷键与
+ * 用设置键 bldBooks、内存镜像 bldEntryFilter、`#pad-bld-*` 元素 id，并去掉蓝 / 绿灯快捷键与
  * 内容预览开关（本模式只有 全选 / 全不选 + 文本筛选）。绝不改动任何 lb* 函数。 */
 
 // chips：把 BUILDER_SECTIONS 渲染成一排可点亮的部分标签；点一下翻转选择、持久化、重画。
 export function renderBuilderChips() {
-    const wrap = win?.querySelector('#so-bld-chips');
+    const wrap = win?.querySelector('#pad-bld-chips');
     if (!wrap) return;
     const s = getSettings();
     const v = BUILDER_VARIANTS[builderVariantKey(s)];
@@ -29,14 +29,14 @@ export function renderBuilderChips() {
         // 进阶三件（adv）前挂一条「简单/喜剧角色留空」标签——flex-basis:100% 另起一行，把进阶件视觉分组。
         if (sec.adv && !advTagShown) {
             const tag = document.createElement('span');
-            tag.className = 'so-bld-chips-advtag';
+            tag.className = 'pad-bld-chips-advtag';
             tag.textContent = '简单 / 喜剧调剂角色留空 ▸';
             wrap.appendChild(tag);
             advTagShown = true;
         }
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'so-bld-chip' + (sec.adv ? ' adv' : '') + (selected.has(sec.id) ? ' on' : '');
+        b.className = 'pad-bld-chip' + (sec.adv ? ' adv' : '') + (selected.has(sec.id) ? ' on' : '');
         b.textContent = sec.label;
         if (sec.desc) b.title = sec.desc;   // 桌面悬停说明；移动端走 ? 图例（toggleBuilderChipsLegend）
         b.addEventListener('click', () => {
@@ -54,7 +54,7 @@ export function renderBuilderChips() {
 
 // 章节图例：移动端没有 hover，「?」点开一份 label——desc 对照表（桌面也可用）。内容首次展开时才填。
 export function toggleBuilderChipsLegend() {
-    const box = win?.querySelector('#so-bld-chips-legend');
+    const box = win?.querySelector('#pad-bld-chips-legend');
     if (!box) return;
     if (box.style.display === 'none') {
         // 每次展开按当前变体重建（不同变体 chip 集不同——不能只填一次）。
@@ -65,13 +65,13 @@ export function toggleBuilderChipsLegend() {
             // #2：进阶三件（adv）默认关——顶部给一条归组指引（persona 变体无 adv 件，这条自然不出现）。
             const advLabels = advSecs.map((x) => x.label).join(' / ');
             const guide = document.createElement('div');
-            guide.className = 'so-bld-legend-guide';
+            guide.className = 'pad-bld-legend-guide';
             guide.textContent = `〔进阶三件〕${advLabels} 默认关——勾给有内在层次的角色（非喜剧调剂、非纯功能型）。简单直给的角色，一盘清爽的调色盘就够了；勾了进阶件，模型会照做、硬造出它本没有的复杂。`;
             box.appendChild(guide);
         }
         for (const sec of builderVisibleSections(v.sections)) {
             const row = document.createElement('div');
-            row.className = 'so-bld-legend-row';
+            row.className = 'pad-bld-legend-row';
             row.innerHTML = `<b>${sec.label}</b>——${sec.desc || ''}`;
             box.appendChild(row);
         }
@@ -88,7 +88,7 @@ export async function populateBuilderBooks(announce) {
         hydrateBuilderEntrySelection(getSettings().bldEntrySel);
         bldSelHydrated = true;
     }
-    const listEl = win.querySelector('#so-bld-book-list');
+    const listEl = win.querySelector('#pad-bld-book-list');
     if (!listEl) return;
     const s = getSettings();
     let active = [];
@@ -108,19 +108,19 @@ export async function populateBuilderBooks(announce) {
     const activeSet = new Set(active);
     listEl.innerHTML = '';
     if (!all.length) {
-        listEl.innerHTML = '<div class="so-lb-ent-empty">（没有找到任何世界书。）</div>';
+        listEl.innerHTML = '<div class="pad-lb-ent-empty">（没有找到任何世界书。）</div>';
     } else {
         for (const name of all) {
             const row = document.createElement('label');
-            row.className = 'so-lb-book-opt';
+            row.className = 'pad-lb-book-opt';
             row.dataset.book = name;
             const star = activeSet.has(name) ? '★ ' : '';
-            row.innerHTML = `<input type="checkbox"${chosen.has(name) ? ' checked' : ''}><span class="so-lb-book-name"></span>`;
-            row.querySelector('.so-lb-book-name').textContent = star + name;
+            row.innerHTML = `<input type="checkbox"${chosen.has(name) ? ' checked' : ''}><span class="pad-lb-book-name"></span>`;
+            row.querySelector('.pad-lb-book-name').textContent = star + name;
             listEl.appendChild(row);
         }
     }
-    const bf = win.querySelector('#so-bld-book-filter');
+    const bf = win.querySelector('#pad-bld-book-filter');
     if (bf && bf.value) filterBldBooks(bf.value);
     updateBldBookSummary();
     populateBuilderEntries();
@@ -131,7 +131,7 @@ export async function populateBuilderBooks(announce) {
 // 旧文案「全部激活」会被读成「选中全部世界书」（用户误读，Prince 转达，1.19.2）——语义其实是
 // 「跟随当前激活的那些」，措辞改为 当前激活的。
 function updateBldBookSummary() {
-    const sum = win.querySelector('#so-bld-bookpick-sum');
+    const sum = win.querySelector('#pad-bld-bookpick-sum');
     if (!sum) return;
     const t = getSettings().bldBooks;
     sum.textContent = (Array.isArray(t) && t.length) ? `世界书：已选 ${t.length} 本` : '世界书：当前激活的';
@@ -141,9 +141,9 @@ function updateBldBookSummary() {
 export function onBldBookSelectionChange() {
     const s = getSettings();
     const picked = [];
-    for (const box of win.querySelectorAll('#so-bld-book-list input[type="checkbox"]')) {
+    for (const box of win.querySelectorAll('#pad-bld-book-list input[type="checkbox"]')) {
         if (box.checked) {
-            const row = box.closest('.so-lb-book-opt');
+            const row = box.closest('.pad-lb-book-opt');
             if (row && row.dataset.book) picked.push(row.dataset.book);
         }
     }
@@ -155,16 +155,16 @@ export function onBldBookSelectionChange() {
 
 // 角色工坊选书器的书名搜索（同 filterLbBooks，纯可见性，绝不改选择）。
 export function filterBldBooks(q) {
-    const list = win.querySelector('#so-bld-book-list');
+    const list = win.querySelector('#pad-bld-book-list');
     if (!list) return;
     let anyRow = false, anyVisible = false;
-    for (const row of list.querySelectorAll('.so-lb-book-opt')) {
+    for (const row of list.querySelectorAll('.pad-lb-book-opt')) {
         anyRow = true;
         const show = bookNameMatchesQuery(row.dataset.book, q);
         row.style.display = show ? '' : 'none';
         if (show) anyVisible = true;
     }
-    const empty = win.querySelector('#so-bld-book-empty');
+    const empty = win.querySelector('#pad-bld-book-empty');
     if (empty) empty.hidden = !(anyRow && !anyVisible);
 }
 
@@ -173,7 +173,7 @@ export function filterBldBooks(q) {
 // 否则用户第一次撤勾就会把整本的禁用条目一并变成「显式勾上」（1.82.0）。
 function allBldEntryUidsForBook(book, enabledOnly) {
     const uids = [];
-    for (const row of win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#pad-bld-entry-list .pad-lb-ent')) {
         if ((row.dataset.book || '') !== (book || '')) continue;
         if (enabledOnly && row.dataset.type === 'off') continue;
         const box = row.querySelector('input[type="checkbox"]');
@@ -186,7 +186,7 @@ function allBldEntryUidsForBook(book, enabledOnly) {
 // （1.82.0；体积读数照 1.62.0 的 lbShownEntryCosts 同款把成本挂在行上，勾选时不必重读整本书）。
 function bldShownEntryRows() {
     const out = [];
-    for (const row of win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#pad-bld-entry-list .pad-lb-ent')) {
         const box = row.querySelector('input[type="checkbox"]');
         if (!box) continue;
         out.push({
@@ -218,7 +218,7 @@ function refreshBldEntriesSummary() {
         if (now instanceof Set) { selected += now.size; anyFiltered = true; }
         else selected += t.enabled.length;
     }
-    const summary = win.querySelector('#so-bld-entries-sum');
+    const summary = win.querySelector('#pad-bld-entries-sum');
     if (!summary) return;
     // 体积读数（1.82.0，照搬 1.62.0 的世界书汇总行）：**求和排在上面的折叠归一之后**，否则
     // 读数与条数各说各话。拆两个 span 只为让估算那一段能单独标红；两段都走 textContent。
@@ -226,7 +226,7 @@ function refreshBldEntriesSummary() {
     const countEl = document.createElement('span');
     countEl.textContent = bldEntriesCountText(total, selected, anyFiltered) + ' · ';
     const sizeEl = document.createElement('span');
-    sizeEl.className = 'so-lb-size' + (lbSizeIsHuge(tok) ? ' so-lb-size-huge' : '');
+    sizeEl.className = 'pad-lb-size' + (lbSizeIsHuge(tok) ? ' pad-lb-size-huge' : '');
     sizeEl.textContent = formatLbSizeEstimate(tok);
     summary.textContent = '';
     summary.appendChild(countEl);
@@ -252,7 +252,7 @@ function toggleBldEntry(book, uid, checked) {
 // 显式全集恰等于启用集，refreshBldEntriesSummary 会自然把它折回 null，行为与从前一致。
 export function setAllBldEntries(on) {
     const perBook = new Map();   // book -> Set of uids（on=false 时留空集 = 一条不发）
-    for (const row of win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#pad-bld-entry-list .pad-lb-ent')) {
         const box = row.querySelector('input[type="checkbox"]');
         if (box) box.checked = on;
         const b = row.dataset.book || '';
@@ -265,9 +265,9 @@ export function setAllBldEntries(on) {
 }
 
 // 只选中某一类灯的条目：'blue'（常驻）/ 'green'（关键词触发），跨所有展示的书，不含已禁用。
-// 与 setLbEntriesByType 同构，作用于 bldEntryFilter + #so-bld-entry-list（无「仅禁用」按 Prince 指定）。
+// 与 setLbEntriesByType 同构，作用于 bldEntryFilter + #pad-bld-entry-list（无「仅禁用」按 Prince 指定）。
 export function setBldEntriesByType(type) {
-    const rows = [...win.querySelectorAll('#so-bld-entry-list .so-lb-ent')];
+    const rows = [...win.querySelectorAll('#pad-bld-entry-list .pad-lb-ent')];
     if (!rows.length) return;
     const perBook = new Map();   // book -> Set of matching uids
     for (const row of rows) {
@@ -284,10 +284,10 @@ export function setBldEntriesByType(type) {
 }
 
 // 「全选筛选」：把选择设为【当前筛选 / 搜索后仍可见】的那些条目（每本书各自计算）；被筛掉的一律不选。
-// 与 selectFilteredLbEntries 同构，作用于 bldEntryFilter + #so-bld-entry-list。
+// 与 selectFilteredLbEntries 同构，作用于 bldEntryFilter + #pad-bld-entry-list。
 export function selectFilteredBldEntries() {
     const perBook = new Map();   // book -> Set of visible uids
-    for (const row of win.querySelectorAll('#so-bld-entry-list .so-lb-ent')) {
+    for (const row of win.querySelectorAll('#pad-bld-entry-list .pad-lb-ent')) {
         const book = row.dataset.book || '';
         if (!perBook.has(book)) perBook.set(book, new Set());
         const box = row.querySelector('input[type="checkbox"]');
@@ -302,9 +302,9 @@ export function selectFilteredBldEntries() {
 
 // 「全选筛选」只在有搜索词时才有意义（否则等于「全选」）—— 没搜索词时禁用它。
 export function updateBldFilteredBtn() {
-    const btn = win.querySelector('#so-bld-ent-filtered');
+    const btn = win.querySelector('#pad-bld-ent-filtered');
     if (!btn) return;
-    const f = win.querySelector('#so-bld-ent-filter');
+    const f = win.querySelector('#pad-bld-ent-filter');
     btn.disabled = !(f && f.value && f.value.trim());
 }
 
@@ -312,7 +312,7 @@ export function updateBldFilteredBtn() {
 // 填 / 刷条目清单：单本 -> 该书条目；多本（或选“全部激活”解析出多本）-> 每本一个书头分组。
 // 语义同 populateLorebookEntries，只是无「内容预览」行、无 .shown 盒子（原生 <details> 折叠）。
 async function populateBuilderEntries() {
-    const list = win.querySelector('#so-bld-entry-list');
+    const list = win.querySelector('#pad-bld-entry-list');
     if (!list) return;
     const s = getSettings();
     let books;
@@ -323,7 +323,7 @@ async function populateBuilderEntries() {
     if (!books.length) { list.innerHTML = ''; refreshBldEntriesSummary(); return; }
     const grouped = books.length > 1;   // per-book headers whenever more than one book is shown
 
-    list.innerHTML = '<div class="so-lb-ent-empty">读取条目中…</div>';
+    list.innerHTML = '<div class="pad-lb-ent-empty">读取条目中…</div>';
     const mod = await getWiEditApi();
     const loaded = [];   // [{ name, entries }]
     let selPruned = false;   // T12：真剪掉过失效 uid 时才回写设置（末尾折叠后一次）
@@ -351,7 +351,7 @@ async function populateBuilderEntries() {
     const totalEntries = loaded.reduce((n, b) => n + b.entries.length, 0);
     list.innerHTML = '';
     if (!totalEntries) {
-        list.innerHTML = `<div class="so-lb-ent-empty">（${grouped ? '当前激活的世界书暂无条目' : '此世界书暂无条目'}。）</div>`;
+        list.innerHTML = `<div class="pad-lb-ent-empty">（${grouped ? '当前激活的世界书暂无条目' : '此世界书暂无条目'}。）</div>`;
         refreshBldEntriesSummary();
         return;
     }
@@ -359,16 +359,16 @@ async function populateBuilderEntries() {
     for (const { name, entries } of loaded) {
         if (grouped) {
             const head = document.createElement('div');
-            head.className = 'so-lb-book-head';
+            head.className = 'pad-lb-book-head';
             head.dataset.book = name;
             head.dataset.hay = name.toLowerCase();
-            head.innerHTML = '<i class="fa-solid fa-book"></i><span class="so-lb-book-name"></span>' +
-                `<span class="so-lb-book-count">${entries.length}</span>`;
-            head.querySelector('.so-lb-book-name').textContent = name;
+            head.innerHTML = '<i class="fa-solid fa-book"></i><span class="pad-lb-book-name"></span>' +
+                `<span class="pad-lb-book-count">${entries.length}</span>`;
+            head.querySelector('.pad-lb-book-name').textContent = name;
             list.appendChild(head);
             if (!entries.length) {
                 const empty = document.createElement('div');
-                empty.className = 'so-lb-ent-empty so-lb-ent-empty-sub';
+                empty.className = 'pad-lb-ent-empty pad-lb-ent-empty-sub';
                 empty.dataset.book = name;
                 empty.dataset.hay = name.toLowerCase();
                 empty.textContent = '（此书暂无条目）';
@@ -384,22 +384,22 @@ async function populateBuilderEntries() {
             const keys = Array.isArray(e.key) ? e.key.filter(Boolean).join(', ') : '';
             const typeKey = e.disable ? 'off' : (e.constant ? 'blue' : 'green');
             const row = document.createElement('label');
-            row.className = 'so-lb-ent';
+            row.className = 'pad-lb-ent';
             row.dataset.book = name;
             row.dataset.hay = `${grouped ? name + ' ' : ''}${e.uid} ${title} ${keys}`.toLowerCase();
             row.dataset.type = typeKey;
             // 体积读数（1.82.0）：这一条真发出去要多少 token，建行时算一次挂在行上（同 1.62.0 世界书选择器）。
             row.dataset.tok = String(lbEntryTokenCost(e));
             row.innerHTML = `<input type="checkbox" data-uid="${e.uid}"${checked ? ' checked' : ''}>` +
-                `<span class="so-lb-ent-type so-lb-type-${typeKey}"></span>` +
-                `<span class="so-lb-ent-uid">#${e.uid}</span><span class="so-lb-ent-title"></span>`;
-            row.querySelector('.so-lb-ent-title').textContent = title;
+                `<span class="pad-lb-ent-type pad-lb-type-${typeKey}"></span>` +
+                `<span class="pad-lb-ent-uid">#${e.uid}</span><span class="pad-lb-ent-title"></span>`;
+            row.querySelector('.pad-lb-ent-title').textContent = title;
             row.querySelector('input').addEventListener('change', (ev) => toggleBldEntry(name, e.uid, ev.target.checked));
             list.appendChild(row);
         }
     }
-    const f = win.querySelector('#so-bld-ent-filter');
-    if (f && f.value) filterBookEntries('#so-bld-entry-list', f.value, updateBldFilteredBtn, win);
+    const f = win.querySelector('#pad-bld-ent-filter');
+    if (f && f.value) filterBookEntries('#pad-bld-entry-list', f.value, updateBldFilteredBtn, win);
     updateBldFilteredBtn();
     refreshBldEntriesSummary();
     if (selPruned) persistBldEntrySel();   // T12：把剪除失效 uid 后的干净选择落盘

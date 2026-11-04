@@ -55,10 +55,10 @@ export function insertDiagPatchIntoBlock(text, payload) {
     return s.slice(0, at + tail.index) + payload + s.slice(at + tail.index);
 }
 
-// 纯函数：把我们插进去的那段（含定界注释）整段摘掉，令正文【逐字节】回到插入前。幂等；没插过就原样返回。可单测。
+// 纯函数：把新旧两代定界注释包住的诊断补丁整段摘掉，令正文【逐字节】回到插入前。幂等；没插过就原样返回。可单测。
 export function stripDiagPatchFromText(text) {
     const s = String(text == null ? '' : text);
-    return s.replace(new RegExp(DIAG_PATCH_OPEN + '[\\s\\S]*?' + DIAG_PATCH_CLOSE + '\\n?', 'g'), '');
+    return s.replace(/<!--(?:pad|so)-diag-->[\s\S]*?<!--\/(?:pad|so)-diag-->\n?/g, '');
 }
 
 // 纯函数：把我们自己会发的三种 op（replace / add / remove）按【MVU 的语义】重放到 base 上，返回新状态。

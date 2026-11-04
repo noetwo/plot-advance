@@ -51,9 +51,9 @@ export async function loadRegexEngine() {
     try {
         const mod = await importHostModule('/scripts/extensions/regex/engine.js');
         regexEngine = (mod && mod.getRegexedString && mod.regex_placement) ? mod : false;
-        if (!regexEngine) console.warn('[Story Oracle] regex engine loaded but missing exports; sending raw text.');
+        if (!regexEngine) console.warn('[剧情推进] regex engine loaded but missing exports; sending raw text.');
     } catch (e) {
-        console.warn('[Story Oracle] Could not load regex engine; sending raw messages.', e);
+        console.warn('[剧情推进] Could not load regex engine; sending raw messages.', e);
         regexEngine = false;
     }
     return regexEngine;
@@ -65,7 +65,7 @@ export async function loadWorldInfoModule() {
         const mod = await importHostModule('/scripts/world-info.js');
         worldInfoModule = (mod && mod.getSortedEntries) ? mod : false;
     } catch (e) {
-        console.warn('[Story Oracle] Could not load world-info module.', e);
+        console.warn('[剧情推进] Could not load world-info module.', e);
         worldInfoModule = false;
     }
     return worldInfoModule;
@@ -77,7 +77,7 @@ async function loadScriptCore() {
     try {
         scriptCore = await importHostModule('/script.js');
     } catch (e) {
-        console.warn('[Story Oracle] Could not load /script.js for context size.', e);
+        console.warn('[剧情推进] Could not load /script.js for context size.', e);
         scriptCore = false;
     }
     return scriptCore;
@@ -159,7 +159,7 @@ export async function createPersonaWithAvatar(name, description) {
         fd.append('overwrite_name', avatarId);
         const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders({ omitContentType: true }) : {};
         await hostFetch('/api/avatars/upload', { method: 'POST', headers, body: fd });
-    } catch (e) { console.warn('[Story Oracle] 默认头像上传失败（Persona 数据已写入）', e); }
+    } catch (e) { console.warn('[剧情推进] 默认头像上传失败（Persona 数据已写入）', e); }
     try { await mod.getUserAvatars(true, avatarId); } catch (e) { /* 列表刷新失败不致命 */ }
     return avatarId;
 }
@@ -319,7 +319,7 @@ async function renderWiEjs(text, entry, opts) {
         const rendered = await ejs.evalTemplate(out, env);
         if (typeof rendered === 'string') out = rendered;        // 非字符串返回 → 保留展宏 / 原文
     } catch (e) {
-        console.warn('[Story Oracle] 世界书 EJS 渲染失败（退回未执行文本）：', e);
+        console.warn('[剧情推进] 世界书 EJS 渲染失败（退回未执行文本）：', e);
         return out;                                              // 退回该步，不崩整块
     }
     return out;
@@ -466,7 +466,7 @@ export async function buildWorldInfo(forceMode, extraScanText, opts) {
         // Mechanism rules are Diagnose-only; see stripMvuRuleContents.
         return await stripMvuRuleContents(stParts.join('\n\n').trim());
     } catch (e) {
-        console.warn('[Story Oracle] World info build failed:', e);
+        console.warn('[剧情推进] World info build failed:', e);
         return '';
     }
 }
@@ -542,7 +542,7 @@ export async function buildWorldInfoSplit(forceMode, extraScanText, opts) {
             after: await stripMvuRuleContents(afterR.join('\n\n').trim()),
         };
     } catch (e) {
-        console.warn('[Story Oracle] World info split failed:', e);
+        console.warn('[剧情推进] World info split failed:', e);
         return { before: '', after: '' };
     }
 }
@@ -594,7 +594,7 @@ async function collectMvuRuleContents() {
         const sorted = await mod.getSortedEntries();
         names = [...new Set((sorted || []).map((e) => e && e.world).filter(Boolean))];
     } catch (e) {
-        console.warn('[Story Oracle] Could not enumerate world books for MVU rules:', e);
+        console.warn('[剧情推进] Could not enumerate world books for MVU rules:', e);
         return [];
     }
 

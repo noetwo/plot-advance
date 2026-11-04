@@ -341,30 +341,30 @@ export function renderFixCard(assistantEl, contentEl, aEntry, finalText, fixCont
     const html = renderFixResultHtml(parsed.fixed);
     if (html != null) {
         contentEl.innerHTML = html;
-        contentEl.classList.add('so-rendered');
+        contentEl.classList.add('pad-rendered');
         contentEl.style.whiteSpace = 'normal';
     } else {
         contentEl.textContent = parsed.fixed;
     }
     if (fixNoOp(fc.targetProse, parsed.fixed)) {
         const note = document.createElement('div');
-        note.className = 'so-fix-changes';
+        note.className = 'pad-fix-changes';
         note.textContent = '模型没有做出改动——它认为按当前要求无需修改。可换一句更具体的指令、或调整目标后再试。';
-        assistantEl.querySelector('.so-bubble')?.appendChild(note);
+        assistantEl.querySelector('.pad-bubble')?.appendChild(note);
         return 'ok';
     }
     if (parsed.problems) {
         const note = document.createElement('div');
-        note.className = 'so-fix-changes';
+        note.className = 'pad-fix-changes';
         note.textContent = '发现并修正：\n' + parsed.problems;
-        assistantEl.querySelector('.so-bubble')?.appendChild(note);
+        assistantEl.querySelector('.pad-bubble')?.appendChild(note);
     }
     const thinkNote = fc.thinkProtected > 0 ? fixThinkProtectNote(fc.thinkProtected) : '';
     if (thinkNote) {
         const tn = document.createElement('div');
-        tn.className = 'so-fix-changes so-fix-think-note';
+        tn.className = 'pad-fix-changes pad-fix-think-note';
         tn.textContent = thinkNote;
-        assistantEl.querySelector('.so-bubble')?.appendChild(tn);
+        assistantEl.querySelector('.pad-bubble')?.appendChild(tn);
     }
     registerFixApply(aEntry, parsed, fc.originalReply, fc.targetIdx, fc.extraKeep, fc.scope, fc.captured, undefined,
         [parsed.problems ? '发现并修正：\n' + parsed.problems : '', thinkNote].filter(Boolean).join('\n'));

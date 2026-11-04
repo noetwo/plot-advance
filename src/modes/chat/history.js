@@ -77,9 +77,9 @@ export function registerFixApply(entry, parsed, originalReply, targetIdx, keepSe
 export function rehangFixApply(assistantEl, fa, entry) {
     if (fa.noteText) {
         const note = hostDocument().createElement('div');
-        note.className = 'so-fix-changes';
+        note.className = 'pad-fix-changes';
         note.textContent = fa.noteText;
-        assistantEl.querySelector('.so-bubble')?.appendChild(note);
+        assistantEl.querySelector('.pad-bubble')?.appendChild(note);
     }
     // 1.33.2：applied 旗标透传——应用过的稿子以「✓ 已应用」态重生（防重复 swipe）；entry 让重挂后
     // 首次点「应用」也能给注册表打旗标。
@@ -131,7 +131,7 @@ function downloadTextFile(filename, text) {
         setTimeout(() => { try { urlApi.revokeObjectURL(url); } catch (e) { /* 已释放 */ } }, 4000);
         return true;
     } catch (e) {
-        console.error('[Story Oracle] 导出对话失败', e);
+        console.error('[剧情推进] 导出对话失败', e);
         showToast('error', '导出失败——浏览器拒绝了这次下载。', '剧情推进');
         return false;
     }
@@ -174,7 +174,7 @@ export function exportConvo() {
 
 /* 📥📤 导出 / 导入入口的显隐 —— 全仓【唯一写者】。1.61.0 起 ⋯ 工具菜单不再设这两项（Prince 定案），
    入口只剩两处：AI 气泡行上那对小按钮（addMessage）＋ 空页时的空态入口（renderEmptyState），
-   两处都带 `.so-convio-btn` 类，本函数凭它一扫而过。
+   两处都带 `.pad-convio-btn` 类，本函数凭它一扫而过。
 
    ⚠ 为什么不能「只在建的时候按模式判一次就算」：那等于把正确性押在「切模式必然重画消息区」上，
    而这条【不成立】——换房才重画（syncConvoStream 同键即 `return false`），ENABLE_MODE_ROOMS
@@ -184,10 +184,10 @@ export function exportConvo() {
    空态入口另有 render-time 判定（空态本就每次切模式重画）。
    root 传具体气泡 = 只定它的初值（addMessage 用）；传 null = 扫整个消息区（切模式用）。 */
 export function soApplyConvoIoVisual(root) {
-    const scope = root || (win && win.querySelector('#so-messages'));
+    const scope = root || (win && win.querySelector('#pad-messages'));
     if (!scope || typeof scope.querySelectorAll !== 'function') return;
     const on = convoExportAllowed(currentOracleMode());
-    for (const b of scope.querySelectorAll('.so-convio-btn')) b.style.display = on ? '' : 'none';
+    for (const b of scope.querySelectorAll('.pad-convio-btn')) b.style.display = on ? '' : 'none';
 }
 
 /* ── 📤 导入对话（1.61.0）—— 导出的逆运算。纯核 = parseConvoExportMd（在 buildConvoExportMd 一带）。
@@ -218,7 +218,7 @@ function soConvoImportInput() {
     const inp = document.createElement('input');
     inp.type = 'file';
     inp.accept = '.md,.txt,text/markdown';
-    inp.id = 'so-convo-import-file';
+    inp.id = 'pad-convo-import-file';
     inp.style.display = 'none';
     inp.addEventListener('change', () => {
         const f = inp.files && inp.files[0];
@@ -247,7 +247,7 @@ export function importConvo() {
     }
     try { soConvoImportInput().click(); }
     catch (e) {
-        console.error('[Story Oracle] 打开文件选择器失败', e);
+        console.error('[剧情推进] 打开文件选择器失败', e);
         showToast('error', '打不开文件选择器。', '剧情推进');
     }
 }
@@ -264,7 +264,7 @@ async function soImportConvoFile(file) {
     let text = '';
     try { text = await soReadTextFile(file); }
     catch (e) {
-        console.error('[Story Oracle] 读取导入文件失败', e);
+        console.error('[剧情推进] 读取导入文件失败', e);
         showToast('error', '读不了这个文件。', '剧情推进');
         return;
     }
@@ -320,17 +320,17 @@ function appendImportedConvoTurns(turns) {
 // 打开运行概要编辑器（叠层，仿 openDebug）。
 export function openSummary() {
     if (!win) return;
-    const ta = win.querySelector('#so-summary-text');
+    const ta = win.querySelector('#pad-summary-text');
     if (ta) ta.value = getSummary();
     updateSummaryIndicator(ta ? ta.value : getSummary());
-    win.querySelector('#so-summary').classList.add('open');
+    win.querySelector('#pad-summary').classList.add('open');
     if (ta) ta.focus();
 }
 
 // 把本聊天的运行概要载入文本框 + 刷新字数 / 图标小红点。切换聊天 / 首次载入时调用。
 export function refreshSummaryUI() {
     if (!win) return;
-    const ta = win.querySelector('#so-summary-text');
+    const ta = win.querySelector('#pad-summary-text');
     const text = getSummary();
     if (ta && hostDocument().activeElement !== ta) ta.value = text;   // 别在用户正打字时覆盖
     updateSummaryIndicator(text);
@@ -340,9 +340,9 @@ export function refreshSummaryUI() {
 export function updateSummaryIndicator(text) {
     if (!win) return;
     const t = String(text == null ? getSummary() : text);
-    const btn = win.querySelector('#so-summary-btn');
-    if (btn) btn.classList.toggle('so-has-summary', !!t.trim());
-    const count = win.querySelector('#so-summary-count');
+    const btn = win.querySelector('#pad-summary-btn');
+    if (btn) btn.classList.toggle('pad-has-summary', !!t.trim());
+    const count = win.querySelector('#pad-summary-count');
     if (count) count.textContent = t.trim() ? `${t.length} 字` : '（空——不会注入）';
 }
 

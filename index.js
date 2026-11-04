@@ -3,8 +3,8 @@ import { getHostGlobal } from './src/st/host.js';
 
 getHostGlobal('jQuery')(() => {
     try {
-        init(import.meta.url);
+        init();
     } catch (e) {
-        console.error('[Story Oracle] init failed:', e);
+        console.error('[剧情推进] init failed:', e);
     }
 });

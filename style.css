@@ -1,4 +1,4 @@
-/* Story Oracle styles — feature-split; import order preserves the original cascade. */
+/* 剧情推进 styles — feature-split; import order preserves the original cascade. */
 
 @import url("./css/ui/window.css");
 @import url("./css/ui/header.css");

@@ -25,7 +25,7 @@ function soReadZodSchema(mvuData) {
     const miss = () => {
         if (!soZodReadWarned) {
             soZodReadWarned = true;
-            console.warn('[Story Oracle] 🩺 这张卡挂了 mvu_zod，但没能从酒馆助手读到它的变量规则（酒馆助手版本变化？）——诊断按原样工作，不做 schema 预检。');
+            console.warn('[剧情推进] 🩺 这张卡挂了 mvu_zod，但没能从酒馆助手读到它的变量规则（酒馆助手版本变化？）——诊断按原样工作，不做 schema 预检。');
         }
         return null;
     };
@@ -472,7 +472,7 @@ export async function maybeRunSaveHealth(reason) {
         }
         return h;
     } catch (e) {
-        console.warn('[Story Oracle] 🩺 存档检查失败（不影响诊断）：', e);
+        console.warn('[剧情推进] 🩺 存档检查失败（不影响诊断）：', e);
         if (reason === 'button') {
             try { appendNoteToRoom('diagnose', { id: nextCid(), role: 'note', content: '🩺 存档检查失败：' + (e && e.message ? e.message : String(e)) }); } catch (e2) { /* ignore */ }
         }
@@ -511,7 +511,7 @@ function diagFocusPathOf(segs, stat) {
 // 存档检查记录下的按钮：每一处一个「在变量编辑器里打开这一格」+ 折叠的技术细节。字段名 / 值来自角色卡 → 只走 textContent。
 export function addSaveHealthControls(wrap, info) {
     const list = document.createElement('div');
-    list.className = 'so-apply-bar so-health-bar';
+    list.className = 'pad-apply-bar pad-health-bar';
     if (ENABLE_MVU_EDITOR) {
         for (const f of (info.findings || [])) {
             const row = document.createElement('div');
@@ -519,7 +519,7 @@ export function addSaveHealthControls(wrap, info) {
             lab.textContent = diagFieldLabel(f.segs) + ' ';
             const b = document.createElement('button');
             b.type = 'button';
-            b.className = 'so-lb-mini';
+            b.className = 'pad-lb-mini';
             b.textContent = '在变量编辑器里打开这一格';
             if (f.now === undefined) continue;   // 缺了的一格在编辑器里没有行可跳（编辑器不新建字段）
             const focusPath = Array.isArray(f.focus) ? f.focus : diagFocusPathOf(f.segs);
@@ -824,7 +824,7 @@ export function repairDiagPatch(patchBlock, stat) {
             }
         }
     } catch (e) {
-        console.warn('[Story Oracle] 诊断补丁修复流水线出错（按未修处理，绝不改写模型原文）：', e);
+        console.warn('[剧情推进] 诊断补丁修复流水线出错（按未修处理，绝不改写模型原文）：', e);
         return { text: original, fixed: 0, tag: 0, closetag: 0, wrap: 0, rooted: 0, slash: 0, verb: 0, delta: 0, vwd: 0, move: 0, dropped: 0 };
     }
     out.fixed = out.tag + out.closetag + out.wrap + out.rooted + out.slash + out.verb + out.delta + out.vwd + out.move + out.dropped;

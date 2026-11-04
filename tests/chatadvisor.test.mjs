@@ -119,7 +119,7 @@ function assistantElement() {
         style: {},
         classList: { add() {}, remove() {} },
     };
-    return { content, element: { querySelector: (selector) => selector === '.so-content' ? content : null } };
+    return { content, element: { querySelector: (selector) => selector === '.pad-content' ? content : null } };
 }
 
 const sendSettings = (mode, stream, sendTemperature) => ({

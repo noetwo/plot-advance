@@ -1,9 +1,9 @@
-/* —— 自定义人格编辑器（1.39.0）——内联于设置面板滚动区（非覆盖卡，无需 #so-cur-card 骨架/逃生 ✕） */
-#so-persona-editor { border: 1px solid rgba(var(--so-ink), 0.12); border-radius: 8px; padding: 8px; margin: 6px 0; display: flex; flex-direction: column; gap: 6px; }
-.so-pe-field { display: flex; flex-direction: column; gap: 3px; }
-.so-pe-field > span { opacity: 0.85; font-size: 0.92em; }
-#so-persona-editor textarea { width: 100%; box-sizing: border-box; resize: vertical; }
-.so-pe-btns { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.so-pe-btns button { min-height: 32px; }   /* 移动端点击目标（1.37.1 先例） */
-.so-pe-spacer { flex: 1 1 auto; }
+/* —— 自定义人格编辑器（1.39.0）——内联于设置面板滚动区（非覆盖卡，无需 #pad-cur-card 骨架/逃生 ✕） */
+#pad-persona-editor { border: 1px solid rgba(var(--pad-ink), 0.12); border-radius: 8px; padding: 8px; margin: 6px 0; display: flex; flex-direction: column; gap: 6px; }
+.pad-pe-field { display: flex; flex-direction: column; gap: 3px; }
+.pad-pe-field > span { opacity: 0.85; font-size: 0.92em; }
+#pad-persona-editor textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.pad-pe-btns { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.pad-pe-btns button { min-height: 32px; }   /* 移动端点击目标（1.37.1 先例） */
+.pad-pe-spacer { flex: 1 1 auto; }
 

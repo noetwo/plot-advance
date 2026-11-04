@@ -7,7 +7,7 @@ import { wantAutoDetail } from '../advisor/story-path.js';
 import { chatMsgCount, fixUsePresetFor, pathIsMulti, pathProgressLabel, pathSpeedKey, resolveFixAutoPrompt } from '../fix/templates.js';
 import { lbFormatApplyLine } from '../lorebook/operations.js';
 import { buildAdvisorPresetMessages, buildBuilderPresetMessages, buildDiagnosePresetMessages, buildFixPresetMessages, buildLorebookPresetMessages, buildPresetMessages } from '../../presets/messages.js';
-import { ADVISOR_SPEEDS, ENABLE_BBS_BRIDGE, ENABLE_FIX_CUSTOM_TASK, ENABLE_LWB_BRIDGE, ENABLE_OFFSTAGE_GUARD, MVU_BLOCK_DIALECTS } from '../../prompts/builtins.js';
+import { ADVISOR_SPEEDS, ENABLE_BBS_BRIDGE, ENABLE_FIX_CUSTOM_TASK, ENABLE_LWB_BRIDGE, ENABLE_OFFSTAGE_GUARD, MODULE, MVU_BLOCK_DIALECTS } from '../../prompts/builtins.js';
 import { buildPersonaBlock, mvuBlockRegex, mvuDialectInnerOk } from '../../prompts/helpers.js';
 import { P, buildSystemPrompt, wrapTranscriptEnvelope } from '../../prompts/registry.js';
 import { locateTagOpen } from '../../ui/messages.js';
@@ -72,7 +72,7 @@ function getExternalWorldBlocks() {
                 blocks.push({ name: '世界引擎（World Engine）', text: JSON.stringify(state, null, 2) });
             }
         }
-    } catch (e) { console.warn('[Story Oracle] 读取世界引擎状态失败:', e); }
+    } catch (e) { console.warn('[剧情推进] 读取世界引擎状态失败:', e); }
 
     // (2) 通用上下文提供者注册表（任何扩展可自行注册）
     try {
@@ -87,10 +87,10 @@ function getExternalWorldBlocks() {
                     if (text && text.trim()) {
                         blocks.push({ name: String(p.name || '外部扩展'), text: text });
                     }
-                } catch (e) { console.warn('[Story Oracle] 外部上下文提供者出错:', p && p.name, e); }
+                } catch (e) { console.warn('[剧情推进] 外部上下文提供者出错:', p && p.name, e); }
             }
         }
-    } catch (e) { console.warn('[Story Oracle] 读取上下文提供者注册表失败:', e); }
+    } catch (e) { console.warn('[剧情推进] 读取上下文提供者注册表失败:', e); }
 
     return blocks; // [{ name, text }, ...]
 }
@@ -140,7 +140,7 @@ export function getBbsHistoryText() {
         const t = (h && typeof h.relativeText === 'string') ? h.relativeText.trim() : '';
         return t;
     } catch (e) {
-        console.warn('[Story Oracle] 读取柏宝书历史摘要失败（本次跳过）：', e);
+        console.warn('[剧情推进] 读取柏宝书历史摘要失败（本次跳过）：', e);
         return '';
     }
 }
@@ -168,7 +168,7 @@ function composeSummaryWithBbs(userText) {
 // 取数与柏宝书不同：小白X 无同步公开 API，其总结只在主聊天生成时写进公共槽、生成完即删。故读取器读的是
 // lwbSummaryCache（由抓拍钩子 / metadata 回填 / 冷启动暖填充），而非现调 API。格式化 / 信封 / 插桩全镜像柏宝书。
 const LWB_EXT_PROMPT_KEY = 'LittleWhiteBox_StorySummary';   // 小白X 注入公共槽的 key（其内部常量，硬编码）
-const LWB_SNAPSHOT_META_KEY = 'storyOracle_lwbSummary';     // 抓拍持久化到 chat_metadata 的 key（(a)）
+const LWB_SNAPSHOT_META_KEY = MODULE + '_lwbSummary';       // 抓拍持久化到 chat_metadata 的 key（(a)）
 
 // 读取器（同步、自守门）：镜像 getBbsHistoryText 的契约，数据源换成缓存。
 export function getLwbSummaryText() {
@@ -177,7 +177,7 @@ export function getLwbSummaryText() {
         if (!getSettings().chatIncludeLwb) return '';
         return String(lwbSummaryCache || '').trim();
     } catch (e) {
-        console.warn('[Story Oracle] 读取小白X 总结缓存失败（本次跳过）：', e);
+        console.warn('[剧情推进] 读取小白X 总结缓存失败（本次跳过）：', e);
         return '';
     }
 }
@@ -622,7 +622,7 @@ export function buildTranscriptTurns(ctx, s, keepMechanism = diagnoseMode) {
             try {
                 text = regexEngine.getRegexedString(text, placement, { isPrompt: true, depth });
             } catch (e) {
-                console.warn('[Story Oracle] regex failed on a message; using raw.', e);
+                console.warn('[剧情推进] regex failed on a message; using raw.', e);
             }
         }
         return {
@@ -722,7 +722,7 @@ export function applyOutputRegex(text, forPrompt) {
         const out = regexEngine.getRegexedString(String(text || ''), regexEngine.regex_placement.AI_OUTPUT, opts);
         return (typeof out === 'string') ? out : text;
     } catch (e) {
-        console.warn('[Story Oracle] output regex failed; using raw reply.', e);
+        console.warn('[剧情推进] output regex failed; using raw reply.', e);
         return text;
     }
 }
@@ -746,7 +746,7 @@ export function renderMarkdownOnly(text) {
             if (typeof html === 'string' && html) return html;
         }
     } catch (e) {
-        console.warn('[Story Oracle] markdown render failed; showing raw text.', e);
+        console.warn('[剧情推进] markdown render failed; showing raw text.', e);
     }
     return null;
 }
@@ -758,7 +758,7 @@ export function renderReplyHtml(text) {
             if (typeof html === 'string' && html) return html;
         }
     } catch (e) {
-        console.warn('[Story Oracle] messageFormatting failed; showing raw text.', e);
+        console.warn('[剧情推进] messageFormatting failed; showing raw text.', e);
     }
     return null;
 }
@@ -791,7 +791,7 @@ function fixHtmlHasFrontendPayload(html) {
             if (text.includes('html>') || text.includes('<head>') || text.includes('<body')) return true;
         }
     } catch (e) {
-        console.warn('[Story Oracle] frontend-payload probe failed; keeping ST formatting.', e);
+        console.warn('[剧情推进] frontend-payload probe failed; keeping ST formatting.', e);
     }
     return false;
 }
@@ -811,7 +811,7 @@ export function renderFixResultHtml(text) {
 // 配对规则（大小写不敏感、非贪婪到最近闭合、同样容错 <story_plan>/<story-plan> 等方言变体）；未闭合的
 // 尾部 <StoryPlan>（截断回复）整段算方案块，免得半截方案被 Markdown 搅碎——这条 EOF 救援 parseStoryPlans
 // 也有，两侧【完全一致】。孤儿 </StoryPlan> 留在散文里（parseStoryPlans 同样无视它）。
-// 1.72.0 序列引导：<StorySequence> 卡走同一条 raw 段（渲染层照旧进 <pre class="so-plan-raw">，
+// 1.72.0 序列引导：<StorySequence> 卡走同一条 raw 段（渲染层照旧进 <pre class="pad-plan-raw">，
 // 采纳卡由 parseStorySequences 另行从【字符串】解析）。开关关时表达式退回 1.71.0 那条正则字面量
 // = 字节惰性。⚠ 有意【不用反向引用】配对：开闭标签各自按变体匹配，才与上面那条「第三块闭标签
 // snake_case」的容错逐字一致。
@@ -832,7 +832,7 @@ function splitStoryPlanSegments(text) {
 }
 
 // 参谋回复的显示渲染（1.18.2）：散文段渲 Markdown（只走 renderMarkdownOnly，不碰正则引擎——参谋不是主聊天，
-// 不该被显示正则/挂件加工），<StoryPlan> 块进 <pre class="so-plan-raw"> 转义原样（采纳卡在气泡下方照旧，
+// 不该被显示正则/挂件加工），<StoryPlan> 块进 <pre class="pad-plan-raw"> 转义原样（采纳卡在气泡下方照旧，
 // 由 parseStoryPlans 从【字符串】解析，与这里的 DOM 渲染无关）。库缺失（无 showdown/DOMPurify）→ 返回 null，
 // 调用方回退纯文本；纯散文回复与普通聊天关正则时同路输出。
 export function renderAdvisorReplyHtml(text) {
@@ -842,7 +842,7 @@ export function renderAdvisorReplyHtml(text) {
     for (const g of segs) {
         if (g.type === 'plan') {
             // 2.5.0：解析得出来的方案块不再原样显示（下面的卡片就是它）；解析不出的照旧进 <pre>，免得内容凭空消失。
-            if (!parseStoryPlans(g.text).length) html += '<pre class="so-plan-raw">' + escapeHtml(g.text) + '</pre>';
+            if (!parseStoryPlans(g.text).length) html += '<pre class="pad-plan-raw">' + escapeHtml(g.text) + '</pre>';
         } else if (g.text.trim()) {
             const h = renderMarkdownOnly(g.text);
             if (h == null) return null;   // 库缺失 → 整条回退纯文本（不出半渲染的杂拼）

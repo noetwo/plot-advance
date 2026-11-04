@@ -6,7 +6,7 @@ import { escapeHtml } from '../../ui/mode-shell.js';
 import { fuzzyReplace } from '../lorebook/operations.js';
 
 // 访谈回复的显示渲染（与参谋 renderAdvisorReplyHtml 同构）：散文段渲 Markdown（只走 renderMarkdownOnly，不碰正则引擎），
-// <CharBrief>/<CharDraft>/<DraftPatch> 区块进 <pre class="so-plan-raw"> 转义原样（区块解析走 classifyBuilderReply 从
+// <CharBrief>/<CharDraft>/<DraftPatch> 区块进 <pre class="pad-plan-raw"> 转义原样（区块解析走 classifyBuilderReply 从
 // 【字符串】读，与这里的 DOM 渲染无关）。库缺失（无 showdown/DOMPurify）→ 返回 null，调用方回退纯文本。
 export function renderBuilderReplyHtml(text) {
     const segs = splitBuilderSegments(String(text || ''));
@@ -14,7 +14,7 @@ export function renderBuilderReplyHtml(text) {
     let html = '';
     for (const seg of segs) {
         if (seg.type === 'block') {
-            html += '<pre class="so-plan-raw">' + escapeHtml(seg.text) + '</pre>';
+            html += '<pre class="pad-plan-raw">' + escapeHtml(seg.text) + '</pre>';
         } else if (seg.text.trim()) {
             const h = renderMarkdownOnly(seg.text);
             if (h == null) return null;   // 库缺失 → 整条回退纯文本（不出半渲染的杂拼）

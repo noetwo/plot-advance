@@ -1,18 +1,18 @@
 /* ==================== 世界书「智能选条」助手（ENABLE_LB_SMART_SELECT，2026-08-08）==================== */
-/* 🪄 入口按钮：同 .so-lb-mini 家族，用世界书强调色点亮。 */
-.so-lb-mini-magic { color: var(--so-lb-accent); font-weight: 600; }
-.so-lb-mini-magic:hover { background: color-mix(in srgb, var(--so-lb-accent) 22%, transparent); }
+/* 🪄 入口按钮：同 .pad-lb-mini 家族，用世界书强调色点亮。 */
+.pad-lb-mini-magic { color: var(--pad-lb-accent); font-weight: 600; }
+.pad-lb-mini-magic:hover { background: color-mix(in srgb, var(--pad-lb-accent) 22%, transparent); }
 
-/* overlay 骨架：同 #so-fixsel（inset:0 覆盖 #so-window、居中、遮罩 + 模糊）——恒可达逃生（✕ + 点遮罩关闭）。
-   🌐 模板广场的两张卡（#so-fixhub / #so-fixshare，1.86.0）逐字同一骨架，并进这一条（遮罩只引用一次 --so-scrim）。 */
-#so-smartsel, #so-fixhub, #so-fixshare {
+/* overlay 骨架：同 #pad-fixsel（inset:0 覆盖 #pad-window、居中、遮罩 + 模糊）——恒可达逃生（✕ + 点遮罩关闭）。
+   🌐 模板广场的两张卡（#pad-fixhub / #pad-fixshare，1.86.0）逐字同一骨架，并进这一条（遮罩只引用一次 --pad-scrim）。 */
+#pad-smartsel, #pad-fixhub, #pad-fixshare {
     display: none; position: absolute; inset: 0; z-index: 60;
     align-items: center; justify-content: center; padding: 16px; box-sizing: border-box;
-    background: var(--so-scrim); backdrop-filter: blur(4px);
+    background: var(--pad-scrim); backdrop-filter: blur(4px);
 }
-#so-smartsel.open, #so-fixhub.open, #so-fixshare.open { display: flex; }
+#pad-smartsel.open, #pad-fixhub.open, #pad-fixshare.open { display: flex; }
 /* 卡片跟随主题（工作卡语义，非警告卡）：底色/边框/字色都走主题变量——绝不钉死浅色低对比（1.45.0 教训）。 */
-#so-smartsel-card {
+#pad-smartsel-card {
     display: flex; flex-direction: column; width: 100%; max-width: 560px; max-height: 100%; min-height: 0;
     box-sizing: border-box; border-radius: 12px; border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
     background-color: var(--SmartThemeBlurTintColor, #1b1d23);
@@ -20,55 +20,55 @@
     box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.7); padding: 16px 18px;
     color: var(--SmartThemeBodyColor, #e6e6e6);
 }
-#so-smartsel-head {
+#pad-smartsel-head {
     font-weight: 700; font-size: 1.0em; display: flex; align-items: center; justify-content: space-between;
     gap: 8px; margin-bottom: 10px; flex: 0 0 auto;   /* 标题行含逃生 ✕，不被压缩、始终在屏内 */
 }
-#so-smartsel-body { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
-#so-smartsel-input {
+#pad-smartsel-body { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+#pad-smartsel-input {
     width: 100%; box-sizing: border-box; border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 0.9em;
-    background: var(--so-field); color: var(--SmartThemeBodyColor, #e6e6e6); resize: vertical;
+    background: var(--pad-field); color: var(--SmartThemeBodyColor, #e6e6e6); resize: vertical;
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
 }
-#so-smartsel-input:disabled { opacity: 0.6; }
+#pad-smartsel-input:disabled { opacity: 0.6; }
 
 /* 进度日志：等宽小字，逐行累加。min-height 是【地板】：它自己是滚动容器（min-height:auto 解析成 0），
    窗口矮时会被下方 flex-shrink:0 的直播框压没——留一行半的可读余量，别压成零高。 */
-#so-smartsel-log { display: flex; flex-direction: column; gap: 4px; font-size: 0.86em; min-height: 2.4em; max-height: 40vh; overflow-y: auto; }
-.so-smartsel-logline { line-height: 1.5; opacity: 0.9; }
+#pad-smartsel-log { display: flex; flex-direction: column; gap: 4px; font-size: 0.86em; min-height: 2.4em; max-height: 40vh; overflow-y: auto; }
+.pad-smartsel-logline { line-height: 1.5; opacity: 0.9; }
 
 /* 透明行 / 摘要 / 注记。 */
-.so-smartsel-searched { font-size: 0.8em; opacity: 0.75; padding: 2px 0; }
-.so-smartsel-summary { font-weight: 600; font-size: 0.92em; padding: 2px 0 6px; }
-.so-smartsel-warn { font-size: 0.8em; color: color-mix(in srgb, var(--crimson70a, #e07c7c) 82%, var(--SmartThemeBodyColor)); padding: 2px 0; }
-.so-smartsel-stop { font-size: 0.9em; line-height: 1.55; }
-.so-smartsel-detail { white-space: pre-wrap; }
-.so-smartsel-ok { font-size: 0.92em; line-height: 1.55; }
+.pad-smartsel-searched { font-size: 0.8em; opacity: 0.75; padding: 2px 0; }
+.pad-smartsel-summary { font-weight: 600; font-size: 0.92em; padding: 2px 0 6px; }
+.pad-smartsel-warn { font-size: 0.8em; color: color-mix(in srgb, var(--crimson70a, #e07c7c) 82%, var(--SmartThemeBodyColor)); padding: 2px 0; }
+.pad-smartsel-stop { font-size: 0.9em; line-height: 1.55; }
+.pad-smartsel-detail { white-space: pre-wrap; }
+.pad-smartsel-ok { font-size: 0.92em; line-height: 1.55; }
 
 /* 预检行（B5 同族）：✔ 勾选 = 强调色、✖ 取消 = 冷色；理由缩进。 */
-.so-ss-row { padding: 4px 0; border-top: 1px solid rgba(var(--so-ink), 0.06); }
-.so-ss-row-main { font-size: 0.88em; line-height: 1.5; }
-.so-ss-select .so-ss-row-main { color: var(--so-lb-accent); }
-.so-ss-deselect .so-ss-row-main { color: color-mix(in srgb, var(--crimson70a, #e07c7c) 78%, var(--SmartThemeBodyColor)); }
-.so-ss-row-reason { font-size: 0.76em; opacity: 0.7; padding-left: 1.4em; }
+.pad-ss-row { padding: 4px 0; border-top: 1px solid rgba(var(--pad-ink), 0.06); }
+.pad-ss-row-main { font-size: 0.88em; line-height: 1.5; }
+.pad-ss-select .pad-ss-row-main { color: var(--pad-lb-accent); }
+.pad-ss-deselect .pad-ss-row-main { color: color-mix(in srgb, var(--crimson70a, #e07c7c) 78%, var(--SmartThemeBodyColor)); }
+.pad-ss-row-reason { font-size: 0.76em; opacity: 0.7; padding-left: 1.4em; }
 
-/* footer 按钮：同 #so-fixsel-btns。 */
-#so-smartsel-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex: 0 0 auto; }
-.so-smartsel-btn {
+/* footer 按钮：同 #pad-fixsel-btns。 */
+#pad-smartsel-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex: 0 0 auto; }
+.pad-smartsel-btn {
     padding: 7px 14px; border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
-    background: rgba(var(--so-ink), 0.06); color: var(--SmartThemeBodyColor, #ddd); cursor: pointer; font-size: 0.86em;
+    background: rgba(var(--pad-ink), 0.06); color: var(--SmartThemeBodyColor, #ddd); cursor: pointer; font-size: 0.86em;
 }
-.so-smartsel-btn:hover { background: rgba(var(--so-ink), 0.12); }
-.so-smartsel-go:not(:disabled) { background: var(--so-lb-accent); border-color: transparent; color: #1a1a1a; font-weight: 600; }
-.so-smartsel-go:disabled { opacity: 0.45; cursor: not-allowed; }
+.pad-smartsel-btn:hover { background: rgba(var(--pad-ink), 0.12); }
+.pad-smartsel-go:not(:disabled) { background: var(--pad-lb-accent); border-color: transparent; color: #1a1a1a; font-weight: 600; }
+.pad-smartsel-go:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* 🪄 原文直播框（AI 边写边看）——空时的 display:none 由 JS 控（非流式一个 delta 都不来 → 框根本不建）。
-   底色/边框只用主题变量（--so-field / --so-ink），亮暗皮都可读。
-   ★挤压优先级是【有意】的★：flex:0 0 auto ⇒ 窗口矮时先挤上方的 #so-smartsel-log（那是滚动容器、
+   底色/边框只用主题变量（--pad-field / --pad-ink），亮暗皮都可读。
+   ★挤压优先级是【有意】的★：flex:0 0 auto ⇒ 窗口矮时先挤上方的 #pad-smartsel-log（那是滚动容器、
    min-height:auto 解析成 0），直播正文优先占满到 34vh；日志那边配了 min-height:2.4em 当地板，
-   保证它再被挤也留得下一行半可读。整块放不下时由 #so-smartsel-body 自己滚。 */
-.so-smartsel-live {
-    flex: 0 0 auto; background: var(--so-field); border: 1px solid rgba(var(--so-ink), 0.15);
+   保证它再被挤也留得下一行半可读。整块放不下时由 #pad-smartsel-body 自己滚。 */
+.pad-smartsel-live {
+    flex: 0 0 auto; background: var(--pad-field); border: 1px solid rgba(var(--pad-ink), 0.15);
     border-radius: 6px; padding: 6px 8px; margin-top: 2px; max-height: 34vh; overflow-y: auto;
     font-size: 0.82em; line-height: 1.5; font-family: var(--monoFontFamily, monospace);
     white-space: pre-wrap; word-break: break-word; opacity: 0.85; overscroll-behavior: contain;

@@ -26,12 +26,12 @@ export function canonicalizeDiagOps(snapshot, Mvu) {
         const ops = diffMvuStat(snapshot.stat_data, now.stat_data, '');
         if (!ops.length) return [];
         if (!verifyDiagOps(snapshot.stat_data, now.stat_data, ops)) {
-            console.warn('[Story Oracle] 诊断修正未写进正文：补丁自检没能精确重放出当前状态（这张卡的变量形状特殊），已跳过；变量修正照常生效。');
+            console.warn('[剧情推进] 诊断修正未写进正文：补丁自检没能精确重放出当前状态（这张卡的变量形状特殊），已跳过；变量修正照常生效。');
             return [];
         }
         return ops;
     } catch (e) {
-        console.warn('[Story Oracle] 诊断修正折算绝对值补丁失败：', e);
+        console.warn('[剧情推进] 诊断修正折算绝对值补丁失败：', e);
         return [];
     }
 }
@@ -46,20 +46,20 @@ export async function injectDiagPatchIntoMessage(idx, ops, expectText) {
     const m = (ctx.chat || [])[idx];
     if (!m || typeof m.mes !== 'string') return '';
     if (expectText != null && m.mes !== expectText) {
-        console.warn('[Story Oracle] 诊断修正未写进正文：这条回复在诊断期间被改动过（已跳过，变量修正照常生效）。');
+        console.warn('[剧情推进] 诊断修正未写进正文：这条回复在诊断期间被改动过（已跳过，变量修正照常生效）。');
         return '';
     }
     const payload = buildDiagPatchPayload(ops);
     if (!payload) return '';
     const next = insertDiagPatchIntoBlock(stripDiagPatchFromText(m.mes), payload);
     if (next == null) {
-        console.warn('[Story Oracle] 诊断修正未写进正文：这条回复的更新区块没有完整的闭标签（不另起一块——两个区块会让多数卡的状态栏被折叠面板吞掉）。');
+        console.warn('[剧情推进] 诊断修正未写进正文：这条回复的更新区块没有完整的闭标签（不另起一块——两个区块会让多数卡的状态栏被折叠面板吞掉）。');
         return '';
     }
     m.mes = next;
     if (Array.isArray(m.swipes) && typeof m.swipes[m.swipe_id] === 'string') m.swipes[m.swipe_id] = m.mes;
     try { if (typeof ctx.saveChat === 'function') await ctx.saveChat(); }
-    catch (e) { console.warn('[Story Oracle] 诊断修正写进正文后保存失败：', e); }
+    catch (e) { console.warn('[剧情推进] 诊断修正写进正文后保存失败：', e); }
     refreshMessageBar(idx);
     return payload;
 }
@@ -78,7 +78,7 @@ export async function removeDiagWriteBack(wb) {
     else return;                                   // 已经不在了（用户手改 / 已撤销过）→ 什么都不做
     if (Array.isArray(m.swipes) && typeof m.swipes[m.swipe_id] === 'string') m.swipes[m.swipe_id] = m.mes;
     try { if (typeof ctx.saveChat === 'function') await ctx.saveChat(); }
-    catch (e) { console.warn('[Story Oracle] 撤销诊断修正后保存失败：', e); }
+    catch (e) { console.warn('[剧情推进] 撤销诊断修正后保存失败：', e); }
     refreshMessageBar(wb.idx);
 }
 
@@ -98,7 +98,7 @@ export async function restoreDiagWriteBack(wb) {
     }
     if (Array.isArray(m.swipes) && typeof m.swipes[m.swipe_id] === 'string') m.swipes[m.swipe_id] = m.mes;
     try { if (typeof ctx.saveChat === 'function') await ctx.saveChat(); }
-    catch (e) { console.warn('[Story Oracle] 重新应用诊断修正后保存失败：', e); }
+    catch (e) { console.warn('[剧情推进] 重新应用诊断修正后保存失败：', e); }
     refreshMessageBar(wb.idx);
 }
 
@@ -127,13 +127,13 @@ export async function applyFixAsSwipe(idx, finalText) {
             const cur = Mvu.getMvuData(mvuMsgOpts());
             if (cur) mvuSnapshot = JSON.parse(JSON.stringify(cur));
         }
-    } catch (e) { console.warn('[Story Oracle] 校正前读取 MVU 状态失败：', e); }
+    } catch (e) { console.warn('[剧情推进] 校正前读取 MVU 状态失败：', e); }
 
     const now = new Date();
     const info = { send_date: now.toISOString(), gen_started: null, gen_finished: now.toISOString(), extra: { story_oracle_fix: true } };
     addSwipeToMessage(m, finalText, info);
     try { if (typeof ctx.saveChat === 'function') await ctx.saveChat(); }
-    catch (e) { console.warn('[Story Oracle] 校正写入 swipe 后保存失败：', e); return false; }
+    catch (e) { console.warn('[剧情推进] 校正写入 swipe 后保存失败：', e); return false; }
 
     // Bug 2 ②：把抓到的状态【拷贝】到新 swipe（它现在已是 latest）。replaceMvuData 同时写 stat_data +
     // display_data，下面 updateMessageBlock 重渲染时状态栏即读到正确值。放在补发事件【之前】，尽量先于
@@ -144,18 +144,18 @@ export async function applyFixAsSwipe(idx, finalText) {
             if (Mvu && typeof Mvu.replaceMvuData === 'function') {
                 await Mvu.replaceMvuData(mvuSnapshot, mvuMsgOpts());
             }
-        } catch (e) { console.warn('[Story Oracle] 校正后写回 MVU 状态失败：', e); }
+        } catch (e) { console.warn('[剧情推进] 校正后写回 MVU 状态失败：', e); }
     }
 
     try { if (typeof ctx.updateMessageBlock === 'function') ctx.updateMessageBlock(idx, m); }
-    catch (e) { console.warn('[Story Oracle] 校正后重渲染失败：', e); }
+    catch (e) { console.warn('[剧情推进] 校正后重渲染失败：', e); }
 
     // Bug 1：刷新 ST 的 swipe 计数 + 左右箭头（updateMessageBlock 不管这块）。ctx.swipe.refresh 即
     // refreshSwipeButtons；传 true 连「X/Y」文字一起更新。带回退以防个别 ST 构建把它摆在别处。
     try {
         const swipeRefresh = (ctx.swipe && ctx.swipe.refresh) || ctx.refreshSwipeButtons;
         if (typeof swipeRefresh === 'function') swipeRefresh(true);
-    } catch (e) { console.warn('[Story Oracle] 校正后刷新 swipe 计数失败：', e); }
+    } catch (e) { console.warn('[剧情推进] 校正后刷新 swipe 计数失败：', e); }
 
     try {
         const et = ctx.eventTypes || ctx.event_types || {};
@@ -163,7 +163,7 @@ export async function applyFixAsSwipe(idx, finalText) {
             Promise.resolve(ctx.eventSource.emit(et.MESSAGE_SWIPED || 'message_swiped', idx)).catch(() => {});
             Promise.resolve(ctx.eventSource.emit(et.MESSAGE_UPDATED || 'message_updated', idx)).catch(() => {});
         }
-    } catch (e) { console.warn('[Story Oracle] 校正后发事件失败：', e); }
+    } catch (e) { console.warn('[剧情推进] 校正后发事件失败：', e); }
     return true;
 }
 
@@ -181,16 +181,16 @@ async function selectSwipe(idx, swipeId) {
     // 渲染缓存，否则 updateMessageBlock 会渲染旧 display_text 而不是切过去的 mes。对齐 ST 原生 swipe。
     if (m.extra && typeof m.extra === 'object') delete m.extra.display_text;
     try { if (typeof ctx.saveChat === 'function') await ctx.saveChat(); }
-    catch (e) { console.warn('[Story Oracle] 校正写入 swipe 后保存失败：', e); return false; }
+    catch (e) { console.warn('[剧情推进] 校正写入 swipe 后保存失败：', e); return false; }
     try { if (typeof ctx.updateMessageBlock === 'function') ctx.updateMessageBlock(idx, m); }
-    catch (e) { console.warn('[Story Oracle] 校正后重渲染失败：', e); }
+    catch (e) { console.warn('[剧情推进] 校正后重渲染失败：', e); }
     try {
         const et = ctx.eventTypes || ctx.event_types || {};
         if (ctx.eventSource && typeof ctx.eventSource.emit === 'function') {
             Promise.resolve(ctx.eventSource.emit(et.MESSAGE_SWIPED || 'message_swiped', idx)).catch(() => {});
             Promise.resolve(ctx.eventSource.emit(et.MESSAGE_UPDATED || 'message_updated', idx)).catch(() => {});
         }
-    } catch (e) { console.warn('[Story Oracle] 校正后发事件失败：', e); }
+    } catch (e) { console.warn('[剧情推进] 校正后发事件失败：', e); }
     return true;
 }
 
@@ -487,7 +487,7 @@ export function notifyAutoDiagnose(result, patch, writeBack, opts) {
     // getChatMetadataSafe() —— 也就是【现在】那个聊天的元数据，切聊天后写进去等于在无辜的对话里
     // 说另一个对话的事（与写入前那道事务闸同一条不变量，那边同样是静默作废）。
     if (opts && opts.noNote) {
-        console.debug('[Story Oracle] 自动诊断：写入前发现聊天已切换，本轮作废（未写入）。');
+        console.debug('[剧情推进] 自动诊断：写入前发现聊天已切换，本轮作废（未写入）。');
         return;
     }
 
@@ -524,7 +524,7 @@ export function notifyAutoDiagnose(result, patch, writeBack, opts) {
         appendNoteToRoom('diagnose', entry, undoable || diagFullReplyOpts(status, result && result.raw));   // 自动诊断记录归入【诊断房间】（不可见时直接落其元数据、不上屏）
         // 🩺 1.89.0：被存档污染挡住 → 紧跟着让存档检查说清是哪一格（去重在 maybeRunSaveHealth 里）。
         if (ENABLE_SCHEMA_DIAG && result && result.schemaDry && result.schemaDry.poisoned) maybeRunSaveHealth('failure');
-    } catch (e) { console.warn('[Story Oracle] 自动诊断记录写入侧聊失败：', e); }
+    } catch (e) { console.warn('[剧情推进] 自动诊断记录写入侧聊失败：', e); }
 }
 
 // 「正在自动诊断…」提示。返回一个句柄交给 dismissToast 收掉（toastr 不在则回 null）。timeOut:0 = 不
@@ -562,9 +562,9 @@ export function dismissToast(handle) {
 // ⚠ 面板恒 textContent：原文里满是 <UpdateVariable> 这类标签，走 innerHTML 会被当 HTML 吞掉。
 export function addFullReplyControls(wrap, fullText) {
     const bar = document.createElement('div');
-    bar.className = 'so-apply-bar so-note-undo';
+    bar.className = 'pad-apply-bar pad-note-undo';
     const btn = document.createElement('button');
-    btn.className = 'so-apply-btn';
+    btn.className = 'pad-apply-btn';
     bar.appendChild(btn);
     wrap.appendChild(bar);
     let panel = null;
@@ -578,7 +578,7 @@ export function addFullReplyControls(wrap, fullText) {
         if (panel) { panel.remove(); panel = null; }
         else {
             panel = document.createElement('div');
-            panel.className = 'so-note-fullreply';
+            panel.className = 'pad-note-fullreply';
             panel.textContent = String(fullText == null ? '' : fullText);
             wrap.insertBefore(panel, bar);   // 面板落在摘要正文之下、按钮条之上
         }
@@ -588,11 +588,11 @@ export function addFullReplyControls(wrap, fullText) {
 
 export function addNoteUndoControls(wrap, info) {
     const bar = document.createElement('div');
-    bar.className = 'so-apply-bar so-note-undo';
+    bar.className = 'pad-apply-bar pad-note-undo';
     const btn = document.createElement('button');
-    btn.className = 'so-apply-btn';
+    btn.className = 'pad-apply-btn';
     const status = document.createElement('span');
-    status.className = 'so-apply-status';
+    status.className = 'pad-apply-status';
     bar.appendChild(btn);
     bar.appendChild(status);
     wrap.appendChild(bar);
@@ -610,7 +610,7 @@ export function addNoteUndoControls(wrap, info) {
     };
     paint();
     btn.addEventListener('click', async () => {
-        status.classList.remove('so-hint-error');
+        status.classList.remove('pad-hint-error');
         btn.disabled = true;
         // 漂移守卫（Task 5，审计簇 B）：撤销是【整份互换】（undoFix → replaceMvuData 整份写前快照），
         // 这条记录之后发生过的一切都会被这一下盖掉；重新应用是【按当时的状态算的补丁】重放到现在的
@@ -639,12 +639,12 @@ export function addNoteUndoControls(wrap, info) {
                 if (info) info.undone = true;
                 paint();
                 // Task 7：还原也是一次 MVU 写入（整份互换），落点同样是最末非系统楼 —— 落在用户楼上时
-                // 同样看不见。现算，绝不缓存（`.so-apply-status` 是 pre-line，换行真的换行）。
+                // 同样看不见。现算，绝不缓存（`.pad-apply-status` 是 pre-line，换行真的换行）。
                 const n = diagUserFloorNotice();
                 status.textContent = '已还原到修复前的状态。' + (n ? '\n' + n : '');
             } catch (e) {
                 status.textContent = '还原失败：' + (e?.message || e);
-                status.classList.add('so-hint-error');
+                status.classList.add('pad-hint-error');
             }
         } else {
             status.textContent = '正在重新应用…';
@@ -670,7 +670,7 @@ export function addNoteUndoControls(wrap, info) {
                 }
             } catch (e) {
                 status.textContent = '重新应用失败：' + (e?.message || e);
-                status.classList.add('so-hint-error');
+                status.classList.add('pad-hint-error');
             }
         }
         btn.disabled = dead;
@@ -686,15 +686,15 @@ export function addNoteUndoControls(wrap, info) {
 //   · 看改动：懒构建一次 renderDiffCard(before, after) 接到 wrap 上，之后切 hidden 复用（与手动卡同款）。
 export function addAutoFixControls(wrap, info) {
     const bar = document.createElement('div');
-    bar.className = 'so-apply-bar so-note-undo';
+    bar.className = 'pad-apply-bar pad-note-undo';
     const swapBtn = document.createElement('button');
-    swapBtn.className = 'so-apply-btn';
+    swapBtn.className = 'pad-apply-btn';
     swapBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> 用原文';
     const diffBtn = document.createElement('button');
-    diffBtn.className = 'so-apply-btn';
+    diffBtn.className = 'pad-apply-btn';
     diffBtn.innerHTML = '<i class="fa-solid fa-eye"></i> 看改动';
     const status = document.createElement('span');
-    status.className = 'so-apply-status';
+    status.className = 'pad-apply-status';
     bar.appendChild(swapBtn);
     bar.appendChild(diffBtn);
     bar.appendChild(status);
@@ -703,14 +703,14 @@ export function addAutoFixControls(wrap, info) {
     // 原文 ↔ 校正稿 二态开关。showingOriginal=false = 当前显示校正稿（记录创建时即此态）。
     let showingOriginal = false;
     swapBtn.addEventListener('click', async () => {
-        status.classList.remove('so-hint-error');
+        status.classList.remove('pad-hint-error');
         swapBtn.disabled = true;
         const targetSwipe = showingOriginal ? info.fixSwipeId : 0;
         const ok = await selectSwipe(info.idx, targetSwipe);
         if (!ok) {
             // swipe 不在了（用户重 roll / 删了）——这条记录的切换不再可靠，停用。
             status.textContent = '无法切换（原 swipe 已不在）。';
-            status.classList.add('so-hint-error');
+            status.classList.add('pad-hint-error');
             return;   // 留 disabled
         }
         showingOriginal = !showingOriginal;
@@ -747,11 +747,11 @@ export function addAutoFixControls(wrap, info) {
 // 的新值，下一条回复会把撤销掉的编辑又拉回来（「撤销」形同虚设）。
 export function addMvuedUndoControls(wrap, info) {
     const bar = document.createElement('div');
-    bar.className = 'so-apply-bar so-note-undo';
+    bar.className = 'pad-apply-bar pad-note-undo';
     const btn = document.createElement('button');
-    btn.className = 'so-apply-btn';
+    btn.className = 'pad-apply-btn';
     const status = document.createElement('span');
-    status.className = 'so-apply-status';
+    status.className = 'pad-apply-status';
     bar.appendChild(btn);
     bar.appendChild(status);
     wrap.appendChild(bar);
@@ -764,7 +764,7 @@ export function addMvuedUndoControls(wrap, info) {
     };
     paint();
     btn.addEventListener('click', async () => {
-        status.classList.remove('so-hint-error');
+        status.classList.remove('pad-hint-error');
         btn.disabled = true;
         status.textContent = undone ? '正在重新应用…' : '正在还原…';
         try {
@@ -811,7 +811,7 @@ export function addMvuedUndoControls(wrap, info) {
                         }
                     }
                 } catch (err) {
-                    console.warn('[Story Oracle] 🎛 冻结联动撤销失败（MvuData 已换回，规则目标可能仍是旧值）：', err);
+                    console.warn('[剧情推进] 🎛 冻结联动撤销失败（MvuData 已换回，规则目标可能仍是旧值）：', err);
                 }
             }
             paint();
@@ -823,7 +823,7 @@ export function addMvuedUndoControls(wrap, info) {
             status.textContent = (undone ? '已还原到编辑前的状态。' : '已重新应用。') + (n ? '\n' + n : '');
         } catch (e) {
             status.textContent = '操作失败：' + (e && e.message ? e.message : e);
-            status.classList.add('so-hint-error');
+            status.classList.add('pad-hint-error');
         }
         btn.disabled = false;
     });
@@ -850,12 +850,12 @@ export function soDropEntries(id) { document.querySelectorAll('#' + id).forEach(
 export function injectWandButton() {
     const menu = document.getElementById('extensionsMenu');
     if (!menu) return;
-    if (soEntryIsLive('so-wand-button', menu) && soEntryIsLive('so-wand-recenter', menu)) return;
-    soDropEntries('so-wand-button');
-    soDropEntries('so-wand-recenter');
+    if (soEntryIsLive('pad-wand-button', menu) && soEntryIsLive('pad-wand-recenter', menu)) return;
+    soDropEntries('pad-wand-button');
+    soDropEntries('pad-wand-recenter');
 
     const item = document.createElement('div');
-    item.id = 'so-wand-button';
+    item.id = 'pad-wand-button';
     item.className = 'list-group-item flex-container flexGap5 interactable';
     item.tabIndex = 0;
     item.innerHTML = `<i class="fa-solid fa-moon"></i><span>剧情推进</span>`;
@@ -871,7 +871,7 @@ export function injectWandButton() {
     // 手机专属救援入口：紧随其后放一个「窗口归位（居中）」项。手机用户把窗口拖丢 / 拖到屏外时，这是【永远够得到】
     // 的复位入口——它在 ST 常驻的魔棒菜单里、不在那个可能已不可见的窗口里。桌面用 CSS @media 隐藏（见 style.css）。
     const rc = document.createElement('div');
-    rc.id = 'so-wand-recenter';
+    rc.id = 'pad-wand-recenter';
     rc.className = 'list-group-item flex-container flexGap5 interactable';
     rc.tabIndex = 0;
     rc.innerHTML = `<i class="fa-solid fa-arrows-to-dot"></i><span>窗口归位</span>`;
@@ -902,10 +902,10 @@ function recenterWindow() {
 export function injectChatBarButton() {
     const bar = document.getElementById('leftSendForm');
     if (!bar) return;
-    if (soEntryIsLive('so-chatbar-button', bar)) return;   // 见 soEntryIsLive：克隆出来的哑巴节点要重建
-    soDropEntries('so-chatbar-button');
+    if (soEntryIsLive('pad-chatbar-button', bar)) return;   // 见 soEntryIsLive：克隆出来的哑巴节点要重建
+    soDropEntries('pad-chatbar-button');
     const btn = document.createElement('div');
-    btn.id = 'so-chatbar-button';
+    btn.id = 'pad-chatbar-button';
     btn.className = 'fa-solid fa-moon interactable';
     btn.title = '剧情推进 —— 点击开 / 关侧窗';
     btn.tabIndex = 0;
@@ -925,7 +925,7 @@ export function refreshOracleEntries() {
 }
 
 export function removeChatBarButton() {
-    const btn = document.getElementById('so-chatbar-button');
+    const btn = document.getElementById('pad-chatbar-button');
     if (btn) btn.remove();
 }
 
@@ -937,5 +937,5 @@ export function removeChatBarButton() {
       `#send_form` 补挂，一次性注入活不过第一次切聊天。
    点击一律委托 onFixChatEntryClick()（1.42.0 那条已验证的路：确认门 → 选区送达 → 预选开卡），
    本处不另写一套开卡逻辑。 */
-export const FIXSEL_BAR_BTN_ID = 'so-fixsel-qr-btn';
-export const FIXSEL_BAR_OWN_CLASS = 'so-fixsel-own-bar';
+export const FIXSEL_BAR_BTN_ID = 'pad-fixsel-qr-btn';
+export const FIXSEL_BAR_OWN_CLASS = 'pad-fixsel-own-bar';

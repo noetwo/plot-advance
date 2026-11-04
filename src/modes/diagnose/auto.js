@@ -81,7 +81,7 @@ export async function diagSeedTargetFloor(Mvu, ctx, idx, opts = {}) {
             const parsed = await Mvu.parseMessage(textAtStart, data);
             if (parsed && typeof parsed === 'object') data = parsed;
         } catch (e) {
-            console.warn('[Story Oracle] 自动诊断楼层播种：parseMessage 失败，本楼不播种（按旧行为继续）：', e);
+            console.warn('[剧情推进] 自动诊断楼层播种：parseMessage 失败，本楼不播种（按旧行为继续）：', e);
             out.reason = 'parse-error'; return out;
         }
         if (isCancelled() || !anchorOk()) { out.reason = 'cancelled'; return out; }
@@ -92,14 +92,14 @@ export async function diagSeedTargetFloor(Mvu, ctx, idx, opts = {}) {
         applyBlockToCurrentSwipe(m, null, STATUS_PLACEHOLDER);   // 只补占位符（幂等；镜像到当前 swipe 槽）
         if (m.mes !== before) {
             try { if (ctx && typeof ctx.saveChat === 'function') await ctx.saveChat(); }
-            catch (e) { console.warn('[Story Oracle] 自动诊断楼层播种：补占位符后保存失败：', e); }
+            catch (e) { console.warn('[剧情推进] 自动诊断楼层播种：补占位符后保存失败：', e); }
         }
         refreshMessageBar(idx);
         out.seeded = true; out.srcIdx = src.idx; out.reason = 'seeded';
-        console.debug(`[Story Oracle] 自动诊断：第 ${idx} 楼没有 MVU 数据，已按第 ${src.idx} 楼播种（MVU 未处理这一楼）。`);
+        console.debug(`[剧情推进] 自动诊断：第 ${idx} 楼没有 MVU 数据，已按第 ${src.idx} 楼播种（MVU 未处理这一楼）。`);
         return out;
     } catch (e) {
-        console.warn('[Story Oracle] 自动诊断楼层播种失败（已跳过，按旧行为继续）：', e);
+        console.warn('[剧情推进] 自动诊断楼层播种失败（已跳过，按旧行为继续）：', e);
         out.reason = 'error'; return out;
     }
 }

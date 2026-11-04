@@ -196,7 +196,7 @@ export async function generateReply(options = {}) {
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = options.assistantEl || addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
-    const contentEl = assistantEl.querySelector('.so-content');
+    const contentEl = assistantEl.querySelector('.pad-content');
     const clearTyping = (options.showTyping || showTyping)(contentEl);
     const generation = beginGeneration();
 
@@ -221,13 +221,13 @@ export async function generateReply(options = {}) {
             };
             if (s.sendTemperature) body.temperature = s.temperature;
             if (s.stream) {
-                contentEl.classList.add('so-streaming');
+                contentEl.classList.add('pad-streaming');
                 finalText = await (transport.streamDirect || streamDirect)(url, s.apiKey, body, generation.signal, (delta) => {
                     clearTyping();
                     contentEl.textContent += delta;
                     if (soFollowStream) scrollToBottom();   // #1 只在用户跟随到底部时才自动滚
                 });
-                contentEl.classList.remove('so-streaming');
+                contentEl.classList.remove('pad-streaming');
             } else {
                 finalText = await (transport.callDirect || callDirect)(url, s.apiKey, body, generation.signal);
                 clearTyping();
@@ -236,13 +236,13 @@ export async function generateReply(options = {}) {
         } else {
             const override = s.sendTemperature ? { temperature: s.temperature } : {};
             if (s.stream) {
-                contentEl.classList.add('so-streaming');
+                contentEl.classList.add('pad-streaming');
                 finalText = await (transport.callProfileStream || callProfileStream)(s.profileId, messages, effMaxTokens, override, generation.signal, (full) => {
                     clearTyping();
                     contentEl.textContent = full;
                     if (soFollowStream) scrollToBottom();   // #1 只在用户跟随到底部时才自动滚
                 });
-                contentEl.classList.remove('so-streaming');
+                contentEl.classList.remove('pad-streaming');
             } else {
                 finalText = await (transport.callProfile || callProfile)(s.profileId, messages, effMaxTokens, override, generation.signal);
                 clearTyping();
@@ -253,7 +253,7 @@ export async function generateReply(options = {}) {
         clearTyping();
         if (!finalText) {
             // 空回复先列常见原因；下方再用直连返回的 finish_reason 补充预算耗尽提示。
-            // 此处不读取 usage，不能只凭空正文断言原因。换行按 .so-content 的 pre-wrap 显示。
+            // 此处不读取 usage，不能只凭空正文断言原因。换行按 .pad-content 的 pre-wrap 显示。
             let emptyNote = diagnoseMode
                 ? '(空回复) — 审计可能把 token 预算用光了（推理也算在内）。调大设置里的「最大 token 数」，或问得更聚焦一点（比如只审某一类变量）。'
                 : '(空回复) — 端点收下了请求，但没有返回正文。常见三因：\n' +
@@ -267,7 +267,7 @@ export async function generateReply(options = {}) {
                 emptyNote = '本次输出额度被模型的思考过程吃光了（finish_reason=length）——请把设置里的「最大 token 数」调到 4096 以上再试。\n\n' + emptyNote;
             }
             contentEl.textContent = emptyNote;
-            contentEl.classList.add('so-error');
+            contentEl.classList.add('pad-error');
             addRetryControl(assistantEl, aEntry);   // 空回复也给「↻ 重试」（与真实失败一致）
         } else {
             // Strip main-chat mechanism blocks (<UpdateVariable>) the preset's
@@ -303,7 +303,7 @@ export async function generateReply(options = {}) {
             // 正则引擎）。历史仍存干净文本（仅精选预设+正则时存 prompt 阶段正则后的拷贝，与原行为一致）。诊断/世界书/校正 不在此渲染
             //（诊断/世界书要原样看 <UpdateVariable>/<LorebookEdit> 块）。
             // 参谋（1.18.2）：散文段渲 Markdown（只走 renderMarkdownOnly，不碰正则引擎），<StoryPlan> 块进
-            // <pre class="so-plan-raw"> 转义原样——渲染只动 DOM；下面的 parseStoryPlans/历史用的是 cleanText
+            // <pre class="pad-plan-raw"> 转义原样——渲染只动 DOM；下面的 parseStoryPlans/历史用的是 cleanText
             // 【字符串】，采纳卡与再喂完全不受影响。库缺失 → null → 维持纯文本（与 1.17.18 同一回退契约）。
             const isPlainChat = !diagnoseMode && !lorebookMode && !advisorMode && !fixMode && !builderMode;
             const useOutputRegex = isPlainChat && presetCurationActive(s) && s.applyRegex;
@@ -313,7 +313,7 @@ export async function generateReply(options = {}) {
                 const html = s.applyRegex ? renderReplyHtml(cleanText) : renderMarkdownOnly(cleanText);
                 if (html != null) {
                     contentEl.innerHTML = html;
-                    contentEl.classList.add('so-rendered');
+                    contentEl.classList.add('pad-rendered');
                     contentEl.style.whiteSpace = 'normal';
                 } else {
                     contentEl.textContent = cleanText;
@@ -322,14 +322,14 @@ export async function generateReply(options = {}) {
                 const html = renderAdvisorReplyHtml(cleanText);
                 if (html != null) {
                     contentEl.innerHTML = html;
-                    contentEl.classList.add('so-rendered');
+                    contentEl.classList.add('pad-rendered');
                     contentEl.style.whiteSpace = 'normal';
                 }
             } else if (builderMode) {
                 const html = renderBuilderReplyHtml(cleanText);
                 if (html != null) {
                     contentEl.innerHTML = html;
-                    contentEl.classList.add('so-rendered');
+                    contentEl.classList.add('pad-rendered');
                     contentEl.style.whiteSpace = 'normal';
                 }
             }
@@ -380,7 +380,7 @@ export async function generateReply(options = {}) {
                 const plans = parseStoryPlans(cleanText);
                 if (plans.length) addPathCards(assistantEl, plans);
             } else if (fixMode) {
-                // 失败时 .so-content 已显示剥离机制/思维链后的 cleanText，不覆盖它——只补一条说明 note。
+                // 失败时 .pad-content 已显示剥离机制/思维链后的 cleanText，不覆盖它——只补一条说明 note。
                 const fixStatus = renderFixCard(assistantEl, contentEl, aEntry, finalText, fixContext);
                 if (fixStatus === 'truncated') {
                     addSystemNote('校正稿似乎被截断了（模型没写完就断了）——把设置里的「最大 token 数」调大些，或点 ↻ 重试。');
@@ -401,7 +401,7 @@ export async function generateReply(options = {}) {
                     setBuilderState({ ...cur, draft, forgedAt: Date.now() });
                     refreshDraftCard();
                     // 与 runForge 成功分支同款：卡在收起的面板里等于没出现，替用户展开。
-                    const bldCollapse = win?.querySelector('#so-bld-collapse');
+                    const bldCollapse = win?.querySelector('#pad-bld-collapse');
                     if (bldCollapse && !bldCollapse.open) bldCollapse.open = true;
                     modeEntryNote('这轮回复里带了完整草稿，已收进窗口顶部「角色工坊」面板的常驻卡'
                         + (cur?.draft ? '（替换了原来那份——想要旧的就再说一次原来的写法）' : '')
@@ -439,10 +439,10 @@ export async function generateReply(options = {}) {
         // 'API request failed'，真原因埋在 .cause 里（见该函数的注释）。
         contentEl.textContent = aborted ? '(已停止)' : `错误：${explainProviderError(errChainMessage(err))}`;   // FIX 5：确定性 400 追加中文提示
         if (!aborted) {
-            contentEl.classList.add('so-error');
+            contentEl.classList.add('pad-error');
             addRetryControl(assistantEl, aEntry);   // 失败（429 等）→ 常显「↻ 重试」，点它重发那一轮（不用重打）
         }
-        console.error('[Story Oracle]', err);
+        console.error('[剧情推进]', err);
     } finally {
         finishGeneration();
         if (soFollowStream) scrollToBottom();   // #1 定稿后只在用户跟随到底部时才滚；否则保持固定顶部（从头读）

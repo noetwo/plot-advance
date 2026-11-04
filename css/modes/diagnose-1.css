@@ -1,11 +1,11 @@
 /* ---------- diagnose mode ---------- */
 /* 诊断模式的「淡红」色调：作为当前模式时是一抹淡红（16% 底纹），自动诊断再升到实心强红。
    与 advisor / lorebook 同法，用主题强调色调温以融入用户主题。 */
-#so-window { --so-diag-accent: color-mix(in srgb, var(--so-accent) 45%, #d9534f 55%); }
+#pad-window { --pad-diag-accent: color-mix(in srgb, var(--pad-accent) 45%, #d9534f 55%); }
 
-#so-diagnose-btn.so-diag-active {
-    color: var(--so-diag-accent);
-    background-color: color-mix(in srgb, var(--so-diag-accent) 16%, transparent);
+#pad-diagnose-btn.pad-diag-active {
+    color: var(--pad-diag-accent);
+    background-color: color-mix(in srgb, var(--pad-diag-accent) 16%, transparent);
     opacity: 1;
 }
 

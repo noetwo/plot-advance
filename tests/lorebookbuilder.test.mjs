@@ -107,14 +107,14 @@ test('世界书条目序列化固定值：null、空 Set、乱序与字符串 ui
 });
 
 test('四个条目列表共用筛选，保持分组显隐且不改选择状态', () => {
-    const selectors = ['#so-bld-entry-list', '#so-lb-entries-list', '#so-diag-entries-list', '#so-wic-entries-list'];
+    const selectors = ['#pad-bld-entry-list', '#pad-lb-entries-list', '#pad-diag-entries-list', '#pad-wic-entries-list'];
     const lists = Object.fromEntries(selectors.map((selector) => {
         const rows = [
             { dataset: { book: 'A', hay: 'alice 12' }, style: {}, checked: true },
             { dataset: { book: 'B', hay: 'bob 24' }, style: {}, checked: false },
         ];
         const heads = ['A', 'B', 'Empty'].map((book) => ({ dataset: { book, hay: book.toLowerCase() }, style: {} }));
-        return [selector, { rows, heads, querySelectorAll: (query) => query === '.so-lb-ent' ? rows : heads }];
+        return [selector, { rows, heads, querySelectorAll: (query) => query === '.pad-lb-ent' ? rows : heads }];
     }));
     const root = { querySelector: (selector) => lists[selector] };
 

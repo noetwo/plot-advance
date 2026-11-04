@@ -34,33 +34,33 @@ export function discardPathEdit() {
 export function renderPlanBar() {
     if (!planBarEl) return;
     const path = getPath();
-    if (win) win.classList.toggle('so-plan-on', !!path);
-    const pre = planBarEl.querySelector('#so-plan-directive');
+    if (win) win.classList.toggle('pad-plan-on', !!path);
+    const pre = planBarEl.querySelector('#pad-plan-directive');
     if (!path) {
         discardPathEdit();
         pre.classList.remove('open');
-        planBarEl.querySelector('#so-plan-show').textContent = '▸ 查看注入内容';
-        planBarEl.querySelector('#so-seq-list').innerHTML = '';
+        planBarEl.querySelector('#pad-plan-show').textContent = '▸ 查看注入内容';
+        planBarEl.querySelector('#pad-seq-list').innerHTML = '';
         placePlanBar();
         return;
     }
     const multi = pathIsMulti(path);
     const node = pathActiveNode(path);
-    const label = planBarEl.querySelector('#so-plan-label');
+    const label = planBarEl.querySelector('#pad-plan-label');
     label.textContent = multi ? `剧情脉络 · ${pathProgressLabel(path)}` : '方案';
-    planBarEl.querySelector('#so-plan-goal').textContent = multi ? (node ? node.name : '') : (path.title || nodeTargetText(path.nodes[0]));
+    planBarEl.querySelector('#pad-plan-goal').textContent = multi ? (node ? node.name : '') : (path.title || nodeTargetText(path.nodes[0]));
     const speed = pathSpeedKey(path);
     renderIntensitySegments(speed, setPathSpeed);
-    planBarEl.querySelector('#so-plan-caption').textContent = ADVISOR_SPEEDS[speed].caption;
-    const doneBtn = planBarEl.querySelector('#so-plan-done');
+    planBarEl.querySelector('#pad-plan-caption').textContent = ADVISOR_SPEEDS[speed].caption;
+    const doneBtn = planBarEl.querySelector('#pad-plan-done');
     doneBtn.textContent = multi ? '完成这个节点' : '完成';
     doneBtn.title = multi ? '当前节点走完了，进入下一个' : '目标已达成，停止引导';
     renderPathList(path);
     // 暂停引导：条头补「已暂停」、目标变淡、按钮换成「继续」
     const paused = guidePaused(path);
-    planBarEl.classList.toggle('so-plan-paused', paused);
+    planBarEl.classList.toggle('pad-plan-paused', paused);
     if (paused) label.textContent += ' · 已暂停';
-    const pauseBtn = planBarEl.querySelector('#so-plan-pause');
+    const pauseBtn = planBarEl.querySelector('#pad-plan-pause');
     pauseBtn.innerHTML = paused ? '<i class="fa-solid fa-play"></i> 继续' : '<i class="fa-solid fa-pause"></i> 暂停';
     pauseBtn.title = paused ? '继续引导：从现在起重新往主聊天注入' : '暂停引导：主聊天先不注入，进度都保留，随时继续';
     if (pre.classList.contains('open')) pre.textContent = currentInjectionPreview();
@@ -68,24 +68,24 @@ export function renderPlanBar() {
     placePlanBar();
 }
 
-// 引导条收起态同步：切 .so-plan-collapsed 类 + 箭头方向（收起 = ▾ 可展开 / 展开 = ▴ 可收起）。
+// 引导条收起态同步：切 .pad-plan-collapsed 类 + 箭头方向（收起 = ▾ 可展开 / 展开 = ▴ 可收起）。
 // 停靠在窗口内时靠 CSS 只留标题行省纵向空间；renderPlanBar 与收起箭头点击共用本函数（DRY）。
 export function syncPlanBarCollapsed() {
     if (!planBarEl) return;
     const collapsed = !!getSettings().planBarCollapsed;
-    planBarEl.classList.toggle('so-plan-collapsed', collapsed);
-    const i = planBarEl.querySelector('#so-plan-collapse i');
+    planBarEl.classList.toggle('pad-plan-collapsed', collapsed);
+    const i = planBarEl.querySelector('#pad-plan-collapse i');
     if (i) i.className = collapsed ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-up';
 }
 
 // 推进速度三档按钮，点哪档调 onPick(key)。
 function renderIntensitySegments(current, onPick) {
-    const seg = planBarEl.querySelector('#so-plan-intensity');
+    const seg = planBarEl.querySelector('#pad-plan-intensity');
     seg.innerHTML = '';
     for (const [key, I] of Object.entries(ADVISOR_SPEEDS)) {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'so-plan-int' + (current === key ? ' active' : '');
+        b.className = 'pad-plan-int' + (current === key ? ' active' : '');
         b.textContent = I.label;
         b.addEventListener('click', () => onPick(key));
         seg.appendChild(b);
@@ -114,7 +114,7 @@ export function startPathEdit(target) {
     }
     pathEditDraft = { chatKey: chatIdentityKey(), adoptedAt: path.adoptedAt, target, detail, keywords };
     renderPathList(path);
-    const box = planBarEl.querySelector('#so-seq-list textarea');
+    const box = planBarEl.querySelector('#pad-seq-list textarea');
     if (box) { box.focus(); box.setSelectionRange(0, 0); box.scrollTop = 0; }
 }
 function savePathEdit() {
@@ -136,14 +136,14 @@ function savePathEdit() {
     renderPlanBar();
 }
 function renderPathList(path) {
-    const list = planBarEl.querySelector('#so-seq-list');
+    const list = planBarEl.querySelector('#pad-seq-list');
     if (!list) return;
     list.innerHTML = '';
     const draft = pathDraftFor(path);
     const rowBtn = (text, title, fn) => {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'so-seq-row-btn';
+        b.className = 'pad-seq-row-btn';
         b.title = title;
         if (text === '✏️') b.innerHTML = '<i class="fa-solid fa-pencil"></i>';
         else b.textContent = text;
@@ -153,15 +153,15 @@ function renderPathList(path) {
     const addRow = ({ cls, label, kw, body, open, buttons, target }) => {
         const editing = !!(draft && draft.target === target);
         const row = document.createElement('details');
-        row.className = 'so-seq-row ' + cls;
+        row.className = 'pad-seq-row ' + cls;
         row.open = open || editing;
         const sum = document.createElement('summary');
         const lab = document.createElement('span');
-        lab.className = 'so-seq-row-label';
+        lab.className = 'pad-seq-row-label';
         lab.textContent = label;
         if (kw) {
             const k = document.createElement('span');
-            k.className = 'so-path-kw';
+            k.className = 'pad-path-kw';
             k.textContent = ' · ' + kw;
             lab.appendChild(k);
         }
@@ -169,7 +169,7 @@ function renderPathList(path) {
         if (!editing) for (const b of buttons) sum.appendChild(b);
         row.appendChild(sum);
         const bodyEl = document.createElement('div');
-        bodyEl.className = 'so-seq-row-body';
+        bodyEl.className = 'pad-seq-row-body';
         if (!editing) {
             bodyEl.textContent = body;
         } else {
@@ -177,14 +177,14 @@ function renderPathList(path) {
             if (draft.keywords !== null) {
                 const kwBox = document.createElement('input');
                 kwBox.type = 'text';
-                kwBox.className = 'so-path-kw-box';
+                kwBox.className = 'pad-path-kw-box';
                 kwBox.placeholder = '关键词，用顿号隔开（一直给主聊天看，防止跑偏）';
                 kwBox.value = draft.keywords;
                 kwBox.addEventListener('input', () => { draft.keywords = kwBox.value; });
                 bodyEl.appendChild(kwBox);
             }
             const box = document.createElement('textarea');
-            box.className = 'so-seq-canon-box';
+            box.className = 'pad-seq-canon-box';
             box.rows = 5;
             box.spellcheck = false;
             box.value = draft.detail;
@@ -194,16 +194,16 @@ function renderPathList(path) {
             box.addEventListener('input', () => { draft.detail = box.value; });
             bodyEl.appendChild(box);
             const actions = document.createElement('div');
-            actions.className = 'so-seq-canon-actions';
+            actions.className = 'pad-seq-canon-actions';
             const mk = (text, cls2, fn) => {
                 const b = document.createElement('button');
                 b.type = 'button';
-                b.className = 'so-plan-mini' + (cls2 ? ' ' + cls2 : '');
+                b.className = 'pad-plan-mini' + (cls2 ? ' ' + cls2 : '');
                 b.textContent = text;
                 b.addEventListener('click', fn);
                 actions.appendChild(b);
             };
-            mk('保存', 'so-plan-done', savePathEdit);
+            mk('保存', 'pad-plan-done', savePathEdit);
             mk('取消', '', () => { discardPathEdit(); renderPathList(path); });
             bodyEl.appendChild(actions);
         }
@@ -212,11 +212,11 @@ function renderPathList(path) {
     };
     if (!pathIsMulti(path)) {
         const n = path.nodes[0];
-        addRow({ cls: 'so-seq-row-active', label: '🎯 目标', kw: '', body: nodeTargetText(n), open: true,
+        addRow({ cls: 'pad-seq-row-active', label: '🎯 目标', kw: '', body: nodeTargetText(n), open: true,
             buttons: [rowBtn('✏️', '修改目标', () => startPathEdit(n.id))], target: n.id });
         return;
     }
-    addRow({ cls: 'so-seq-canon', label: '🎯 整体目标', kw: '', body: path.overall || '（没写）', open: false,
+    addRow({ cls: 'pad-seq-canon', label: '🎯 整体目标', kw: '', body: path.overall || '（没写）', open: false,
         buttons: [rowBtn('✏️', '修改整体目标', () => startPathEdit('overall'))], target: 'overall' });
     const mark = { done: '✓', active: '▶', pending: '○', skipped: '⤫' };
     path.nodes.forEach((n, i) => {
@@ -242,7 +242,7 @@ function renderPathList(path) {
             body = n.detail || (wantAutoDetail() ? '轮到它时，参谋再按演出来的剧情写详细。' : '还没有详细：轮到它时先按关键词引导。');
         }
         const live = n.status === 'active' || n.status === 'pending';
-        addRow({ cls: `so-seq-row-${n.status}`, label: `${mark[n.status] || '?'} ${i + 1}. ${n.name}`, kw: live ? n.keywords : '',
+        addRow({ cls: `pad-seq-row-${n.status}`, label: `${mark[n.status] || '?'} ${i + 1}. ${n.name}`, kw: live ? n.keywords : '',
             body, open: n.status === 'active', buttons, target: n.id });
     });
 }
@@ -269,29 +269,29 @@ function activeConstructLabel() {
 function ensurePlanFloat() {
     if (planFloat) return;
     planFloat = document.createElement('div');
-    planFloat.id = 'so-plan-float';
+    planFloat.id = 'pad-plan-float';
     planFloat.innerHTML = `
-        <div id="so-plan-float-head">
+        <div id="pad-plan-float-head">
             <i class="fa-solid fa-compass"></i>
-            <span class="so-plan-float-title">剧情引导</span>
-            <span class="so-plan-spacer"></span>
-            <div class="so-iconbtn" id="so-plan-float-collapse" title="收起成小标签 / 展开"><i class="fa-solid fa-chevron-up"></i></div>
-            <div class="so-iconbtn" id="so-plan-float-open" title="打开剧情推进"><i class="fa-solid fa-moon"></i></div>
+            <span class="pad-plan-float-title">剧情引导</span>
+            <span class="pad-plan-spacer"></span>
+            <div class="pad-iconbtn" id="pad-plan-float-collapse" title="收起成小标签 / 展开"><i class="fa-solid fa-chevron-up"></i></div>
+            <div class="pad-iconbtn" id="pad-plan-float-open" title="打开剧情推进"><i class="fa-solid fa-moon"></i></div>
         </div>
-        <div id="so-plan-float-slot"></div>`;
+        <div id="pad-plan-float-slot"></div>`;
     document.body.appendChild(planFloat);
-    planFloatSlot = planFloat.querySelector('#so-plan-float-slot');
-    planFloat.querySelector('#so-plan-float-open').addEventListener('click', () => toggleWindow(true));
-    planFloat.querySelector('#so-plan-float-collapse').addEventListener('click', () => {
+    planFloatSlot = planFloat.querySelector('#pad-plan-float-slot');
+    planFloat.querySelector('#pad-plan-float-open').addEventListener('click', () => toggleWindow(true));
+    planFloat.querySelector('#pad-plan-float-collapse').addEventListener('click', () => {
         const s2 = getSettings();
         s2.planFloatCollapsed = !s2.planFloatCollapsed;
         save();
         applyPlanFloatCollapsed();
     });
     // 折叠成罗盘药丸后，整张可点面就是那颗按钮 —— 放行「从按钮起拖」，否则手机上只剩 3px 外圈可拖（拖不动）。
-    makeDraggable(planFloat, planFloat.querySelector('#so-plan-float-head'),
+    makeDraggable(planFloat, planFloat.querySelector('#pad-plan-float-head'),
         { left: 'planFloatLeft', top: 'planFloatTop' },
-        { dragFromButtons: () => planFloat.classList.contains('so-collapsed') });
+        { dragFromButtons: () => planFloat.classList.contains('pad-collapsed') });
     // Restore the saved position, clamped to the current viewport.
     const s = getSettings();
     if (Number.isFinite(s.planFloatLeft) && Number.isFinite(s.planFloatTop)) {
@@ -310,15 +310,15 @@ function ensurePlanFloat() {
 function applyPlanFloatCollapsed() {
     if (!planFloat) return;
     const collapsed = !!getSettings().planFloatCollapsed;
-    planFloat.classList.toggle('so-collapsed', collapsed);
-    const btn = planFloat.querySelector('#so-plan-float-collapse');
+    planFloat.classList.toggle('pad-collapsed', collapsed);
+    const btn = planFloat.querySelector('#pad-plan-float-collapse');
     btn.querySelector('i').className = collapsed ? 'fa-solid fa-compass' : 'fa-solid fa-chevron-up';
-    planFloat.querySelector('.so-plan-float-title').textContent = collapsed ? (guidePaused() ? '已暂停' : '引导中') : '剧情引导';
+    planFloat.querySelector('.pad-plan-float-title').textContent = collapsed ? (guidePaused() ? '已暂停' : '引导中') : '剧情引导';
     // 标签只挂在 compass 按钮上（activeConstructLabel），可 hover 的 head 上不挂任何内容
     // （原版为盲盒防剧透定的规矩，精简版沿用）。
     const label = activeConstructLabel();
     btn.title = collapsed ? (label ? `展开 · ${label}` : '展开剧情引导') : '收起成指南针（不挡屏）';
-    planFloat.querySelector('#so-plan-float-head').title = '';
+    planFloat.querySelector('#pad-plan-float-head').title = '';
 }
 
 // Decide where the strip lives right now. Rules: no plan -> hidden (and parked
@@ -336,7 +336,7 @@ export function placePlanBar() {
     } else {
         if (planFloat) planFloat.style.display = 'none';
         if (planBarEl.parentElement !== win) {
-            win.insertBefore(planBarEl, win.querySelector('#so-messages'));
+            win.insertBefore(planBarEl, win.querySelector('#pad-messages'));
         }
     }
 }

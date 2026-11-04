@@ -1,17 +1,17 @@
 /* ---------- debug / last-prompt viewer ---------- */
-#so-debug {
+#pad-debug {
     display: none;
     position: absolute;
     inset: 0;
     z-index: 20;
     flex-direction: column;
-    border-radius: var(--so-radius);
+    border-radius: var(--pad-radius);
     background-color: var(--SmartThemeBlurTintColor, rgba(18, 18, 20, 0.985));
     backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 6px));
 }
-#so-debug.open { display: flex; }
+#pad-debug.open { display: flex; }
 
-#so-debug-head {
+#pad-debug-head {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -21,11 +21,11 @@
     font-weight: 600;
     font-size: 0.9em;
     border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
-    background: linear-gradient(180deg, color-mix(in srgb, var(--so-accent) 12%, transparent), transparent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--pad-accent) 12%, transparent), transparent);
 }
-#so-debug-meta { opacity: 0.55; font-weight: 400; font-size: 0.82em; }
+#pad-debug-meta { opacity: 0.55; font-weight: 400; font-size: 0.82em; }
 
-#so-debug-body {
+#pad-debug-body {
     flex: 1 1 auto;
     margin: 0;
     padding: 12px;
@@ -39,8 +39,8 @@
     -webkit-user-select: text;
     user-select: text;
 }
-#so-debug-body::-webkit-scrollbar { width: 8px; }
-#so-debug-body::-webkit-scrollbar-thumb {
+#pad-debug-body::-webkit-scrollbar { width: 8px; }
+#pad-debug-body::-webkit-scrollbar-thumb {
     background: var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
     border-radius: 8px;
     border: 2px solid transparent;

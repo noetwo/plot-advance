@@ -32,7 +32,7 @@ const FIX_PARK_MAX = 8;
  * 模板任务常常是「整条翻译 / 整条改写」，一趟往返几十秒起步——非流式时用户只看得到一个不动的提示，
  * 分不清「在跑」与「卡死」；而中转（navy 一类）对静默连接有 ~100s 的 CF 顶，流式还能把连接喂活。
  * 直播落在【哪里】按房间可见性分流，两条路都绝不碰主聊天（写入仍只发生在 applyFixAsSwipe 那一刻）：
- *   · 校正房正开着 → 临时气泡（与「按目标校正」的手动卡同一条 DOM 路：addMessage + so-streaming），
+ *   · 校正房正开着 → 临时气泡（与「按目标校正」的手动卡同一条 DOM 路：addMessage + pad-streaming），
  *     绝不进 convo / 不落盘，收尾必删（fixRunJoin 的 finally）。
  *   · 房间不可见（窗口关着 / 在别的房） → 把进度挂到「正在校正…」提示上（字数计数器）。
  * ------------------------------------------------------------------ */
@@ -72,9 +72,9 @@ function fixCustomPreviewStart(meta, toastHandle, s) {
         if (win && win.style.display !== 'none' && convoStreamKey === 'fix' && messagesEl) {
             const head = `📋 模板〔${meta.template || ''}〕 · 处理中…`;
             const wrap = addMessage('assistant', '', null);   // 不传 entry ⇒ 不挂编辑/重生成/删除按钮，也永不进 convo
-            wrap.classList.add('so-fixc-preview');
-            const contentEl = wrap.querySelector('.so-content');
-            contentEl.classList.add('so-streaming');
+            wrap.classList.add('pad-fixc-preview');
+            const contentEl = wrap.querySelector('.pad-content');
+            contentEl.classList.add('pad-streaming');
             contentEl.textContent = head;
             let done = false;
             return {
@@ -87,7 +87,7 @@ function fixCustomPreviewStart(meta, toastHandle, s) {
                     if (done) return;
                     done = true;
                     try {
-                        contentEl.classList.remove('so-streaming');
+                        contentEl.classList.remove('pad-streaming');
                         wrap.remove();
                         // 房间被这只气泡清掉过空态卡：真的空了才补回（renderEmptyState 自带 convo/children 守卫）。
                         if (messagesEl && !messagesEl.children.length) renderEmptyState();
@@ -394,7 +394,7 @@ function replyExpectsMvu(text) {
 // 这里只负责【落地】——写配置 / 出提示 / 决定继续还是跳过。调用点刻意排在 R2 双重校正之后（那条已经
 // return 掉的情形不该再叠加一条作用域提示）、成本门 fixPreFilter 之前（省一次可能白花的 LLM 调用）。
 //   detected → 采纳新标签：写回 per-chat 配置（缓存，且 scopeManual 仍是 false——这不是用户手填的）+
-//     顺手同步一下设置面板里的 #so-fix-scope 输入框（如果窗口开着，用户正好能看见变化），继续往下走。
+//     顺手同步一下设置面板里的 #pad-fix-scope 输入框（如果窗口开着，用户正好能看见变化），继续往下走。
 //   suggest / skip → D 的静默兜底：只留一条侧聊记录，绝不整条回复瞎改，本轮直接结束。
 //   cache / fallbackWhole → 无需任何动作，直接往下走（fixContext.scope 已按决策准备好）。
 // 📋 自定义模板任务（沿用识别开）也走这里，因此模板任务会写 fixA_scopeTag / fixA_pieceMode / fixA_pieceAsked
@@ -404,7 +404,7 @@ function fixLandAutoDecisions(s, meta, fixContext) {
     const scopeDec = fixContext.scopeDecision;
     if (scopeDec && scopeDec.action === 'detected') {
         setFixCfg({ fixA_scopeTag: scopeDec.tag, fixA_scopeManual: false });
-        const scopeEl = win && win.querySelector('#so-fix-scope');
+        const scopeEl = win && win.querySelector('#pad-fix-scope');
         if (scopeEl) scopeEl.value = scopeDec.tag;   // 单字段回填；el.value= 不触发 'input' 事件，scopeManual 不会被误置 true
         addAutoFixNote('scope', scopeDec.note, null, meta);
         getHostGlobal('toastr')?.success?.(fixScopeNoteText(scopeDec.note).body, '', { timeOut: 6000 });
@@ -421,7 +421,7 @@ function fixLandAutoDecisions(s, meta, fixContext) {
             const cur = getEffectiveFixCfg(s, getFixCfg());
             if (cur.fixA_pieceMode !== 'wrapped' || cur.fixA_scopeTag !== pd.tag) {   // 只在有变化时写（免得每条回复都 saveChatMetadata）
                 setFixCfg({ fixA_pieceMode: 'wrapped', fixA_scopeTag: pd.tag, fixA_scopeManual: false });
-                const scopeEl = win && win.querySelector('#so-fix-scope');
+                const scopeEl = win && win.querySelector('#pad-fix-scope');
                 if (scopeEl) scopeEl.value = pd.tag;
                 if (!pd.adopt.quiet) {
                     addAutoFixNote('scope', pd.note, null, meta);

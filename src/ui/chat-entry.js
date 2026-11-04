@@ -60,7 +60,7 @@ function injectFixSelBarButton() {
             if (window.toastr) window.toastr.info('还没有可校正的 AI 回复', '剧情推进');
             return;
         }
-        Promise.resolve(onFixChatEntryClick()).catch((err) => console.warn('[Story Oracle] 选段入口点击失败：', err));
+        Promise.resolve(onFixChatEntryClick()).catch((err) => console.warn('[剧情推进] 选段入口点击失败：', err));
     };
     btn.addEventListener('click', go);
     btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); });
@@ -111,12 +111,12 @@ export function syncFixSelBarButton() {
 
 
 /**
- * 窗口配色三档（1.45.0）。在 <body> 上挂恰好一个 so-skin-* 类；'theme'（跟随酒馆主题）
+ * 窗口配色三档（1.45.0）。在 <body> 上挂恰好一个 pad-skin-* 类；'theme'（跟随酒馆主题）
  * 时一个都不挂 —— 不挂类 = 不命中任何皮肤规则 = 与 1.44.x 逐值相同的渲染。
  *
- * 放在 body 而不是各个根上：一次写入同时覆盖 #so-window / #so-plan-float
- * 两个 body 级根，以后新增根也免费。特异度 body.so-skin-x #so-window (1,1,1) 压过
- * #so-window (1,0,0)，故皮肤块不需要 !important。
+ * 放在 body 而不是各个根上：一次写入同时覆盖 #pad-window / #pad-plan-float
+ * 两个 body 级根，以后新增根也免费。特异度 body.pad-skin-x #pad-window (1,1,1) 压过
+ * #pad-window (1,0,0)，故皮肤块不需要 !important。
  *
  * 无效值一律按 'theme' 处理（fail-open）：配色出错不该把窗口变成没法用的样子。
  *
@@ -125,10 +125,10 @@ export function syncFixSelBarButton() {
 export function applyWindowSkin(s) {
     const b = document.body;
     if (!b) return;
-    b.classList.remove('so-skin-dark', 'so-skin-light');
+    b.classList.remove('pad-skin-dark', 'pad-skin-light');
     const skin = s && s.windowSkin;
-    if (skin === 'dark') b.classList.add('so-skin-dark');
-    else if (skin === 'light') b.classList.add('so-skin-light');
+    if (skin === 'dark') b.classList.add('pad-skin-dark');
+    else if (skin === 'light') b.classList.add('pad-skin-light');
 }
 
 // 按设置同步聊天栏按钮的有无（init 时 + 设置里勾选 / 取消时调用）。
@@ -140,17 +140,17 @@ export function syncChatBarButton() {
 // 精简版 1.2：在输入框上方的快捷回复栏（#qr--bar，「柏宝书」「重新处理变量」那一排）放一个「剧情推进」
 // 文字按钮，一键开 / 关窗口。外观全靠酒馆快捷回复自带的 .qr--button 类，而它的样式挂在祖先选择器
 // #qr--bar > .qr--buttons 上，所以按钮必须落在这个结构里：有 #qr--bar 就复用，没有（没装 / 关了快捷
-// 回复）就自建一条同款，打上 so-qr-bar 标记，撤按钮时一并回收。快捷回复在换聊天 / 改设置时会整条
+// 回复）就自建一条同款，打上 pad-qr-bar 标记，撤按钮时一并回收。快捷回复在换聊天 / 改设置时会整条
 // 重建 #qr--bar、把按钮冲掉，故用 MutationObserver 盯住 #send_form 补回（同柏宝书 / JS-Slash-Runner）。
-const SO_QR_BAR_CLASS = 'so-qr-bar';
+const SO_QR_BAR_CLASS = 'pad-qr-bar';
 
 
 
 function injectQrButton() {
     const form = document.getElementById('send_form');
     if (!form) return false;
-    if (soEntryIsLive('so-qr-button', form)) return true;
-    soDropEntries('so-qr-button');
+    if (soEntryIsLive('pad-qr-button', form)) return true;
+    soDropEntries('pad-qr-button');
     // id 理应唯一，但别的扩展可能也自建过一条——按属性找、只认 #send_form 里的
     let bar = [...form.querySelectorAll('div')].find((d) => d.id === 'qr--bar');
     if (!bar) {
@@ -166,7 +166,7 @@ function injectQrButton() {
         bar.appendChild(holder);
     }
     const btn = document.createElement('div');
-    btn.id = 'so-qr-button';
+    btn.id = 'pad-qr-button';
     btn.className = 'qr--button menu_button interactable';
     btn.tabIndex = 0;
     btn.title = '剧情推进 —— 点击开 / 关窗口';
@@ -179,7 +179,7 @@ function injectQrButton() {
     return true;
 }
 function removeQrButton() {
-    soDropEntries('so-qr-button');
+    soDropEntries('pad-qr-button');
     // 自建的那条（原本没有快捷回复栏）撤完按钮若已空就一并收走，别留一条空栏
     const bar = document.querySelector('#qr--bar.' + SO_QR_BAR_CLASS);
     const holder = bar && bar.querySelector('.qr--buttons');
@@ -193,7 +193,7 @@ function watchQrBar() {
     soQrObservedForm = form;
     soQrObserver = new MutationObserver(() => {
         // 我们自己插按钮也会触发一次回调——那时按钮已活着，O(1) 早返回，不会自激
-        if (getSettings().showQrButton && !soEntryIsLive('so-qr-button', form)) injectQrButton();
+        if (getSettings().showQrButton && !soEntryIsLive('pad-qr-button', form)) injectQrButton();
     });
     soQrObserver.observe(form, { childList: true, subtree: true });
 }
@@ -212,7 +212,7 @@ export function syncQrButton() {
         if (injectQrButton() || ++tries > 40) {
             clearInterval(soQrPoll);
             soQrPoll = null;
-            if (document.getElementById('so-qr-button')) watchQrBar();
+            if (document.getElementById('pad-qr-button')) watchQrBar();
         }
     }, 500);
 }

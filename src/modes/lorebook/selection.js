@@ -47,15 +47,15 @@ export function filterBookEntries(listSelector, query, onFiltered, root) {
     const needle = (query || '').trim().toLowerCase();
     const list = root?.querySelector(listSelector);
     if (!list) return;
-    for (const row of list.querySelectorAll('.so-lb-ent')) {
+    for (const row of list.querySelectorAll('.pad-lb-ent')) {
         row.style.display = (!needle || (row.dataset.hay || '').includes(needle)) ? '' : 'none';
     }
     // Hide a book header (+ its "empty" sub-line) when none of its rows are visible.
-    for (const head of list.querySelectorAll('.so-lb-book-head, .so-lb-ent-empty-sub')) {
+    for (const head of list.querySelectorAll('.pad-lb-book-head, .pad-lb-ent-empty-sub')) {
         if (!needle) { head.style.display = ''; continue; }
         const book = head.dataset.book || '';
         const headMatches = (head.dataset.hay || '').includes(needle);
-        const anyRowVisible = [...list.querySelectorAll('.so-lb-ent')]
+        const anyRowVisible = [...list.querySelectorAll('.pad-lb-ent')]
             .some((row) => (row.dataset.book || '') === book && row.style.display !== 'none');
         head.style.display = (headMatches || anyRowVisible) ? '' : 'none';
     }

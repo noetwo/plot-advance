@@ -265,7 +265,7 @@ export function fixSelPickMode(storedPref, coarsePointer) {
 // 每片一个 <span>，恒带【切句时就算好的】raw UTF-16 偏移 data-s / data-e —— 偏移从不靠搜索显示文字
 // 找回（sol 警告：画出来的高亮绝不能变成第二个真相源）。落在 prose 单元里的片带 data-i + role=option
 //（同一单元被草稿/钉边切成几片时，几片共享同一个 data-i）；gap 片是素片、不可点。草稿内加
-// so-fixsel-u-hl、钉段内加 so-fixsel-u-pin，钉段的【第一片】带 data-badge（1 基序号）。
+// pad-fixsel-u-hl、钉段内加 pad-fixsel-u-pin，钉段的【第一片】带 data-badge（1 基序号）。
 // 文本只转义 & < >；状态栏 / 更新块 / 代码围栏都是普通文字（裁定 0.1，不做块识别）。可单测。
 export function buildFixSelPickerHtml(raw, units, draft, pins) {
     const t = String(raw || '');
@@ -284,12 +284,12 @@ export function buildFixSelPickerHtml(raw, units, draft, pins) {
         while (ui < us.length && us[ui].end <= s) ui++;
         const unit = us[ui];
         const pi = ps.findIndex((p) => s >= p.start && e <= p.end);
-        const cls = (d && s >= d.start && e <= d.end ? ' so-fixsel-u-hl' : '') + (pi >= 0 ? ' so-fixsel-u-pin' : '');
+        const cls = (d && s >= d.start && e <= d.end ? ' pad-fixsel-u-hl' : '') + (pi >= 0 ? ' pad-fixsel-u-pin' : '');
         const badge = (pi >= 0 && s === ps[pi].start) ? ` data-badge="${pi + 1}"` : '';
         const off = ` data-s="${s}" data-e="${e}"`;
         const text = esc(t.slice(s, e));
         if (unit && unit.kind === 'prose' && s >= unit.start && e <= unit.end) {
-            html += `<span class="so-fixsel-u${cls}" data-i="${ui}" role="option"${off}${badge}>${text}</span>`;
+            html += `<span class="pad-fixsel-u${cls}" data-i="${ui}" role="option"${off}${badge}>${text}</span>`;
         } else {
             html += `<span${cls ? ` class="${cls.trim()}"` : ''}${off}${badge}>${text}</span>`;
         }

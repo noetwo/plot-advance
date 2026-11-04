@@ -83,15 +83,15 @@ export function parseStoryPlans(text) {
 // 角色工坊：访谈汇总（<CharBrief>）回复下方的「🔨 生成」卡——点它把汇总连同全部上下文交给锻造工序。
 export function addBriefControls(assistantEl, brief) {
     const bar = document.createElement('div');
-    bar.className = 'so-apply-bar';
+    bar.className = 'pad-apply-bar';
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'so-apply-btn';
+    btn.className = 'pad-apply-btn';
     btn.textContent = '🔨 生成';
     btn.title = '把这份汇总连同全部上下文交给锻造工序（一次完整调用）';
     btn.addEventListener('click', () => runForge());
     bar.appendChild(btn);
-    assistantEl.querySelector('.so-bubble').appendChild(bar);
+    assistantEl.querySelector('.pad-bubble').appendChild(bar);
 }
 
 // 这张卡是不是当前在跑的那条脉络的来源（重画时恢复「已采用」高亮）：卡里的节点名恰好是在场脉络的末尾一段。
@@ -106,20 +106,20 @@ function pathCardIsAdopted(path, card) {
 
 // 参谋卡：单节点 =「方案 · 标题」+ 可以改的目标；多节点 =「剧情脉络 · 标题（N 个节点）」+ 整体目标 + 各节点
 // （展开可以改详细）。都带推进速度，点按钮采用；采用时用框里改过的文字。卡挂在【气泡】里而不是消息行上
-// （.so-msg 是 flex 行，挂到行上会变成挤在气泡旁边的第三个 flex 项）。
+// （.pad-msg 是 flex 行，挂到行上会变成挤在气泡旁边的第三个 flex 项）。
 export function addPathCards(assistantEl, plans) {
     if (!plans.length) return;
-    const bubble = assistantEl.querySelector('.so-bubble') || assistantEl;
-    let wrap = bubble.querySelector('.so-plan-cards');
+    const bubble = assistantEl.querySelector('.pad-bubble') || assistantEl;
+    let wrap = bubble.querySelector('.pad-plan-cards');
     if (!wrap) {
         wrap = document.createElement('div');
-        wrap.className = 'so-plan-cards';
+        wrap.className = 'pad-plan-cards';
         bubble.appendChild(wrap);
     }
     const grow = (box) => { box.style.height = 'auto'; box.style.height = (box.scrollHeight + 4) + 'px'; };
     const detailBox = (value) => {
         const box = document.createElement('textarea');
-        box.className = 'so-seq-canon-box';
+        box.className = 'pad-seq-canon-box';
         box.rows = 3;
         box.spellcheck = false;
         box.value = value;
@@ -130,29 +130,29 @@ export function addPathCards(assistantEl, plans) {
     for (const p of plans) {
         const multi = p.nodes.length > 1;
         const card = document.createElement('div');
-        card.className = 'so-plan-card' + (multi ? ' so-seq-card' : '');
-        if (pathCardIsAdopted(live, p)) card.classList.add('so-plan-adopted');
+        card.className = 'pad-plan-card' + (multi ? ' pad-seq-card' : '');
+        if (pathCardIsAdopted(live, p)) card.classList.add('pad-plan-adopted');
         const head = document.createElement('div');
-        head.className = 'so-plan-card-title';
+        head.className = 'pad-plan-card-title';
         head.textContent = multi ? `剧情脉络 · ${p.title || '未命名'}（${p.nodes.length} 个节点）` : `方案 · ${p.title || '未命名'}`;
         card.appendChild(head);
         const boxes = [];   // 每个节点的详细输入框；参谋没写详细的节点为 null
         if (multi) {
             if (p.overall) {
                 const line = document.createElement('div');
-                line.className = 'so-plan-card-line';
+                line.className = 'pad-plan-card-line';
                 line.textContent = '整体目标：' + p.overall;
                 card.appendChild(line);
             }
             p.nodes.forEach((n, i) => {
                 const row = document.createElement('details');
-                row.className = 'so-seq-card-beat';
+                row.className = 'pad-seq-card-beat';
                 row.open = i === 0;
                 const sum = document.createElement('summary');
                 sum.textContent = `${i + 1}. ${n.name}`;
                 if (n.keywords) {
                     const kw = document.createElement('span');
-                    kw.className = 'so-path-kw';
+                    kw.className = 'pad-path-kw';
                     kw.textContent = ' · ' + n.keywords;
                     sum.appendChild(kw);
                 }
@@ -164,7 +164,7 @@ export function addPathCards(assistantEl, plans) {
                     boxes.push(box);
                 } else {
                     const hint = document.createElement('div');
-                    hint.className = 'so-seq-card-beatbody';
+                    hint.className = 'pad-seq-card-beatbody';
                     hint.textContent = wantAutoDetail()
                         ? '到这个节点时，参谋看着已经演出来的剧情再写详细。'
                         : '参谋没写详细：到这个节点时先按关键词引导，可以在方案条上补写，或点「让参谋写」。';
@@ -181,15 +181,15 @@ export function addPathCards(assistantEl, plans) {
         // 推进速度默认沿用正在进行的那条脉络（替换剩下的部分时不会悄悄把速度改回「正常」），没有才是「正常」。
         let speed = (live && ADVISOR_SPEEDS[live.speed]) ? live.speed : 'normal';
         const seg = document.createElement('div');
-        seg.className = 'so-plan-intensity';
+        seg.className = 'pad-plan-intensity';
         const caption = document.createElement('div');
-        caption.className = 'so-hint so-plan-card-caption';
+        caption.className = 'pad-hint pad-plan-card-caption';
         const renderSeg = () => {
             seg.innerHTML = '';
             for (const [key, I] of Object.entries(ADVISOR_SPEEDS)) {
                 const b = document.createElement('button');
                 b.type = 'button';
-                b.className = 'so-plan-int' + (speed === key ? ' active' : '');
+                b.className = 'pad-plan-int' + (speed === key ? ' active' : '');
                 b.textContent = I.label;
                 b.addEventListener('click', () => { speed = key; renderSeg(); });
                 seg.appendChild(b);
@@ -200,29 +200,29 @@ export function addPathCards(assistantEl, plans) {
         card.appendChild(seg);
         card.appendChild(caption);
         const actions = document.createElement('div');
-        actions.className = 'so-plan-card-actions';
+        actions.className = 'pad-plan-card-actions';
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'so-apply-btn';
+        btn.className = 'pad-apply-btn';
         btn.innerHTML = multi ? '<i class="fa-solid fa-list-ol"></i> 按脉络开始引导' : '<i class="fa-solid fa-compass"></i> 开始引导';
         btn.addEventListener('click', async () => {
             const edited = { ...p, nodes: p.nodes.map((n, i) => ({ ...n, detail: boxes[i] ? boxes[i].value.trim() : n.detail })) };
             if (!(await adoptPath(edited, speed))) return;
-            wrap.querySelectorAll('.so-plan-card').forEach((c) => c.classList.remove('so-plan-adopted'));
-            card.classList.add('so-plan-adopted');
+            wrap.querySelectorAll('.pad-plan-card').forEach((c) => c.classList.remove('pad-plan-adopted'));
+            card.classList.add('pad-plan-adopted');
         });
         actions.appendChild(btn);
         card.appendChild(actions);
         wrap.appendChild(card);
     }
-    requestAnimationFrame(() => wrap.querySelectorAll('textarea.so-seq-canon-box').forEach((b) => { if (b.offsetParent) grow(b); }));
+    requestAnimationFrame(() => wrap.querySelectorAll('textarea.pad-seq-canon-box').forEach((b) => { if (b.offsetParent) grow(b); }));
     scrollToBottom();
 }
 
 // Typing-dots indicator placed inside an assistant bubble until the first token.
 export function showTyping(contentEl) {
     const dots = document.createElement('span');
-    dots.className = 'so-typing';
+    dots.className = 'pad-typing';
     dots.innerHTML = '<i></i><i></i><i></i>';
     contentEl.appendChild(dots);
     let cleared = false;
@@ -235,7 +235,7 @@ export function showTyping(contentEl) {
 
 export function addSystemNote(text) {
     const wrap = document.createElement('div');
-    wrap.className = 'so-note';
+    wrap.className = 'pad-note';
     wrap.textContent = text;
     messagesEl.appendChild(wrap);
     scrollToBottom();
@@ -254,13 +254,13 @@ export function modeEntryNote(text) {
 // loadConvoForChat 凭 peekNoteOpts 重挂；重载后注册表为空 → 记录变只读（重放旧补丁不安全，与手动
 // 诊断回复重载后失去按钮一致）。
 export function addNoteMessage(entry, opts) {
-    const empty = messagesEl.querySelector('.so-empty');
+    const empty = messagesEl.querySelector('.pad-empty');
     if (empty) empty.remove();
     const wrap = document.createElement('div');
-    wrap.className = 'so-note so-note-record';
+    wrap.className = 'pad-note pad-note-record';
     if (entry) wrap.dataset.cid = entry.id;
     const txt = document.createElement('div');
-    txt.className = 'so-note-record-text';
+    txt.className = 'pad-note-record-text';
     txt.textContent = entry ? entry.content : '';
     wrap.appendChild(txt);
     if (opts && opts.snapshot && opts.patch) addNoteUndoControls(wrap, opts);   // info 形状：{snapshot, applied, patch, writeBack, undone?}
@@ -277,19 +277,19 @@ export function renderEmptyState() {
     if (convo.length || messagesEl.children.length) return;
     const m = MODE_EMPTY[currentOracleMode()] || MODE_EMPTY.chat;
     const wrap = document.createElement('div');
-    wrap.className = 'so-empty';
-    let html = `<i class="fa-solid ${m.icon} so-empty-icon"></i>` +
-        `<div class="so-empty-line">${m.lead}</div>`;
-    if (m.sub) html += `<div class="so-empty-sub">${m.sub}</div>`;
+    wrap.className = 'pad-empty';
+    let html = `<i class="fa-solid ${m.icon} pad-empty-icon"></i>` +
+        `<div class="pad-empty-line">${m.lead}</div>`;
+    if (m.sub) html += `<div class="pad-empty-sub">${m.sub}</div>`;
     wrap.innerHTML = html;
     // 示例问题 chip：每种模式一组（见 MODE_EMPTY）。点一下把问题填进输入框并聚焦，直接回车即可
     // 发送，由该模式的发送管线处理。chip 是真正的 <button>，键盘可达（与 Tier 1 一致）。
     const chips = document.createElement('div');
-    chips.className = 'so-empty-chips';
+    chips.className = 'pad-empty-chips';
     for (const q of m.chips) {
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = 'so-empty-chip';
+        chip.className = 'pad-empty-chip';
         chip.textContent = q;
         chip.addEventListener('click', () => {
             inputEl.value = q;
@@ -310,17 +310,17 @@ export function renderEmptyState() {
    loadConvoForChat 是【先挂提示线、再叫空态】。那是 1.28.0 起的既有行为（本次不动它），代价是空的
    参谋房根本没有空态可挂 —— 而参谋恰恰是允许导入的两房之一。于是两处各调一次：renderEmptyState 里
    挂进空态卡片，loadConvoForChat 里挂进消息区本体，保证「凡是空的、且模式允许的房间」都有入口。
-   幂等（host 里已有就不再加）；另挂 `.so-convio-btn` 让 soApplyConvoIoVisual 扫得到（不换房、
+   幂等（host 里已有就不再加）；另挂 `.pad-convio-btn` 让 soApplyConvoIoVisual 扫得到（不换房、
    不重画的模式过渡只有那一扫够得着）。 */
 export function appendConvoImportEntry(host) {
     if (!host || typeof host.querySelector !== 'function') return;
-    if (host.querySelector('.so-empty-import-btn')) return;              // 幂等
+    if (host.querySelector('.pad-empty-import-btn')) return;              // 幂等
     if (!convoExportAllowed(currentOracleMode())) return;                // 与气泡按钮同一道模式闸
     const ioRow = document.createElement('div');
-    ioRow.className = 'so-empty-chips so-empty-io';
+    ioRow.className = 'pad-empty-chips pad-empty-io';
     const impBtn = document.createElement('button');
     impBtn.type = 'button';
-    impBtn.className = 'so-empty-chip so-convio-btn so-empty-import-btn';
+    impBtn.className = 'pad-empty-chip pad-convio-btn pad-empty-import-btn';
     impBtn.title = '导入对话 —— 把导出的 Markdown 文件读回这一页';
     impBtn.innerHTML = '<i class="fa-solid fa-file-import"></i> 导入对话';
     impBtn.addEventListener('click', importConvo);
@@ -416,7 +416,7 @@ export function loadConvoForChat() {
     const cueText = streamCueLabel(convoStreamKey, getSettings());
     if (cueText) {
         const cue = document.createElement('div');
-        cue.className = 'so-stream-cue';
+        cue.className = 'pad-stream-cue';
         cue.textContent = cueText;
         messagesEl.appendChild(cue);
     }
@@ -433,10 +433,10 @@ export function loadConvoForChat() {
             // 同源的渲染器（参谋 StoryPlan 进 <pre>、诊断/世界书保持纯文本原样、校正走 ST 格式器、其余渲
             // Markdown）。仅助手回复、仅尚未渲染时。
             if (m.role === 'assistant' && m._el) {
-                const c = m._el.querySelector('.so-content');
-                if (c && !c.classList.contains('so-rendered')) {
+                const c = m._el.querySelector('.pad-content');
+                if (c && !c.classList.contains('pad-rendered')) {
                     const html = repaintHtmlForRoom(convoStreamKey, m.content || '');
-                    if (html != null) { c.innerHTML = html; c.classList.add('so-rendered'); c.style.whiteSpace = 'normal'; }
+                    if (html != null) { c.innerHTML = html; c.classList.add('pad-rendered'); c.style.whiteSpace = 'normal'; }
                 }
             }
         }
@@ -465,8 +465,8 @@ export function loadConvoForChat() {
             && !convo.some((m) => m.id === liveRun.entry.id)) {
             const el = addMessage('assistant', '', liveRun.entry);
             liveRun.entry._el = el;
-            const c = el.querySelector('.so-content');
-            if (c) { c.classList.add('so-streaming'); c.textContent = liveRun.text || ''; }
+            const c = el.querySelector('.pad-content');
+            if (c) { c.classList.add('pad-streaming'); c.textContent = liveRun.text || ''; }
         }
         // 📤 导入入口的兜底挂载 —— 条件是「这一房【没有 AI 气泡】」而不是「这一房是空的」。
         // 因为 📥📤 只挂在 AI 气泡上（addMessage），所以【有消息但一条 AI 回复都没有】的房间同样够不着入口：

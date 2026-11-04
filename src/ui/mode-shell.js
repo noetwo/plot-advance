@@ -43,47 +43,47 @@ export function openCuration(name, seedRows) {
     }
     curationState = { name, rows, dragFrom: -1 };
 
-    let modal = win.querySelector('#so-curate');
+    let modal = win.querySelector('#pad-curate');
     if (!modal) {
         modal = document.createElement('div');
-        modal.id = 'so-curate';
+        modal.id = 'pad-curate';
         win.appendChild(modal);
     }
     modal.innerHTML = `
-        <div id="so-cur-card">
-            <div id="so-cur-head">
-                <div id="so-cur-title"><i class="fa-solid fa-list-check"></i> 挑选要保留的块</div>
-                <div class="so-iconbtn" id="so-cur-x" title="取消"><i class="fa-solid fa-xmark"></i></div>
+        <div id="pad-cur-card">
+            <div id="pad-cur-head">
+                <div id="pad-cur-title"><i class="fa-solid fa-list-check"></i> 挑选要保留的块</div>
+                <div class="pad-iconbtn" id="pad-cur-x" title="取消"><i class="fa-solid fa-xmark"></i></div>
             </div>
-            <div id="so-cur-sub"></div>
-            <div id="so-cur-list"></div>
-            <div id="so-cur-foot">
-                <div id="so-cur-count"></div>
-                <div id="so-cur-foot-btns">
-                    <button class="so-cur-btn" id="so-cur-reset">重置默认</button>
-                    <button class="so-cur-btn" id="so-cur-cancel">取消</button>
-                    <button class="so-cur-btn so-cur-save" id="so-cur-save">保存并使用</button>
+            <div id="pad-cur-sub"></div>
+            <div id="pad-cur-list"></div>
+            <div id="pad-cur-foot">
+                <div id="pad-cur-count"></div>
+                <div id="pad-cur-foot-btns">
+                    <button class="pad-cur-btn" id="pad-cur-reset">重置默认</button>
+                    <button class="pad-cur-btn" id="pad-cur-cancel">取消</button>
+                    <button class="pad-cur-btn pad-cur-save" id="pad-cur-save">保存并使用</button>
                 </div>
             </div>
         </div>`;
-    modal.querySelector('#so-cur-sub').textContent =
+    modal.querySelector('#pad-cur-sub').textContent =
         `预设「${name}」 — 列出预设里的全部块（含预设已停用的，标「预设已停用」、默认不勾选）。勾选的块会按下方顺序忠实组装；插槽（角色卡 / 世界书 / 用户人设 / 上下文）会就地填入剧情推进的上下文。拖动可调整顺序。`;
 
     // One-time heads-up about the output-regex / preset-mismatch caveat.
     maybeShowCurationWarning(modal, name);
 
     // Critical layout applied inline so the modal is contained, opaque, and
-    // scrollable even if the stylesheet is stale/cached (the .so-cur-* theme
+    // scrollable even if the stylesheet is stale/cached (the .pad-cur-* theme
     // rules still enhance it once style.css refreshes).
     applyCurationChrome(modal);
 
-    modal.querySelector('#so-cur-x').addEventListener('click', closeCuration);
-    modal.querySelector('#so-cur-cancel').addEventListener('click', closeCuration);
-    modal.querySelector('#so-cur-reset').addEventListener('click', () => {
+    modal.querySelector('#pad-cur-x').addEventListener('click', closeCuration);
+    modal.querySelector('#pad-cur-cancel').addEventListener('click', closeCuration);
+    modal.querySelector('#pad-cur-reset').addEventListener('click', () => {
         curationState.rows = buildCurationRows(name); // re-seed from classifier
         renderCurationRows();
     });
-    modal.querySelector('#so-cur-save').addEventListener('click', saveCuration);
+    modal.querySelector('#pad-cur-save').addEventListener('click', saveCuration);
 
     modal.classList.add('open');
     modal.style.display = 'flex';
@@ -97,22 +97,22 @@ function applyCurationChrome(modal) {
         ';position:absolute;inset:0;top:0;left:0;right:0;bottom:0;z-index:50;' +
         'align-items:center;justify-content:center;padding:12px;box-sizing:border-box;' +
         'background:rgba(8,9,12,0.84);';
-    set('#so-cur-card',
+    set('#pad-cur-card',
         'position:relative;top:auto;left:auto;right:auto;bottom:auto;transform:none;' +
         'display:flex;flex-direction:column;width:100%;max-width:560px;' +
         'height:100%;max-height:100%;min-height:0;box-sizing:border-box;overflow:hidden;' +
         'border-radius:12px;background:#1b1d23;border:1px solid rgba(255,255,255,0.18);' +
         'box-shadow:0 20px 50px -12px rgba(0,0,0,0.7);');
-    set('#so-cur-head',
+    set('#pad-cur-head',
         'flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;' +
         'padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.12);');
-    set('#so-cur-sub', 'flex:0 0 auto;padding:10px 14px 4px;font-size:0.8em;opacity:0.65;line-height:1.5;');
-    set('#so-cur-list', 'flex:1 1 0;min-height:0;overflow-y:auto;padding:6px;');
-    set('#so-cur-foot',
+    set('#pad-cur-sub', 'flex:0 0 auto;padding:10px 14px 4px;font-size:0.8em;opacity:0.65;line-height:1.5;');
+    set('#pad-cur-list', 'flex:1 1 0;min-height:0;overflow-y:auto;padding:6px;');
+    set('#pad-cur-foot',
         'flex:0 0 auto;display:flex;align-items:center;gap:10px;' +
         'padding:10px 14px;border-top:1px solid rgba(255,255,255,0.12);');
-    set('#so-cur-count', 'flex:1 1 auto;font-size:0.8em;opacity:0.8;');
-    set('#so-cur-foot-btns', 'display:flex;gap:6px;flex:0 0 auto;');
+    set('#pad-cur-count', 'flex:1 1 auto;font-size:0.8em;opacity:0.8;');
+    set('#pad-cur-foot-btns', 'display:flex;gap:6px;flex:0 0 auto;');
 }
 
 // One-time warning: the Oracle assembles from (and regex-cleans for) the preset
@@ -121,8 +121,8 @@ function applyCurationChrome(modal) {
 function maybeShowCurationWarning(modal, name) {
     const s = getSettings();
     if (s.curationWarned) return;
-    const card = modal.querySelector('#so-cur-card');
-    const list = modal.querySelector('#so-cur-list');
+    const card = modal.querySelector('#pad-cur-card');
+    const list = modal.querySelector('#pad-cur-list');
     if (!card || !list) return;
 
     const mainName = getActiveMainPresetName();
@@ -131,7 +131,7 @@ function maybeShowCurationWarning(modal, name) {
     else if (mainName) tail = `（主聊天当前预设：「${escapeHtml(mainName)}」，与此不同 —— 正则很可能对不上）`;
 
     const warn = document.createElement('div');
-    warn.id = 'so-cur-warn';
+    warn.id = 'pad-cur-warn';
     warn.style.cssText =
         'flex:0 0 auto;margin:8px 14px 2px;padding:9px 11px;border-radius:8px;' +
         'font-size:0.78em;line-height:1.55;color:#f0d28a;' +
@@ -147,59 +147,59 @@ function maybeShowCurationWarning(modal, name) {
 }
 
 function closeCuration() {
-    const modal = win.querySelector('#so-curate');
+    const modal = win.querySelector('#pad-curate');
     if (modal) { modal.classList.remove('open'); modal.style.display = 'none'; }
     curationState = null;
 }
 
 function renderCurationRows() {
-    const list = win.querySelector('#so-cur-list');
+    const list = win.querySelector('#pad-cur-list');
     if (!list || !curationState) return;
     list.innerHTML = '';
     curationState.rows.forEach((r, idx) => {
         const row = document.createElement('div');
-        row.className = 'so-cur-row' + (r.keep ? '' : ' so-cur-off') + (r.kind === 'marker' ? ' so-cur-marker' : '');
+        row.className = 'pad-cur-row' + (r.keep ? '' : ' pad-cur-off') + (r.kind === 'marker' ? ' pad-cur-marker' : '');
         row.draggable = true;
         row.dataset.idx = String(idx);
 
-        const handle = `<span class="so-cur-handle" title="拖动排序"><i class="fa-solid fa-grip-vertical"></i></span>`;
-        const cb = `<input type="checkbox" class="so-cur-cb" ${r.keep ? 'checked' : ''}>`;
+        const handle = `<span class="pad-cur-handle" title="拖动排序"><i class="fa-solid fa-grip-vertical"></i></span>`;
+        const cb = `<input type="checkbox" class="pad-cur-cb" ${r.keep ? 'checked' : ''}>`;
         const roleBadge = (r.role && r.role !== 'system')
-            ? `<span class="so-cur-role">${r.role}</span>` : '';
-        // 【不要】把样式再内联回来（1.45.0）：这一串曾与 .so-cur-disabled 逐条重复，而内联优先级
+            ? `<span class="pad-cur-role">${r.role}</span>` : '';
+        // 【不要】把样式再内联回来（1.45.0）：这一串曾与 .pad-cur-disabled 逐条重复，而内联优先级
         // 压过任何类规则 —— 浅色皮肤给它写的 color 覆盖会被静默吃掉、徽章浅粉压浅底约 1.7:1。
         const disabledBadge = r.disabled
-            ? `<span class="so-cur-disabled">预设已停用</span>`
+            ? `<span class="pad-cur-disabled">预设已停用</span>`
             : '';
-        const tag = `<span class="so-cur-tag so-cur-tag-${r.category}">${CUR_TAG_LABEL[r.category] || r.category}</span>`;
+        const tag = `<span class="pad-cur-tag pad-cur-tag-${r.category}">${CUR_TAG_LABEL[r.category] || r.category}</span>`;
         const chars = r.kind === 'marker' ? '插槽' : `${r.chars} 字`;
         row.innerHTML =
-            `${handle}${cb}<span class="so-cur-name" title="${escapeAttr(r.name)}">${escapeHtml(r.name)}</span>` +
-            `${disabledBadge}${roleBadge}${tag}<span class="so-cur-chars">${chars}</span>`;
+            `${handle}${cb}<span class="pad-cur-name" title="${escapeAttr(r.name)}">${escapeHtml(r.name)}</span>` +
+            `${disabledBadge}${roleBadge}${tag}<span class="pad-cur-chars">${chars}</span>`;
 
         // Inline layout so rows stay readable even if the stylesheet is stale.
         row.style.cssText +=
             ';display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;' +
             'border:1px solid transparent;' + (r.keep ? '' : 'opacity:0.5;');
-        const nameEl = row.querySelector('.so-cur-name');
+        const nameEl = row.querySelector('.pad-cur-name');
         if (nameEl) nameEl.style.cssText += ';flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-        const charsEl = row.querySelector('.so-cur-chars');
+        const charsEl = row.querySelector('.pad-cur-chars');
         if (charsEl) charsEl.style.cssText += ';flex:0 0 auto;font-size:0.78em;opacity:0.5;';
-        const cbEl0 = row.querySelector('.so-cur-cb');
+        const cbEl0 = row.querySelector('.pad-cur-cb');
         if (cbEl0) cbEl0.style.cssText += ';flex:0 0 auto;width:15px;height:15px;cursor:pointer;';
-        row.querySelector('.so-cur-cb').addEventListener('change', (e) => {
+        row.querySelector('.pad-cur-cb').addEventListener('change', (e) => {
             curationState.rows[idx].keep = e.target.checked;
-            row.classList.toggle('so-cur-off', !e.target.checked);
+            row.classList.toggle('pad-cur-off', !e.target.checked);
             row.style.opacity = e.target.checked ? '' : '0.5';
             updateCurationCount();
         });
-        row.addEventListener('dragstart', () => { curationState.dragFrom = idx; row.classList.add('so-cur-drag'); });
-        row.addEventListener('dragend', () => { row.classList.remove('so-cur-drag'); });
-        row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('so-cur-over'); });
-        row.addEventListener('dragleave', () => row.classList.remove('so-cur-over'));
+        row.addEventListener('dragstart', () => { curationState.dragFrom = idx; row.classList.add('pad-cur-drag'); });
+        row.addEventListener('dragend', () => { row.classList.remove('pad-cur-drag'); });
+        row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('pad-cur-over'); });
+        row.addEventListener('dragleave', () => row.classList.remove('pad-cur-over'));
         row.addEventListener('drop', (e) => {
             e.preventDefault();
-            row.classList.remove('so-cur-over');
+            row.classList.remove('pad-cur-over');
             const from = curationState.dragFrom;
             const to = idx;
             if (from < 0 || from === to) return;
@@ -216,7 +216,7 @@ function renderCurationRows() {
 }
 
 function updateCurationCount() {
-    const el = win.querySelector('#so-cur-count');
+    const el = win.querySelector('#pad-cur-count');
     if (!el || !curationState) return;
     const kept = curationState.rows.filter((r) => r.keep);
     const texts = kept.filter((r) => r.kind === 'text');
@@ -239,7 +239,7 @@ function saveCuration() {
     s.sysPromptPresetName = name;
     save();
     closeCuration();
-    const sel = win.querySelector('#so-sysprompt-preset');
+    const sel = win.querySelector('#pad-sysprompt-preset');
     if (sel) sel.value = name;
     applySysPromptPresetUiState();
     updateBadge();
@@ -320,9 +320,9 @@ export function toggleWindow(show) {
     win.style.display = next ? 'flex' : 'none';
     if (next) {
         // Re-trigger the open animation each time the window is shown.
-        win.classList.remove('so-opening');
+        win.classList.remove('pad-opening');
         void win.offsetWidth; // force reflow so the animation restarts
-        win.classList.add('so-opening');
+        win.classList.add('pad-opening');
         ensureWindowInView();   // 每次开窗都把窗口夹回可见区——卡在屏外的窗口下次打开即自愈
         // 触屏不自动聚焦（见 focusOracleInput）：弹软键盘会压缩视口、把标题栏挤出屏外；桌面保留自动聚焦。
         focusOracleInput();
@@ -331,17 +331,17 @@ export function toggleWindow(show) {
     placePlanBar(); // strip moves home (window) or out (float) with visibility
 }
 
-// 纯判定：这次点击是否落在「不该触发收起」的 UI 上。so- 前缀带连字符全匹配（sod-/sot- 孪生
+// 纯判定：这次点击是否落在「不该触发收起」的 UI 上。pad- 前缀带连字符全匹配（sod-/sot- 孪生
 // 不在排除面——孪生并装是开发场景，误收起无害且可再开）。
-// #toast-container 单列：我们自己的提示是 toastr 的元素，挂在酒馆的 toast 容器里、不带 so- 前缀
+// #toast-container 单列：我们自己的提示是 toastr 的元素，挂在酒馆的 toast 容器里、不带 pad- 前缀
 // ——不排除就会「点提示顺手把窗口收了」。
 function isOracleUiEvent(target) {
     if (!target || typeof target.closest !== 'function') return false;
     const hit = target.closest(
-        '#so-window, #so-plan-float, #extensionsMenu, #extensionsMenuButton,'
-        + ' #toast-container, dialog, .popup, [id^="so-"], [class^="so-"], [class*=" so-"]',
+        '#pad-window, #pad-plan-float, #extensionsMenu, #extensionsMenuButton,'
+        + ' #toast-container, dialog, .popup, [id^="pad-"], [class^="pad-"], [class*=" pad-"]',
     );
-    // 1.48.1：命中 body/html 不算数——1.45.0 皮肤把 so-skin-* 类挂在 <body> 上（applyWindowSkin），
+    // 1.48.1：命中 body/html 不算数——1.45.0 皮肤把 pad-skin-* 类挂在 <body> 上（applyWindowSkin），
     // closest 会一路走到 body；不排掉的话 dark/light 皮肤下【页面上任何点击】都被当成自家 UI，
     // 收起永远不触发（theme 皮肤不挂类，所以单测和 smoke 全绿着漏过了它）。
     return !!(hit && hit !== document.body && hit !== document.documentElement);
@@ -424,25 +424,25 @@ export function modeReturnNote(mode) {
 
 export function setOracleMode(target) {
     activateOracleMode(target);
-    win.classList.toggle('so-diag-on', diagnoseMode);
-    win.classList.toggle('so-lb-on', lorebookMode);
-    win.classList.toggle('so-adv-on', advisorMode);
-    win.classList.toggle('so-fix-on', fixMode);
-    win.classList.toggle('so-bld-on', builderMode);
-    win.querySelector('#so-diagnose-btn').classList.toggle('so-diag-active', diagnoseMode);
-    win.querySelector('#so-lorebook-btn').classList.toggle('so-lb-active', lorebookMode);
-    win.querySelector('#so-advisor-btn').classList.toggle('so-adv-active', advisorMode);
-    win.querySelector('#so-fix-btn').classList.toggle('so-fix-active', fixMode);
-    win.querySelector('#so-builder-btn')?.classList.toggle('so-bld-active', builderMode);
+    win.classList.toggle('pad-diag-on', diagnoseMode);
+    win.classList.toggle('pad-lb-on', lorebookMode);
+    win.classList.toggle('pad-adv-on', advisorMode);
+    win.classList.toggle('pad-fix-on', fixMode);
+    win.classList.toggle('pad-bld-on', builderMode);
+    win.querySelector('#pad-diagnose-btn').classList.toggle('pad-diag-active', diagnoseMode);
+    win.querySelector('#pad-lorebook-btn').classList.toggle('pad-lb-active', lorebookMode);
+    win.querySelector('#pad-advisor-btn').classList.toggle('pad-adv-active', advisorMode);
+    win.querySelector('#pad-fix-btn').classList.toggle('pad-fix-active', fixMode);
+    win.querySelector('#pad-builder-btn')?.classList.toggle('pad-bld-active', builderMode);
     inputEl.placeholder = MODE_PLACEHOLDERS[target] || MODE_PLACEHOLDERS.chat;
     if (ENABLE_DIAG_WI_PICKER) refreshDiagPickerUI();   // 诊断「精选条目」栏随模式刷新（用户功能请求）
     updateDiagButtonVisual();   // 诊断按钮（含红色 AUTO）状态随模式切换始终对齐（含从子模式回到诊断时）
     updateFixButtonVisual();    // ✨ 校正按钮：自动校正开启时图标染金（随模式切换对齐）
     // A3：切换模式时自动收起设置面板——腾出纵向空间、别让设置盖住新模式的栏（二创 settings-panel 行为原生化）。
-    const _setPanel = win.querySelector('#so-settings');
+    const _setPanel = win.querySelector('#pad-settings');
     if (_setPanel && _setPanel.classList.contains('open')) {
         _setPanel.classList.remove('open');
-        win.classList.remove('so-settings-open');
+        win.classList.remove('pad-settings-open');
     }
     // 📥📤 气泡行 / 空态的导出导入入口随模式刷新（只在 chat / advisor 出现）。
     soApplyConvoIoVisual(null);
@@ -480,7 +480,7 @@ export async function toggleDiagnose() {
 }
 
 // 自动诊断的唯一落地口（勾选框 + 警告弹窗确认后都走这里）：持久化 + 视觉 + 勾选框回显 + 一条说明。
-// 勾选框只在诊断视图里可见（#so-diag-bar 随 .so-diag-on 显示），所以关掉它的路径是「回诊断模式取消勾选」——
+// 勾选框只在诊断视图里可见（#pad-diag-bar 随 .pad-diag-on 显示），所以关掉它的路径是「回诊断模式取消勾选」——
 // 按钮的 title 与退出提示都这么写。
 export function setAutoDiagnose(on) {
     const s = getSettings();
@@ -496,18 +496,18 @@ export function setAutoDiagnose(on) {
 // 勾选框回显（唯一写者）：设置面板重开 / 换聊天 / 警告弹窗确认后都靠它把 UI 拉回与 autoDiagnoseEnabled 一致。
 export function reflectAutoDiagCheckbox() {
     if (!win || !ENABLE_AUTO_DIAGNOSE) return;
-    const chk = win.querySelector('#so-diag-auto');
+    const chk = win.querySelector('#pad-diag-auto');
     if (chk) chk.checked = !!getSettings().autoDiagnoseEnabled;
 }
 
 // 诊断按钮视觉：自动开启时图标变红 + 显示 AUTO 标签（覆盖普通诊断的蓝色高亮）。init 与每次切换后调用。
 export function updateDiagButtonVisual() {
     if (!win) return;
-    const btn = win.querySelector('#so-diagnose-btn');
+    const btn = win.querySelector('#pad-diagnose-btn');
     if (!btn) return;
     const auto = ENABLE_AUTO_DIAGNOSE && !!getSettings().autoDiagnoseEnabled;
-    btn.classList.toggle('so-diag-auto', auto);
-    win.classList.toggle('so-diag-auto-on', auto);
+    btn.classList.toggle('pad-diag-auto', auto);
+    win.classList.toggle('pad-diag-auto-on', auto);
     btn.title = auto
         ? '诊断模式（点一下开 / 关这一房）—— 🔴 自动诊断正在后台运行：要停掉它，在诊断设置里取消勾选'
         : '诊断模式 —— 修复 MVU 状态变量（自动诊断在诊断设置里勾选开启）';
@@ -531,11 +531,11 @@ function fixButtonVisualState(cfg) {
 // 确认（confirm）后调用对齐（与 updateDiagButtonVisual 同款 win 守卫）。
 export function updateFixButtonVisual() {
     if (!win) return;
-    const btn = win.querySelector('#so-fix-btn');
+    const btn = win.querySelector('#pad-fix-btn');
     if (!btn) return;
     const state = fixButtonVisualState(getEffectiveFixCfg(getSettings(), getFixCfg()));
-    btn.classList.toggle('so-fix-auto', state === 'on');
-    btn.classList.toggle('so-fix-pending', state === 'pending');
+    btn.classList.toggle('pad-fix-auto', state === 'on');
+    btn.classList.toggle('pad-fix-pending', state === 'pending');
     btn.title = state === 'pending'
         ? '校正模式 · 自动校正已开，但这张卡的正文形态还需你确认一次 —— 点下一条回复弹出的确认提示（或「校正设置」判定行的「确认」），之后每条回复才会自动校正'
         : state === 'on'
@@ -546,9 +546,9 @@ export function updateFixButtonVisual() {
 // 首次开启自动模式前的一次性警告弹窗（含「不再提示」+ 与 MVU「额外模型解析」并用时的兼容开关提醒）。
 export function openAutoDiagWarn() {
     if (!win) return;
-    const never = win.querySelector('#so-autowarn-never');
+    const never = win.querySelector('#pad-autowarn-never');
     if (never) never.checked = false;
-    const modal = win.querySelector('#so-autowarn');
+    const modal = win.querySelector('#pad-autowarn');
     if (modal) modal.classList.add('open');
 }
 
@@ -556,9 +556,9 @@ export function openAutoDiagWarn() {
 // 与 openAutoDiagWarn 同款：纯展示弹窗，「知道了」关闭、勾「不再提示」则置 autoFixWarned。仅在 !autoFixWarned 时由切到自动的处理器调起。
 export function openAutoFixWarn() {
     if (!win) return;
-    const never = win.querySelector('#so-fixwarn-never');
+    const never = win.querySelector('#pad-fixwarn-never');
     if (never) never.checked = false;
-    const modal = win.querySelector('#so-fixwarn');
+    const modal = win.querySelector('#pad-fixwarn');
     if (modal) modal.classList.add('open');
 }
 
@@ -627,7 +627,7 @@ export async function toggleBuilder() {
 }
 // 草稿常驻卡：唯一事实源是 chat metadata；每次刷新整卡重建（含重载后恢复）。
 export function refreshDraftCard() {
-    const card = win?.querySelector('#so-bld-card');
+    const card = win?.querySelector('#pad-bld-card');
     if (!card) return;
     const st = getBuilderState();
     // 复审修复 2：中间态——已有访谈汇总但草稿还没生成（重载后可从这里直接锻造，让 brief-only 会话可恢复）。
@@ -637,13 +637,13 @@ export function refreshDraftCard() {
         const bhead = document.createElement('div');
         bhead.textContent = '📋 已有访谈汇总（草稿还未生成）';
         const bbody = document.createElement('div');
-        bbody.className = 'so-bld-card-body';
+        bbody.className = 'pad-bld-card-body';
         const bdesc = String(st.brief.desc || '');
         bbody.textContent = bdesc.length > 200 ? bdesc.slice(0, 200) + '…' : bdesc;
         const bbtns = document.createElement('div');
-        bbtns.className = 'so-bld-card-btns';
+        bbtns.className = 'pad-bld-card-btns';
         const gen = document.createElement('button');
-        gen.type = 'button'; gen.className = 'so-apply-btn'; gen.textContent = '🔨 生成';
+        gen.type = 'button'; gen.className = 'pad-apply-btn'; gen.textContent = '🔨 生成';
         gen.addEventListener('click', () => runForge());
         bbtns.appendChild(gen);
         card.append(bhead, bbody, bbtns);
@@ -656,11 +656,11 @@ export function refreshDraftCard() {
     head.textContent = '📝 ' + draftCardLabel(st.draft)
         + (ENABLE_DRAFT_CONDENSE && st.draft.activeVariant === 'condensed' && typeof st.draft.condensed === 'string' ? '（精简稿）' : '');
     const body = document.createElement('div');
-    body.className = 'so-bld-card-body';
+    body.className = 'pad-bld-card-body';
     body.textContent = activeDraftContent(st.draft);   // ✂️ 卡体显示激活变体（无精简稿 = 原稿，字节不变）
     const btns = document.createElement('div');
-    btns.className = 'so-bld-card-btns';
-    const mk = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'so-apply-btn'; b.textContent = label; b.addEventListener('click', fn); btns.appendChild(b); return b; };
+    btns.className = 'pad-bld-card-btns';
+    const mk = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'pad-apply-btn'; b.textContent = label; b.addEventListener('click', fn); btns.appendChild(b); return b; };
     mk('🔨 重新锻造', () => runForge());                       // Task 7
     // ✂️ 精简（1.30.0，读点 1/3）：npc-* 草稿出精简按钮；已有精简稿则出「原稿⇄精简稿」切换钮
     //（●标当前激活侧；写入/修订都以激活侧为准）。persona 目标 v1 不出按钮（spec §4.4）。

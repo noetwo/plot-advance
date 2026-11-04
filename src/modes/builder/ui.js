@@ -27,12 +27,12 @@ import { inputEl, messagesEl, win } from '../../ui/refs.js';
 // beginGeneration() 已把发送键变成「停止」键，点它经 onSend → stopGeneration 中断当前控制器；
 // 另加 arc 同款 180s 超时兜底，到点自动 abort。
 // 工序要求显式 CoT（<thinking>）——展示 / 历史 / 解析前用 stripReasoningTags 统一剥离。
-// keep-forging 辅助①：把累积文本画进保活运行（liveForge / liveCondense 同形描述子）气泡的 .so-content
+// keep-forging 辅助①：把累积文本画进保活运行（liveForge / liveCondense 同形描述子）气泡的 .pad-content
 //（仅当它当前挂在 DOM 上——离房时气泡被 loadConvoForChat 清掉，此时静默跳过；回房会由 loadConvoForChat
 // 重挂气泡并接上后续增量）。深度精简保活（1.36.0）复用本函数。
 function paintForge(f) {
     const el = f && f.entry && f.entry._el;
-    const c = el && typeof el.querySelector === 'function' ? el.querySelector('.so-content') : null;
+    const c = el && typeof el.querySelector === 'function' ? el.querySelector('.pad-content') : null;
     if (c && c.isConnected) c.textContent = f.text;
 }
 
@@ -81,7 +81,7 @@ export async function runForge() {
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
-    const contentEl = assistantEl.querySelector('.so-content');
+    const contentEl = assistantEl.querySelector('.pad-content');
     const clearTyping = showTyping(contentEl);
     // keep-forging：把这次锻造登记为「后台可续」——记住它属于哪个工坊房间(streamKey)、气泡 entry、累积
     // 文本(text)。切模式时不中断（见 loadConvoForChat 的 !liveForge 守卫），完成/失败按此房归位（routeForgeReply）。
@@ -108,7 +108,7 @@ export async function runForge() {
         const effMaxTokens = Math.max(s.maxTokens, Number(s.bldMaxTokens) || 0, 16384);
         const streaming = !!s.stream;
         if (streaming) {
-            contentEl.classList.add('so-streaming');
+            contentEl.classList.add('pad-streaming');
             armWatchdog(180000);
         } else {
             armWatchdog(600000);
@@ -120,7 +120,7 @@ export async function runForge() {
             paintForge(myForge);
             if (soFollowStream && convoStreamKey === myForge.streamKey) scrollToBottom();
         });
-        if (streaming) contentEl.classList.remove('so-streaming');
+        if (streaming) contentEl.classList.remove('pad-streaming');
         clearTyping();
         // 剥掉工序写出的 <thinking> CoT——剥完为空 = 预算多半被思考占满（或真空回复），如实提示。
         const cleanText = stripReasoningTags(String(finalText || ''));
@@ -129,20 +129,20 @@ export async function runForge() {
         if (liveForge !== myForge) return;
         const originKey = myForge.streamKey;                                       // 锻造起跑时所在的工坊房间
         const viewing = (convoStreamKey === originKey);                            // 用户此刻是否正看着该房
-        const forgeContentEl = viewing && aEntry._el && aEntry._el.isConnected ? aEntry._el.querySelector('.so-content') : null;
+        const forgeContentEl = viewing && aEntry._el && aEntry._el.isConnected ? aEntry._el.querySelector('.pad-content') : null;
         if (!cleanText) {
             aEntry.content = '(空回复) — 多半是「最大 token 数」太小、被工序的 <thinking> 思考占满了。到设置里调大它，再点一次「🔨 生成」。';
-            if (forgeContentEl) { forgeContentEl.textContent = aEntry.content; forgeContentEl.classList.remove('so-streaming'); forgeContentEl.classList.add('so-error'); }
+            if (forgeContentEl) { forgeContentEl.textContent = aEntry.content; forgeContentEl.classList.remove('pad-streaming'); forgeContentEl.classList.add('pad-error'); }
             routeForgeReply(originKey, aEntry);
             return;
         }
         aEntry.content = cleanText;
         if (forgeContentEl) {
-            forgeContentEl.classList.remove('so-streaming');
+            forgeContentEl.classList.remove('pad-streaming');
             const html = renderBuilderReplyHtml(cleanText);
             if (html != null) {
                 forgeContentEl.innerHTML = html;
-                forgeContentEl.classList.add('so-rendered');
+                forgeContentEl.classList.add('pad-rendered');
                 forgeContentEl.style.whiteSpace = 'normal';
             } else {
                 forgeContentEl.textContent = cleanText;
@@ -174,7 +174,7 @@ export async function runForge() {
             refreshDraftCard();
             // 草稿卡在「角色工坊」面板里（窗口顶部）——用户常把面板收起省聊天空间，锻造成功就替 TA 展开；
             // 只在成功分支做，不动重载 / 切聊时的折叠偏好。
-            const bldCollapse = win?.querySelector('#so-bld-collapse');
+            const bldCollapse = win?.querySelector('#pad-bld-collapse');
             if (bldCollapse && !bldCollapse.open) bldCollapse.open = true;
             // keep-forging：只在用户正看着工坊时报「锻造完成」——已切走则静默（Prince：不要提示），草稿卡与房间
             // 历史已就位，回工坊自见（注记若发去当前房 = 落进别的模式，故必须 gate）。
@@ -193,13 +193,13 @@ export async function runForge() {
         }
     } catch (err) {
         clearTyping();
-        console.error('[Story Oracle]', err);
+        console.error('[剧情推进]', err);
         // keep-forging：切了聊天(liveForge 被 onChatChanged 置空) → 这条属于旧聊天，丢弃不落盘。
         if (liveForge !== myForge) return;
         const stopped = isUserAbort(err);
         const originKey = myForge.streamKey;
         const viewing = (convoStreamKey === originKey);
-        const forgeContentEl = viewing && aEntry._el && aEntry._el.isConnected ? aEntry._el.querySelector('.so-content') : null;
+        const forgeContentEl = viewing && aEntry._el && aEntry._el.isConnected ? aEntry._el.querySelector('.pad-content') : null;
         let msg;
         if (stopped && forgeTimedOut) {
             // 超时中止（看门狗触发的 abort）——与用户手动停止用不同措辞，并给一条可操作提示。
@@ -211,8 +211,8 @@ export async function runForge() {
         aEntry.content = msg;
         if (forgeContentEl) {
             forgeContentEl.textContent = msg;
-            forgeContentEl.classList.remove('so-streaming');
-            if (!stopped) forgeContentEl.classList.add('so-error');
+            forgeContentEl.classList.remove('pad-streaming');
+            if (!stopped) forgeContentEl.classList.add('pad-error');
         }
         routeForgeReply(originKey, aEntry);
     } finally {
@@ -250,7 +250,7 @@ export async function runCondense(opts = {}) {
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
-    const contentEl = assistantEl.querySelector('.so-content');
+    const contentEl = assistantEl.querySelector('.pad-content');
     const clearTyping = showTyping(contentEl);
     const ctl = beginGeneration();
     let condTimedOut = false, killTimer = null;
@@ -261,7 +261,7 @@ export async function runCondense(opts = {}) {
         let finalText = '';
         const streaming = !!s.stream;
         if (streaming) {
-            contentEl.classList.add('so-streaming');
+            contentEl.classList.add('pad-streaming');
             armWatchdog(180000);
         } else {
             armWatchdog(600000);
@@ -272,7 +272,7 @@ export async function runCondense(opts = {}) {
             contentEl.textContent = cumulative ? chunk : contentEl.textContent + chunk;
             if (soFollowStream) scrollToBottom();
         });
-        if (streaming) contentEl.classList.remove('so-streaming');
+        if (streaming) contentEl.classList.remove('pad-streaming');
         clearTyping();
         const { content: cond, error: parseErr } = parseCondenseReply(String(finalText || ''));
         contentEl.textContent = cond ? '✂️ 精简完成（正文见草稿卡）' : String(finalText || '(空回复)').slice(0, 400);
@@ -290,10 +290,10 @@ export async function runCondense(opts = {}) {
         clearTyping();
         const stopped = isUserAbort(err);
         contentEl.textContent = stopped ? (condTimedOut ? '（精简超时，已中止——原稿不受影响）' : '（已停止）') : ('精简调用失败：' + (err?.message || err));
-        if (!stopped) contentEl.classList.add('so-error');
+        if (!stopped) contentEl.classList.add('pad-error');
         aEntry.content = contentEl.textContent;
         appendConvo(aEntry); persistConvo();
-        if (!stopped) console.error('[Story Oracle]', err);
+        if (!stopped) console.error('[剧情推进]', err);
     } finally {
         if (killTimer) clearTimeout(killTimer);
         finishGeneration();
@@ -330,10 +330,10 @@ export async function runCondenseDepth() {
     registerLiveCondense(myRun);
     const runContentEl = () => {
         const el = myRun.entry && myRun.entry._el;
-        const c = el && typeof el.querySelector === 'function' ? el.querySelector('.so-content') : null;
+        const c = el && typeof el.querySelector === 'function' ? el.querySelector('.pad-content') : null;
         return c && c.isConnected ? c : null;
     };
-    const setStreamingCls = (on) => { const c = runContentEl(); if (c) c.classList.toggle('so-streaming', on); };
+    const setStreamingCls = (on) => { const c = runContentEl(); if (c) c.classList.toggle('pad-streaming', on); };
     const ctl = beginGeneration();
     // 平坦兜底（非流式无进度信号）：每【阶段】各给 600s 预算——串行 4 连跑会超单一预算，并行=分节
     // 一份预算、手术单再一份。
@@ -405,8 +405,8 @@ export async function runCondenseDepth() {
         myRun.text = aEntry.content; paintForge(myRun); setStreamingCls(false);
         if (!stopped) {
             const c = runContentEl();
-            if (c) c.classList.add('so-error');
-            console.error('[Story Oracle]', err);
+            if (c) c.classList.add('pad-error');
+            console.error('[剧情推进]', err);
         }
         routeForgeReply(myRun.streamKey, aEntry);
     } finally {
@@ -543,10 +543,10 @@ export async function toggleAdvisor() {
 // Offered only into a fresh advisor room (see the openAdvisor trigger), so it never double-imports.
 function addBridgeChip() {
     const wrap = document.createElement('div');
-    wrap.className = 'so-note so-bridge';
+    wrap.className = 'pad-note pad-bridge';
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'so-bridge-chip';
+    btn.className = 'pad-bridge-chip';
     btn.innerHTML = '<i class="fa-solid fa-compass"></i> 导入普通聊天的讨论并整理成方案';
     btn.addEventListener('click', () => {
         if (isGenerating) return;

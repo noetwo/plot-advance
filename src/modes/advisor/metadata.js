@@ -12,12 +12,10 @@ import { P } from '../../prompts/registry.js';
  * setExtensionPrompt 是全局的，所以切到没有方案的聊天时必须用空串清掉它
  * （applyPlanInjection 对 plan == null 正是这么做的）。
  * ------------------------------------------------------------------ */
-export const ADVISOR_PROMPT_KEY = 'story_oracle_plan';
+export const ADVISOR_PROMPT_KEY = 'plot_advance_plan';
 export const ADVISOR_REMIND_AFTER = 20;   // 主聊天走过这么多条消息后，提醒一次方案仍在引导
 // 剧情脉络（2.5.0）：当前聊天正在引导主聊天的那一条（单节点方案也是一条只有一个节点的脉络）。
 const PATH_META_KEY = MODULE + '_path';
-// 2.5.0 之前的单拍方案 / 序列，以及原版的弧线：不再支持，打开聊天时直接丢掉（见 dropLegacyGuides）。
-const LEGACY_GUIDE_META_KEYS = [MODULE + '_plan', MODULE + '_seq', MODULE + '_arc'];
 // 用户功能请求 —— 都按【当前聊天】持久化，与剧情脉络同风格（随聊天保存、随切换刷新）：
 //   _convo   持久化的侧聊问答历史（原本仅在内存里、刷新即丢）
 //   _summary 用户粘贴的运行总结 / 前情提要
@@ -100,15 +98,6 @@ export function setPath(path) {
     return true;
 }
 
-// 2.5.0 之前的单拍方案 / 序列，以及原版的弧线：不再支持，打开聊天时直接丢掉。返回是否丢过。
-export function dropLegacyGuides() {
-    const md = getChatMetadataSafe();
-    if (!md) return false;
-    const hit = LEGACY_GUIDE_META_KEYS.filter((k) => k in md);
-    for (const k of hit) delete md[k];
-    if (hit.length) saveChatMetadata();
-    return hit.length > 0;
-}
 
 // 角色工坊状态（当前聊天，或 null）。形状：{ brief|null, draft|null, forgedAt|null }。与 getPath/setPath 同族，
 // 用 saveChatMetadata()（saveMetadataDebounced 回退的共享封装，与 setConvo/setSummary 同款）持久化。

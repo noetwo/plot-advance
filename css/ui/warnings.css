@@ -1,6 +1,6 @@
-/* ---------- 自动诊断首开警告弹窗（居中卡片，仿 #so-curate） ---------- */
-/* 一次性警告弹窗：自动诊断（#so-autowarn）与 自动校正（#so-fixwarn）共用同一套样式 */
-#so-autowarn, #so-fixwarn {
+/* ---------- 自动诊断首开警告弹窗（居中卡片，仿 #pad-curate） ---------- */
+/* 一次性警告弹窗：自动诊断（#pad-autowarn）与 自动校正（#pad-fixwarn）共用同一套样式 */
+#pad-autowarn, #pad-fixwarn {
     display: none;
     position: absolute;
     inset: 0;
@@ -9,14 +9,14 @@
     justify-content: center;
     padding: 16px;
     box-sizing: border-box;
-    background: var(--so-scrim);
+    background: var(--pad-scrim);
     backdrop-filter: blur(4px);
 }
-#so-autowarn.open, #so-fixwarn.open { display: flex; }
-/* 卡片高度必须被窗口封顶、正文内部滚动（同 #so-cur-card 的骨架）：卡片比窗口高时 flex 居中会把
-   上下两端一起裁进 #so-window 的 overflow:hidden——标题、「不再提示」、「知道了」全都够不着，
+#pad-autowarn.open, #pad-fixwarn.open { display: flex; }
+/* 卡片高度必须被窗口封顶、正文内部滚动（同 #pad-cur-card 的骨架）：卡片比窗口高时 flex 居中会把
+   上下两端一起裁进 #pad-window 的 overflow:hidden——标题、「不再提示」、「知道了」全都够不着，
    哪层都不滚 → 手机上整个神谕窗口被遮罩锁死，只能刷新（2026-07-03 手机截图报告）。 */
-#so-autowarn-card, #so-fixwarn-card {
+#pad-autowarn-card, #pad-fixwarn-card {
     display: flex;
     flex-direction: column;
     width: 100%;
@@ -27,12 +27,12 @@
     border-radius: 12px;
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
     background-color: #1b1d23;
-    color: #e6e6e6;   /* 1.27.1: 恒深色警告卡 → 文字色钉死浅色（不跟随主题）；否则浅色主题下 var(--SmartThemeBodyColor) 变深字＝深字压深底＝不可读（同 #so-fixsel 报的「界面好黑」，但警告卡刻意保深色故钉文字而非改底） */
-    background-image: linear-gradient(180deg, color-mix(in srgb, var(--so-auto-red, #d9534f) 12%, transparent), transparent 120px);
+    color: #e6e6e6;   /* 1.27.1: 恒深色警告卡 → 文字色钉死浅色（不跟随主题）；否则浅色主题下 var(--SmartThemeBodyColor) 变深字＝深字压深底＝不可读（同 #pad-fixsel 报的「界面好黑」，但警告卡刻意保深色故钉文字而非改底） */
+    background-image: linear-gradient(180deg, color-mix(in srgb, var(--pad-auto-red, #d9534f) 12%, transparent), transparent 120px);
     box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.7);
     padding: 16px 18px;
 }
-#so-autowarn-head, #so-fixwarn-head {
+#pad-autowarn-head, #pad-fixwarn-head {
     font-weight: 700;
     font-size: 1.02em;
     display: flex;
@@ -42,27 +42,27 @@
     margin-bottom: 10px;
     flex: 0 0 auto;   /* 标题行（含逃生 ✕）不被 flex 压缩，始终留在卡片顶部、在屏内 */
 }
-.so-warn-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.so-warn-title > i { color: var(--so-auto-red, #d9534f); }
+.pad-warn-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pad-warn-title > i { color: var(--pad-auto-red, #d9534f); }
 /* 顶部逃生 ✕：叠层盖住了标题栏 ✕ 和缩放把手，手机窄视口下底部按钮又会被压出屏——这个始终在屏内的
    顶部出口（配合点遮罩关闭）保证任何情况下都能退出，不至于把整个神谕窗口锁死到只能刷新。 */
-.so-warn-x { flex: 0 0 auto; }
-#so-autowarn-body, #so-fixwarn-body {
+.pad-warn-x { flex: 0 0 auto; }
+#pad-autowarn-body, #pad-fixwarn-body {
     font-size: 0.84em;
     line-height: 1.6;
     overflow-y: auto;
     min-height: 0;
     overscroll-behavior: contain;
 }
-#so-autowarn-body p, #so-fixwarn-body p { margin: 0 0 9px; }
-#so-autowarn-body .so-autowarn-danger, #so-fixwarn-body .so-autowarn-danger {
+#pad-autowarn-body p, #pad-fixwarn-body p { margin: 0 0 9px; }
+#pad-autowarn-body .pad-autowarn-danger, #pad-fixwarn-body .pad-autowarn-danger {
     padding: 8px 10px;
     border-radius: 8px;
-    border: 1px solid color-mix(in srgb, var(--so-auto-red, #d9534f) 55%, transparent);
-    background: color-mix(in srgb, var(--so-auto-red, #d9534f) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--pad-auto-red, #d9534f) 55%, transparent);
+    background: color-mix(in srgb, var(--pad-auto-red, #d9534f) 14%, transparent);
 }
-#so-autowarn-body .so-autowarn-note, #so-fixwarn-body .so-autowarn-note { opacity: 0.68; }
-.so-autowarn-check {
+#pad-autowarn-body .pad-autowarn-note, #pad-fixwarn-body .pad-autowarn-note { opacity: 0.68; }
+.pad-autowarn-check {
     display: flex;
     align-items: center;
     gap: 7px;
@@ -70,20 +70,20 @@
     font-size: 0.84em;
     cursor: pointer;
 }
-.so-autowarn-check input { cursor: pointer; }
-#so-autowarn-btns, #so-fixwarn-btns {
+.pad-autowarn-check input { cursor: pointer; }
+#pad-autowarn-btns, #pad-fixwarn-btns {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
 }
-#so-autowarn-btns button, #so-fixwarn-btns button {
+#pad-autowarn-btns button, #pad-fixwarn-btns button {
     padding: 7px 14px;
     border-radius: 8px;
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
-    background: rgba(var(--so-ink), 0.06);
-    color: #ddd;   /* 恒深色警告卡：钉死浅色文字，理由见 #so-autowarn-card */
+    background: rgba(var(--pad-ink), 0.06);
+    color: #ddd;   /* 恒深色警告卡：钉死浅色文字，理由见 #pad-autowarn-card */
     cursor: pointer;
     font-size: 0.86em;
 }
-#so-autowarn-btns button:hover, #so-fixwarn-btns button:hover { background: rgba(var(--so-ink), 0.12); }
+#pad-autowarn-btns button:hover, #pad-fixwarn-btns button:hover { background: rgba(var(--pad-ink), 0.12); }
 

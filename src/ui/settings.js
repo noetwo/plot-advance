@@ -72,17 +72,17 @@ export function applyConnPreset(name) {
     save();
     if (win) {
         const setVal = (sel, v) => { const el = win.querySelector(sel); if (el) el.value = v; };
-        setVal('#so-mode', 'direct');
-        setVal('#so-endpoint', s.endpoint);
-        setVal('#so-apikey', s.apiKey);
-        setVal('#so-model', s.model);
+        setVal('#pad-mode', 'direct');
+        setVal('#pad-endpoint', s.endpoint);
+        setVal('#pad-apikey', s.apiKey);
+        setVal('#pad-model', s.model);
         const setChk = (sel, v) => { const el = win.querySelector(sel); if (el) el.checked = !!v; };
-        setChk('#so-raw-url', s.directRawUrl);
-        setChk('#so-direct-backend', s.directViaBackend);
-        setVal('#so-temp', s.temperature);
-        setVal('#so-maxtok', s.maxTokens);
-        setChk('#so-stream', s.stream);
-        setChk('#so-sendtemp', s.sendTemperature);
+        setChk('#pad-raw-url', s.directRawUrl);
+        setChk('#pad-direct-backend', s.directViaBackend);
+        setVal('#pad-temp', s.temperature);
+        setVal('#pad-maxtok', s.maxTokens);
+        setChk('#pad-stream', s.stream);
+        setChk('#pad-sendtemp', s.sendTemperature);
         updateExtraParamsHint();
         applyModeVisibility();
     }
@@ -104,18 +104,18 @@ export async function switchConnPreset(name) {
 
 export function applyModeVisibility() {
     const s = getSettings();
-    win.querySelector('#so-direct-fields').style.display = s.mode === 'direct' ? '' : 'none';
-    win.querySelector('#so-profile-fields').style.display = s.mode === 'profile' ? '' : 'none';
+    win.querySelector('#pad-direct-fields').style.display = s.mode === 'direct' ? '' : 'none';
+    win.querySelector('#pad-profile-fields').style.display = s.mode === 'profile' ? '' : 'none';
     // 转发 / 原样地址只对直连有意义；附加参数两种方式都用，所以留在高级选项里。
-    const directAdv = win.querySelector('#so-direct-adv');
+    const directAdv = win.querySelector('#pad-direct-adv');
     if (directAdv) directAdv.style.display = s.mode === 'direct' ? '' : 'none';
-    for (const b of win.querySelectorAll('#so-mode-seg [data-mode]')) b.classList.toggle('active', b.dataset.mode === s.mode);
+    for (const b of win.querySelectorAll('#pad-mode-seg [data-mode]')) b.classList.toggle('active', b.dataset.mode === s.mode);
 }
 
 export function updateWiHint() {
-    const hint = win.querySelector('#so-wi-hint');
+    const hint = win.querySelector('#pad-wi-hint');
     if (!hint) return;
-    const mode = win.querySelector('#so-wi').value;
+    const mode = win.querySelector('#pad-wi').value;
     if (mode === 'st') {
         hint.textContent = '像主提示词一样扫描聊天：蓝色（常驻）条目始终注入，绿色（关键词）条目在其关键词匹配时注入。剧情推进侧聊最近几条问答（按世界书「扫描深度」）同样参与匹配。';
     } else if (mode === 'all') {
@@ -133,7 +133,7 @@ export function updateWiHint() {
 // 🌐 自定义范围整块只在下拉为「自定义」时显示；显示时填充清单（它自己读 metadata，不依赖 onChatChanged 的先后）。
 function reflectWiCustomVisible(on) {
     if (!win || !ENABLE_WI_CUSTOM_PICK) return;
-    const box = win.querySelector('#so-wi-custom');
+    const box = win.querySelector('#pad-wi-custom');
     if (!box) return;
     box.hidden = !on;
     if (on) populateWiCustomBooks(false);
@@ -160,7 +160,7 @@ export function getProfiles() {
         const supported = ctx.ConnectionManagerRequestService?.getSupportedProfiles?.();
         if (Array.isArray(supported) && supported.length) return supported;
     } catch (e) {
-        console.warn('[Story Oracle] getSupportedProfiles failed, falling back to raw profiles:', e);
+        console.warn('[剧情推进] getSupportedProfiles failed, falling back to raw profiles:', e);
     }
     // Fallback: raw saved profiles. Covers version differences and over-strict filtering.
     const raw = ctx.extensionSettings?.connectionManager?.profiles;
@@ -181,8 +181,8 @@ function profilesStatus() {
 
 export function refreshProfiles() {
     const s = getSettings();
-    const sel = win.querySelector('#so-profile');
-    const hint = win.querySelector('#so-profile-hint');
+    const sel = win.querySelector('#pad-profile');
+    const hint = win.querySelector('#pad-profile-hint');
     const profiles = getProfiles();
     sel.innerHTML = '';
     if (!profiles.length) {
@@ -225,7 +225,7 @@ function getCompletionPresetManager() {
             return ctx.getPresetManager('openai') || ctx.getPresetManager();
         }
     } catch (e) {
-        console.warn('[Story Oracle] getPresetManager failed:', e);
+        console.warn('[剧情推进] getPresetManager failed:', e);
     }
     return null;
 }
@@ -566,15 +566,15 @@ export function maybeWrapJb(messages, mode, s) {
 
 
 export function populateSysPromptPresets() {
-    const wrap = win.querySelector('#so-sysprompt-preset-wrap');
+    const wrap = win.querySelector('#pad-sysprompt-preset-wrap');
     if (!ENABLE_SYSPROMPT_PRESET) {
         if (wrap) wrap.style.display = 'none';
-        const ta = win.querySelector('#so-sysprompt');
+        const ta = win.querySelector('#pad-sysprompt');
         if (ta) ta.disabled = false;   // never leave the textarea locked while dormant
         return;
     }
     if (wrap) wrap.style.display = '';
-    const sel = win.querySelector('#so-sysprompt-preset');
+    const sel = win.querySelector('#pad-sysprompt-preset');
     if (!sel) return;
     const s = getSettings();
     const names = getCompletionPresetNames();
@@ -616,9 +616,9 @@ export function populateSysPromptPresets() {
 
 export function applySysPromptPresetUiState() {
     const s = getSettings();
-    const ta = win.querySelector('#so-sysprompt');
-    const hint = win.querySelector('#so-sysprompt-preset-hint');
-    const recurate = win.querySelector('#so-sysprompt-preset-recurate');
+    const ta = win.querySelector('#pad-sysprompt');
+    const hint = win.querySelector('#pad-sysprompt-preset-hint');
+    const recurate = win.querySelector('#pad-sysprompt-preset-recurate');
     const active = !!s.sysPromptPresetName;
     // When a preset is selected, the chat textarea (and the built-in short prompt
     // it holds) is fully disabled — no fallback, per design. The textarea is now
@@ -630,7 +630,7 @@ export function applySysPromptPresetUiState() {
     if (ta) ta.disabled = active && !jbOn && promptEditId === 'chat.system';
     if (recurate) recurate.style.display = (active && !jbOn) ? '' : 'none';
     if (!hint) return;
-    hint.classList.remove('so-hint-error');
+    hint.classList.remove('pad-hint-error');
     if (jbOn) {
         hint.textContent = `已启用内置破限「初心破限 1.2」（作者：${BUILTIN_JB_AUTHOR}）。`
             + `它【包裹】在剧情推进自己的提示词外面，而不是替换——下方文本框照常生效。`
@@ -652,11 +652,11 @@ export function applySysPromptPresetUiState() {
         hint.textContent = `正在按预设「${s.sysPromptPresetName}」的忠实结构组装：保留 ${texts} 个文本块 + ${slots} 个上下文插槽。下方文本框（含内置简短提示词）已停用。点[重新挑选]可修改。`;
     } else {
         hint.textContent = `预设「${s.sysPromptPresetName}」尚未挑选内容。点[重新挑选]开始，或重新从下拉中选择以打开挑选界面。`;
-        hint.classList.add('so-hint-error');
+        hint.classList.add('pad-hint-error');
     }
 }
 
-// 设置「提示词」页：先选分组，再点条目；点开的条目下面展开编辑区（共用一个文本框 #so-sysprompt）。
+// 设置「提示词」页：先选分组，再点条目；点开的条目下面展开编辑区（共用一个文本框 #pad-sysprompt）。
 // 每条都带一句说明（PROMPT_DEFS 的 desc），改过的条目和分组都会标出来。
 // 分组按注册表里出现的先后排列（用到时再算：PROMPT_DEFS 定义在文件后面）。
 function promptGroups() {
@@ -671,9 +671,9 @@ function promptCustomCount(group, s = getSettings()) {
 
 export function renderPromptNav() {
     if (!win) return;
-    const groupsEl = win.querySelector('#so-pgroups');
-    const listEl = win.querySelector('#so-plist');
-    const ed = win.querySelector('#so-peditor');
+    const groupsEl = win.querySelector('#pad-pgroups');
+    const listEl = win.querySelector('#pad-plist');
+    const ed = win.querySelector('#pad-peditor');
     if (!groupsEl || !listEl || !ed) return;
     const s = getSettings();
     if (!promptDef(promptEditId)) promptEditId = 'chat.system';
@@ -684,13 +684,13 @@ export function renderPromptNav() {
     for (const g of groups) {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'so-pgroup' + (g === promptGroup ? ' active' : '');
+        b.className = 'pad-pgroup' + (g === promptGroup ? ' active' : '');
         b.dataset.group = g;
         b.textContent = g;
         const n = promptCustomCount(g, s);
         if (n) {
             const c = document.createElement('span');
-            c.className = 'so-pgroup-count';
+            c.className = 'pad-pgroup-count';
             c.title = `本组已自定义 ${n} 条`;
             c.textContent = String(n);
             b.appendChild(c);
@@ -707,12 +707,12 @@ export function renderPromptNav() {
         const active = promptEditorOpen && d.id === promptEditId;
         const item = document.createElement('button');
         item.type = 'button';
-        item.className = 'so-pitem' + (active ? ' active' : '');
+        item.className = 'pad-pitem' + (active ? ' active' : '');
         item.dataset.id = d.id;
-        item.innerHTML = '<span class="so-pitem-head"><span class="so-pitem-label"></span><span class="so-pbadge" hidden>已自定义</span></span><span class="so-pitem-desc"></span>';
-        item.querySelector('.so-pitem-label').textContent = d.label;
-        item.querySelector('.so-pbadge').hidden = !promptIsCustom(d.id, s);
-        const desc = item.querySelector('.so-pitem-desc');
+        item.innerHTML = '<span class="pad-pitem-head"><span class="pad-pitem-label"></span><span class="pad-pbadge" hidden>已自定义</span></span><span class="pad-pitem-desc"></span>';
+        item.querySelector('.pad-pitem-label').textContent = d.label;
+        item.querySelector('.pad-pbadge').hidden = !promptIsCustom(d.id, s);
+        const desc = item.querySelector('.pad-pitem-desc');
         if (d.desc) desc.textContent = d.desc; else desc.remove();
         item.addEventListener('click', () => {
             if (promptEditorOpen && promptEditId === d.id) { promptEditorOpen = false; renderPromptNav(); return; }
@@ -720,7 +720,7 @@ export function renderPromptNav() {
             promptEditorOpen = true;
             loadPromptEditor();
             renderPromptNav();
-            const box = win.querySelector('#so-sysprompt');
+            const box = win.querySelector('#pad-sysprompt');
             if (box && !box.disabled) { box.focus(); box.setSelectionRange(0, 0); box.scrollTop = 0; }
         });
         listEl.appendChild(item);
@@ -736,23 +736,23 @@ export function renderPromptNav() {
 export function refreshPromptBadges() {
     if (!win) return;
     const s = getSettings();
-    for (const item of win.querySelectorAll('#so-plist .so-pitem')) {
-        const badge = item.querySelector('.so-pbadge');
+    for (const item of win.querySelectorAll('#pad-plist .pad-pitem')) {
+        const badge = item.querySelector('.pad-pbadge');
         if (badge) badge.hidden = !promptIsCustom(item.dataset.id, s);
     }
-    for (const b of win.querySelectorAll('#so-pgroups .so-pgroup')) {
+    for (const b of win.querySelectorAll('#pad-pgroups .pad-pgroup')) {
         const n = promptCustomCount(b.dataset.group, s);
-        let c = b.querySelector('.so-pgroup-count');
+        let c = b.querySelector('.pad-pgroup-count');
         if (n && !c) {
             c = document.createElement('span');
-            c.className = 'so-pgroup-count';
+            c.className = 'pad-pgroup-count';
             b.appendChild(c);
         }
         if (c) {
             if (n) { c.textContent = String(n); c.title = `本组已自定义 ${n} 条`; } else c.remove();
         }
     }
-    const sum = win.querySelector('#so-prompt-summary');
+    const sum = win.querySelector('#pad-prompt-summary');
     if (sum) {
         const total = promptCustomCount(null, s);
         sum.textContent = total ? `已自定义 ${total} 条` : '全部为内置版本';
@@ -761,14 +761,14 @@ export function refreshPromptBadges() {
 
 // 把编辑区指向当前条目：标题、正文、可插入的变量、提示行。
 export function loadPromptEditor() {
-    const ta = win && win.querySelector('#so-sysprompt');
+    const ta = win && win.querySelector('#pad-sysprompt');
     if (!ta) return;
     const d = promptDef(promptEditId);
     if (!d) return;
     ta.value = promptRaw(promptEditId);
-    const title = win.querySelector('#so-peditor-title');
+    const title = win.querySelector('#pad-peditor-title');
     if (title) title.textContent = `${d.group} · ${d.label}`;
-    const varsEl = win.querySelector('#so-pvars');
+    const varsEl = win.querySelector('#pad-pvars');
     if (varsEl) {
         varsEl.innerHTML = '';
         const vars = Object.entries(d.vars || {});
@@ -779,7 +779,7 @@ export function loadPromptEditor() {
             for (const [k, label] of vars) {
                 const b = document.createElement('button');
                 b.type = 'button';
-                b.className = 'so-pvar';
+                b.className = 'pad-pvar';
                 b.title = label;
                 b.textContent = `{%${k}%}`;
                 const small = document.createElement('small');
@@ -806,8 +806,8 @@ export function loadPromptEditor() {
 export function applyPromptEditorUiState() {
     const d = promptDef(promptEditId);
     if (!d || !win) return;
-    const ta = win.querySelector('#so-sysprompt');
-    const hint = win.querySelector('#so-sysprompt-which-hint');
+    const ta = win.querySelector('#pad-sysprompt');
+    const hint = win.querySelector('#pad-sysprompt-which-hint');
     if (d.id === 'chat.system') applySysPromptPresetUiState();   // 选了补全预设时停用文本框
     else if (ta) ta.disabled = false;
     if (!hint) return;
@@ -827,7 +827,7 @@ export function applyPromptEditorUiState() {
     }
     if (problems.length) lines.push(`⚠ ${problems.join('；')}。这条对应的引导 / 解析会失效，可点「↺ 恢复默认」。`);
     hint.textContent = lines.join('\n');
-    hint.classList.toggle('so-hint-error', problems.length > 0);
+    hint.classList.toggle('pad-hint-error', problems.length > 0);
 }
 
 // Dropdown change: gate curation. Empty -> custom/textarea. Already-curated ->
@@ -859,7 +859,7 @@ export function onPresetSelected(rawName) {
     }
     // Not curated yet — open the checklist. Revert the dropdown to the committed
     // value until the user actually saves a curation.
-    const sel = win.querySelector('#so-sysprompt-preset');
+    const sel = win.querySelector('#pad-sysprompt-preset');
     if (sel) sel.value = s.sysPromptPresetName || '';
     openCuration(name);
 }

@@ -120,7 +120,7 @@ export function onChatSelectionChange() {
 //（jsdom / TauriTavern 异形安全）。RCMM 克隆 .mes_button 行成右键菜单 → 本按钮自动进菜单，零耦合。
 export function refreshFixChatEntry() {
     try {
-        document.querySelectorAll('.so-fixsel-chat-entry').forEach((b) => b.remove());
+        document.querySelectorAll('.pad-fixsel-chat-entry').forEach((b) => b.remove());
         if (!ENABLE_FIXSEL_CHAT_ENTRY || !ENABLE_REPLY_FIX || !ENABLE_FIX_SELECT) return;
         // 1.77.0 用户请求：可藏起这颗 ✂️（opt-out `fixSelRowButton`，默认开）。门必须排在上面
         // 「先拔光」【之后】——取消勾选才会当场生效；只认显式 false，老档缺键 = 照挂（迁移安全）。
@@ -131,10 +131,10 @@ export function refreshFixChatEntry() {
         const row = mes ? mes.querySelector('.mes_buttons') : null;
         if (!row) return;
         const btn = document.createElement('div');
-        btn.className = 'mes_button so-fixsel-chat-entry fa-solid fa-scissors';
+        btn.className = 'mes_button pad-fixsel-chat-entry fa-solid fa-scissors';
         btn.title = '选段校正 (划选正文后点击)';   // ASCII 括号是刻意的：RCMM 竖排菜单按 (…) 拆成「标签 + 悬停提示」
         btn.addEventListener('click', () => {   // RCMM 菜单会模拟 click + pointerup——只挂 click，天然单次
-            Promise.resolve(onFixChatEntryClick()).catch((e) => console.warn('[Story Oracle] 选段入口点击失败：', e));
+            Promise.resolve(onFixChatEntryClick()).catch((e) => console.warn('[剧情推进] 选段入口点击失败：', e));
         });
         const edit = row.querySelector('.mes_edit');
         if (edit) row.insertBefore(btn, edit); else row.appendChild(btn);
@@ -190,7 +190,7 @@ export async function onFixChatEntryClick() {
  * ------------------------------------------------------------------ */
           // 'tap' | 'drag'
     // 扩选一次性武装：下一次被接受的点击取并集后立即解除
-          // 裁定 0.3：localStorage['so.fixsel.debug'] 打开的逐手势日志
+          // 裁定 0.3：localStorage['pad.fixsel.debug'] 打开的逐手势日志
         // 环形缓冲（≤400 行），镜像进卡里那个只读文本框
 // 点击闸门的记录（按下那一刻的时间/坐标/滚动位 + 在按的指针集合）。住在模块级【只】为了让
 // fixSelApplyMode 能在每次开卡 / 切模式时把它归零（复审 #4）；布线仍全在 buildFixSelCard 里。
@@ -202,7 +202,7 @@ export async function onFixChatEntryClick() {
 function fixSelResolveMode() {
     if (!ENABLE_FIX_TAP_SELECT) return 'drag';   // 点选杀死开关读点①
     let pref = null;
-    try { pref = localStorage.getItem('so.fixsel.mode'); } catch (e) { pref = null; }
+    try { pref = localStorage.getItem('pad.fixsel.mode'); } catch (e) { pref = null; }
     const coarse = typeof window.matchMedia === 'function' && !!window.matchMedia('(hover: none) and (pointer: coarse)').matches;
     return fixSelPickMode(pref, coarse);
 }
@@ -237,35 +237,35 @@ function fixSelLog(kind, f) {
     const t = (performance.now() / 1000).toFixed(2).padStart(7);
     fixSelDebugLines.push(`${t} ${kind} dt=${v(o.dt)} dx=${v(o.dx)} dy=${v(o.dy)} dTop=${v(o.dTop)} since=${v(o.since)} reason=${v(o.reason)} unit=${v(o.unit)} sel=${sel} mode=${fixSelMode} active=${act}`);
     if (fixSelDebugLines.length > 400) fixSelDebugLines.shift();
-    const box = fixSelCard ? fixSelCard.querySelector('.so-fixsel-debuglog') : null;
+    const box = fixSelCard ? fixSelCard.querySelector('.pad-fixsel-debuglog') : null;
     if (box) box.value = fixSelDebugLines.join('\n');
 }
 
-// 开卡时读一次调试开关：开 → 在 #so-fixsel-body 末尾挂一个可全选复制的只读文本框（不碰剪贴板 API，
+// 开卡时读一次调试开关：开 → 在 #pad-fixsel-body 末尾挂一个可全选复制的只读文本框（不碰剪贴板 API，
 // 手机上不需要授权）；关 → 连元素都不留（开过又关掉时把上一次那个撤走）。
 function fixSelDebugInit(card) {
     let on = false;
-    try { on = !!localStorage.getItem('so.fixsel.debug'); } catch (e) { on = false; }
+    try { on = !!localStorage.getItem('pad.fixsel.debug'); } catch (e) { on = false; }
     fixSelDebug = on;
     fixSelDebugLines = [];
-    let box = card.querySelector('.so-fixsel-debug');
+    let box = card.querySelector('.pad-fixsel-debug');
     if (!on) { if (box) box.remove(); return; }
     if (!box) {
         box = document.createElement('details');
-        box.className = 'so-fixsel-debug';
-        box.innerHTML = '<summary>调试日志</summary><textarea class="so-fixsel-debuglog" readonly></textarea>';
-        card.querySelector('#so-fixsel-body').appendChild(box);
+        box.className = 'pad-fixsel-debug';
+        box.innerHTML = '<summary>调试日志</summary><textarea class="pad-fixsel-debuglog" readonly></textarea>';
+        card.querySelector('#pad-fixsel-body').appendChild(box);
     }
-    box.querySelector('.so-fixsel-debuglog').value = '';
+    box.querySelector('.pad-fixsel-debuglog').value = '';
 }
 
 // 贴底操作条的从属态：清除只在有草稿时可点；扩选按钮的字与 on 类跟着一次性武装走。
 // 凡是刷新提示行的地方都要顺手叫它一次（apply / 📌 / 移除 × / 开卡）。
 function fixSelSyncStrip(card) {
     if (!ENABLE_FIX_TAP_SELECT || !card) return;
-    const clearBtn = card.querySelector('.so-fixsel-clear');
-    const expandBtn = card.querySelector('.so-fixsel-expand');
-    const adjustBtn = card.querySelector('.so-fixsel-adjust');
+    const clearBtn = card.querySelector('.pad-fixsel-clear');
+    const expandBtn = card.querySelector('.pad-fixsel-expand');
+    const adjustBtn = card.querySelector('.pad-fixsel-adjust');
     const has = !!(fixSelStored && fixSelStored.end > fixSelStored.start);
     if (clearBtn) clearBtn.disabled = !has;
     if (expandBtn) {
@@ -279,7 +279,7 @@ function fixSelSyncStrip(card) {
     if (adjustBtn) {
         const capped = ((fixSelState && fixSelState.pins) || []).length >= MULTIFIX_MAX_PINS;
         adjustBtn.disabled = !has || !fixSelSegOk || capped;
-        adjustBtn.classList.toggle('so-fixsel-adjust-na', !fixSelSegOk);
+        adjustBtn.classList.toggle('pad-fixsel-adjust-na', !fixSelSegOk);
         if (fixSelSegOk) adjustBtn.removeAttribute('title');
         else adjustBtn.title = '此浏览器不支持逐字微调';
     }
@@ -292,11 +292,11 @@ function fixSelSyncStrip(card) {
 function fixSelApplyMode(card) {
     if (!ENABLE_FIX_TAP_SELECT || !card) return;
     const tap = fixSelMode === 'tap';
-    card.classList.toggle('so-fixsel-tap', tap);
-    card.querySelectorAll('.so-fixsel-mode-btn').forEach((b) => b.classList.toggle('on', b.dataset.mode === fixSelMode));
+    card.classList.toggle('pad-fixsel-tap', tap);
+    card.querySelectorAll('.pad-fixsel-mode-btn').forEach((b) => b.classList.toggle('on', b.dataset.mode === fixSelMode));
     // 标题文字的唯一写点就是那个 span（旗开时 buildFixSelCard 一定建了它，复审 #2）——1b #e：原先那条
     // 「找不到 span 就改文本节点」的兜底是死代码（旗关时本函数早已 return），删掉，不留第二个写法。
-    const titleTx = card.querySelector('#so-fixsel-head .so-fixsel-title-text');
+    const titleTx = card.querySelector('#pad-fixsel-head .pad-fixsel-title-text');
     if (titleTx) titleTx.textContent = tap ? ' ✂️ 选段校正 —— 轻点要改的句子' : ' ✂️ 选段校正 —— 划选要改的片段';
     fixSelExpandArmed = false;
     // 闸门记录按【每次开卡 / 每次切模式】归零（复审 #4）：万一有一次抬手被吃掉（页面被别的扩展挡下、
@@ -308,31 +308,31 @@ function fixSelApplyMode(card) {
     fixSelGate.lastScrollAt = -1e9;
     // 微调选择器不跨模式、也不跨开卡：这里统一收起来（开卡走这条、头部切换也走这条）。真正的「落定 /
     // 还原」在卡里那对 openChooser/closeChooser 手上，切换前已经先落定过了，这一下只是保证屏上不留残影。
-    const chBox = card.querySelector('.so-fixsel-chooser');
+    const chBox = card.querySelector('.pad-fixsel-chooser');
     if (chBox) chBox.classList.remove('open');
     // 开窗期间藏起钉选 chips / 整体要求的那个标记也一并撤掉。钉选框的【内联】display 不在这里还原：
     // 走到这儿只有两条路——开卡（紧接着 renderFixSelPins 会重写它）与头部切换（切换处理器已经先
     // closeChooser(true) 还原过了），两条路都不会留下一个藏着的钉选框。
-    card.classList.remove('so-fixsel-ch-open');
-    const body = card.querySelector('#so-fixsel-body');
-    const wrap = card.querySelector('.so-fixsel-wrap');
-    const strip = card.querySelector('.so-fixsel-tapstrip');
-    const inforow = card.querySelector('.so-fixsel-inforow');
+    card.classList.remove('pad-fixsel-ch-open');
+    const body = card.querySelector('#pad-fixsel-body');
+    const wrap = card.querySelector('.pad-fixsel-wrap');
+    const strip = card.querySelector('.pad-fixsel-tapstrip');
+    const inforow = card.querySelector('.pad-fixsel-inforow');
     // 清除按钮也是【搬】不是克隆（复审 #1）：拖选模式下贴底操作条整条不显示，撞上「与钉段重叠」或
     // 「满 8 段」的草稿就既钉不进、又清不掉，而裁定 0.4 会一直拦着开始校正 —— 死胡同。搬到信息行里
     // 紧挨 📌，两种模式同一个节点、同一处布线、同一处 disabled 刷新（fixSelSyncStrip）。
-    const clearBtn = card.querySelector('.so-fixsel-clear');
-    const tapbtns = card.querySelector('.so-fixsel-tapbtns');
-    const pinBtn = card.querySelector('.so-fixsel-pin-btn');
+    const clearBtn = card.querySelector('.pad-fixsel-clear');
+    const tapbtns = card.querySelector('.pad-fixsel-tapbtns');
+    const pinBtn = card.querySelector('.pad-fixsel-pin-btn');
     // 1.79 Prince 实报（长回复 + 点选）：点选层不封顶，于是钉选 chips 与「整体要求」框被顶到折叠线
     // 以下——用户看不见自己钉了什么，更找不到写要求的框。它们跟信息行、清除一样【搬】进贴底条
     //（同一个节点、布线一字不动：renderFixSelPins 与 go 都是 card.querySelector 现查）。
     // 贴底条里的顺序恒为：信息行 → 钉选 chips → 整体要求 → 按钮排。
-    const pinsBox = card.querySelector('.so-fixsel-pins');
-    const instrBox = card.querySelector('.so-fixsel-instr');
+    const pinsBox = card.querySelector('.pad-fixsel-pins');
+    const instrBox = card.querySelector('.pad-fixsel-instr');
     if (tap) {
         if (fixSelState) fixSelState.units = fixSelUnits(fixSelState.full);   // 查表用，开卡与切换时重算
-        const ta = card.querySelector('.so-fixsel-text');
+        const ta = card.querySelector('.pad-fixsel-text');
         try { ta.blur(); } catch (e) { /* ignore */ }
         if (strip && inforow && inforow.parentElement !== strip) strip.insertBefore(inforow, strip.firstChild);
         if (strip && tapbtns && pinsBox && instrBox) {   // 位置已经对了就不搬（搬动会让正在输入的框失焦）
@@ -356,8 +356,8 @@ function fixSelApplyMode(card) {
 // 点选层重画：整块 innerHTML 换 + scrollTop 保存/恢复（探针实测 30 次轻点 0 跳动）。所有重画点
 //（📌 / 移除 × / 预选 / 失焦）都经 paintFixSelOverlayAll 分流到这里，所以不需要第二套重画调用点。
 function renderFixSelPicker(card) {
-    const body = card.querySelector('#so-fixsel-body');
-    const picker = card.querySelector('.so-fixsel-picker');
+    const body = card.querySelector('#pad-fixsel-body');
+    const picker = card.querySelector('.pad-fixsel-picker');
     if (!body || !picker) return;
     const top = body.scrollTop;
     picker.innerHTML = buildFixSelPickerHtml(
@@ -368,22 +368,22 @@ function renderFixSelPicker(card) {
     body.scrollTop = top;
 }
 
-// 点进已钉段时闪一下那段：chip 行与点选层里属于它的片同时加 so-fixsel-flash（CSS 两拍描边），
+// 点进已钉段时闪一下那段：chip 行与点选层里属于它的片同时加 pad-fixsel-flash（CSS 两拍描边），
 // 动画结束自摘。jsdom 不发 animationend，类留着也无害。
 function fixSelFlashPin(card, idx) {
     const pin = ((fixSelState && fixSelState.pins) || [])[idx];
     if (!pin) return;
     const targets = [];
-    const rows = card.querySelectorAll('.so-fixsel-pinrow');
-    if (rows[idx]) { const tag = rows[idx].querySelector('.so-fixsel-pintag'); if (tag) targets.push(tag); }
-    card.querySelectorAll('.so-fixsel-picker .so-fixsel-u-pin').forEach((sp) => {
+    const rows = card.querySelectorAll('.pad-fixsel-pinrow');
+    if (rows[idx]) { const tag = rows[idx].querySelector('.pad-fixsel-pintag'); if (tag) targets.push(tag); }
+    card.querySelectorAll('.pad-fixsel-picker .pad-fixsel-u-pin').forEach((sp) => {
         if (Number(sp.dataset.s) >= pin.start && Number(sp.dataset.e) <= pin.end) targets.push(sp);
     });
     targets.forEach((elm) => {
-        elm.classList.remove('so-fixsel-flash');
+        elm.classList.remove('pad-fixsel-flash');
         void elm.offsetWidth;   // 强制回流：连点同一段时动画要能重放
-        elm.classList.add('so-fixsel-flash');
-        elm.addEventListener('animationend', () => elm.classList.remove('so-fixsel-flash'), { once: true });
+        elm.classList.add('pad-fixsel-flash');
+        elm.addEventListener('animationend', () => elm.classList.remove('pad-fixsel-flash'), { once: true });
     });
 }
 
@@ -391,7 +391,7 @@ function fixSelFlashPin(card, idx) {
 // 立刻清掉并记一行——点选层本就 user-select:none，出现即异常，值得在日志里留痕。
 function fixSelClearNativeSelection(card) {
     try {
-        const picker = card.querySelector('.so-fixsel-picker');
+        const picker = card.querySelector('.pad-fixsel-picker');
         const sel = document.getSelection ? document.getSelection() : null;
         if (!picker || !sel || !sel.anchorNode || !picker.contains(sel.anchorNode)) return;
         sel.removeAllRanges();
@@ -436,10 +436,10 @@ export function openFixSelectCard(presel) {
     fixSelState = { idx: latest.idx, swipeId: (m && Number.isInteger(m.swipe_id)) ? m.swipe_id : 0, fingerprint: fixFingerprint(full), start: 0, end: 0, text: '', full, pins: [] };
     fixSelStored = null;
     if (!fixSelCard) fixSelCard = buildFixSelCard();
-    const ta = fixSelCard.querySelector('.so-fixsel-text');
+    const ta = fixSelCard.querySelector('.pad-fixsel-text');
     ta.value = full;
     try { ta.setSelectionRange(0, 0); } catch (e) { /* ignore */ }   // 复开同文时 Chromium 不重置原生选区（值没变=赋值 no-op）——显式清掉，开卡必须真「未选中」
-    fixSelCard.querySelector('.so-fixsel-instr').value = '';
+    fixSelCard.querySelector('.pad-fixsel-instr').value = '';
     if (ENABLE_FIX_TAP_SELECT) {   // 点选杀死开关读点③：开卡定一次模式，此后旋转 / 插鼠标都不再改
         fixSelMode = fixSelResolveMode();
         fixSelDebugInit(fixSelCard);
@@ -448,12 +448,12 @@ export function openFixSelectCard(presel) {
         fixSelSegOk = !!fixSelGraphemes('字', 0, 1);
         fixSelApplyMode(fixSelCard);
     }
-    const info = fixSelCard.querySelector('.so-fixsel-info');
+    const info = fixSelCard.querySelector('.pad-fixsel-info');
     info.textContent = fixSelHint('none-open');
-    fixSelCard.querySelector('.so-fixsel-pin-btn').disabled = true;
+    fixSelCard.querySelector('.pad-fixsel-pin-btn').disabled = true;
     renderFixSelPins(fixSelCard);      // 开卡从零开始（v1 钉选不跨开卡持久，交接 4.1）
     updateFixSelGo(fixSelCard);        // 恢复「开始校正」+ disabled（0 钉无选区）
-    const overlay = fixSelCard.querySelector('.so-fixsel-overlay');
+    const overlay = fixSelCard.querySelector('.pad-fixsel-overlay');
     overlay.innerHTML = ''; overlay.style.display = 'none';
     fixSelCard.classList.add('open');
     if (presel && presel.text) {   // 主聊天入口预选（1.42.0）：送达即消费——成败都算送达（spec 决定 5）
@@ -464,7 +464,7 @@ export function openFixSelectCard(presel) {
                 // 点选：逐字采纳映射到的区间（【不】吸附到整句边界），并且绝不去聚焦那个已经藏起来的
                 // textarea、不派发 select —— 那两样都会把 record() 那条老路重新叫醒。
                 fixSelStored = { start: mapped.start, end: mapped.end };
-                fixSelCard.dispatchEvent(new Event('so-fixsel-refresh'));   // 卡内同一段写回（apply + 重画）
+                fixSelCard.dispatchEvent(new Event('pad-fixsel-refresh'));   // 卡内同一段写回（apply + 重画）
                 scrollFixSelToOffset(fixSelCard, mapped.start);
             } else {
                 try {
@@ -481,103 +481,103 @@ export function openFixSelectCard(presel) {
     }
 }
 
-// 懒建选段卡 DOM + 一次性 wiring（复用 #so-fixwarn 的 inset:0 骨架 + .so-warn-x 逃生 + 点遮罩关闭，防手机遮罩锁死）。
+// 懒建选段卡 DOM + 一次性 wiring（复用 #pad-fixwarn 的 inset:0 骨架 + .pad-warn-x 逃生 + 点遮罩关闭，防手机遮罩锁死）。
 function buildFixSelCard() {
-    const win = document.getElementById('so-window') || document.body;
+    const win = document.getElementById('pad-window') || document.body;
     const el = document.createElement('div');
-    el.id = 'so-fixsel';
+    el.id = 'pad-fixsel';
     el.innerHTML = `
-        <div id="so-fixsel-card">
-            <div id="so-fixsel-head"><span class="so-warn-title"><i class="fa-solid fa-scissors"></i> ✂️ 选段校正 —— 划选要改的片段</span><div class="so-iconbtn so-warn-x" title="关闭"><i class="fa-solid fa-xmark"></i></div></div>
-            <div id="so-fixsel-body">
-                <div class="so-fixsel-wrap">
-                    <div class="so-fixsel-overlay" aria-hidden="true"></div>
-                    <textarea class="so-fixsel-text" readonly spellcheck="false"></textarea>
+        <div id="pad-fixsel-card">
+            <div id="pad-fixsel-head"><span class="pad-warn-title"><i class="fa-solid fa-scissors"></i> ✂️ 选段校正 —— 划选要改的片段</span><div class="pad-iconbtn pad-warn-x" title="关闭"><i class="fa-solid fa-xmark"></i></div></div>
+            <div id="pad-fixsel-body">
+                <div class="pad-fixsel-wrap">
+                    <div class="pad-fixsel-overlay" aria-hidden="true"></div>
+                    <textarea class="pad-fixsel-text" readonly spellcheck="false"></textarea>
                 </div>
-                <div class="so-fixsel-inforow">
-                    <div class="so-fixsel-info so-hint">未选中片段——请在上方文本里划选。</div>
-                    <button type="button" class="so-fixsel-pin-btn" disabled title="把当前划选存为一个片段（每段可单独写要求），然后可继续划下一段">📌 钉住这段</button>
+                <div class="pad-fixsel-inforow">
+                    <div class="pad-fixsel-info pad-hint">未选中片段——请在上方文本里划选。</div>
+                    <button type="button" class="pad-fixsel-pin-btn" disabled title="把当前划选存为一个片段（每段可单独写要求），然后可继续划下一段">📌 钉住这段</button>
                 </div>
-                <div class="so-fixsel-pins"></div>
-                <textarea class="so-fixsel-instr" rows="3" placeholder="想怎么改这个片段？（例：这段重写得更简洁 / 这句对白改得更冷）"></textarea>
+                <div class="pad-fixsel-pins"></div>
+                <textarea class="pad-fixsel-instr" rows="3" placeholder="想怎么改这个片段？（例：这段重写得更简洁 / 这句对白改得更冷）"></textarea>
             </div>
-            <div id="so-fixsel-btns">
-                <button type="button" class="so-fixsel-cancel">取消</button>
-                <button type="button" class="so-fixsel-go" disabled>开始校正</button>
+            <div id="pad-fixsel-btns">
+                <button type="button" class="pad-fixsel-cancel">取消</button>
+                <button type="button" class="pad-fixsel-go" disabled>开始校正</button>
             </div>
         </div>`;
     win.appendChild(el);
     if (ENABLE_FIX_TAP_SELECT) {   // 点选杀死开关读点②：旗关时以下三件一件不建 → 卡 HTML 与 1.78.0 逐字节相同
-        // ① 点选层：住在 #so-fixsel-body 里、排在 .so-fixsel-wrap 之前；它自己【不设】max-height/overflow，
-        //    所以点选模式下 #so-fixsel-body 是唯一的滚动器（共识 2）。
+        // ① 点选层：住在 #pad-fixsel-body 里、排在 .pad-fixsel-wrap 之前；它自己【不设】max-height/overflow，
+        //    所以点选模式下 #pad-fixsel-body 是唯一的滚动器（共识 2）。
         const picker = document.createElement('div');
-        picker.className = 'so-fixsel-picker';
+        picker.className = 'pad-fixsel-picker';
         picker.setAttribute('role', 'listbox');
         picker.setAttribute('aria-label', '回复正文');
-        el.querySelector('#so-fixsel-body').insertBefore(picker, el.querySelector('.so-fixsel-wrap'));
+        el.querySelector('#pad-fixsel-body').insertBefore(picker, el.querySelector('.pad-fixsel-wrap'));
         // ② 头部两段切换（永远可见，挨着逃生 ✕）。
         const modes = document.createElement('span');
-        modes.className = 'so-fixsel-modes';
-        modes.innerHTML = '<button type="button" class="so-fixsel-mode-btn" data-mode="tap" title="轻点句子选段（手机）">点选</button>'
-            + '<button type="button" class="so-fixsel-mode-btn" data-mode="drag" title="在文本里划选（桌面）">拖选</button>';
-        el.querySelector('#so-fixsel-head').insertBefore(modes, el.querySelector('.so-warn-x'));
-        el.classList.add('so-fixsel-modes-on');   // 有切换 = 标题要让位（防 CJK min-content 把它塌成一字一行）
-        // 标题那段文字包进一个 span：.so-warn-title 是 display:flex，text-overflow 对它无效（复审 #2），
+        modes.className = 'pad-fixsel-modes';
+        modes.innerHTML = '<button type="button" class="pad-fixsel-mode-btn" data-mode="tap" title="轻点句子选段（手机）">点选</button>'
+            + '<button type="button" class="pad-fixsel-mode-btn" data-mode="drag" title="在文本里划选（桌面）">拖选</button>';
+        el.querySelector('#pad-fixsel-head').insertBefore(modes, el.querySelector('.pad-warn-x'));
+        el.classList.add('pad-fixsel-modes-on');   // 有切换 = 标题要让位（防 CJK min-content 把它塌成一字一行）
+        // 标题那段文字包进一个 span：.pad-warn-title 是 display:flex，text-overflow 对它无效（复审 #2），
         // 要省略号就得落在一个真正的文字盒上。fixSelApplyMode 之后改的也是这个 span。
-        const titleEl = el.querySelector('#so-fixsel-head .so-warn-title');
+        const titleEl = el.querySelector('#pad-fixsel-head .pad-warn-title');
         if (titleEl && titleEl.lastChild && titleEl.lastChild.nodeType === 3) {
             const titleTx = document.createElement('span');
-            titleTx.className = 'so-fixsel-title-text';
+            titleTx.className = 'pad-fixsel-title-text';
             titleEl.insertBefore(titleTx, titleEl.lastChild);
             titleTx.appendChild(titleTx.nextSibling);
         }
-        // ③ 贴底操作条：在 #so-fixsel-body 【外面】（裁定 0.2——软键盘弹起时正文不被挤走）。
+        // ③ 贴底操作条：在 #pad-fixsel-body 【外面】（裁定 0.2——软键盘弹起时正文不被挤走）。
         //    信息行与那颗 📌 由 fixSelApplyMode 搬进来，不在这里克隆。
         const strip = document.createElement('div');
-        strip.className = 'so-fixsel-tapstrip';
-        strip.innerHTML = '<div class="so-fixsel-tapbtns">'
-            + '<button type="button" class="so-fixsel-expand">扩选</button>'
-            + '<button type="button" class="so-fixsel-adjust" disabled>微调</button>'
-            + '<button type="button" class="so-fixsel-clear" disabled>清除</button>'
+        strip.className = 'pad-fixsel-tapstrip';
+        strip.innerHTML = '<div class="pad-fixsel-tapbtns">'
+            + '<button type="button" class="pad-fixsel-expand">扩选</button>'
+            + '<button type="button" class="pad-fixsel-adjust" disabled>微调</button>'
+            + '<button type="button" class="pad-fixsel-clear" disabled>清除</button>'
             + '</div>';
-        el.querySelector('#so-fixsel-card').insertBefore(strip, el.querySelector('#so-fixsel-btns'));
-        // ④ 微调选择器：停靠在 #so-fixsel-body 【下面】、贴底操作条【上面】——正文永远在屏上，绝不被
+        el.querySelector('#pad-fixsel-card').insertBefore(strip, el.querySelector('#pad-fixsel-btns'));
+        // ④ 微调选择器：停靠在 #pad-fixsel-body 【下面】、贴底操作条【上面】——正文永远在屏上，绝不被
         //    它替换（共识 1.9）。开合只切 open 类（不玩 hidden 属性），默认不显示。
         const chooser = document.createElement('div');
-        chooser.className = 'so-fixsel-chooser';
-        chooser.innerHTML = '<div class="so-fixsel-ch-tabs">'
-            + '<button type="button" class="so-fixsel-ch-tab on" data-edge="start">开头：选第一个要改的字</button>'
-            + '<button type="button" class="so-fixsel-ch-tab" data-edge="end">结尾：选最后一个要改的字</button>'
+        chooser.className = 'pad-fixsel-chooser';
+        chooser.innerHTML = '<div class="pad-fixsel-ch-tabs">'
+            + '<button type="button" class="pad-fixsel-ch-tab on" data-edge="start">开头：选第一个要改的字</button>'
+            + '<button type="button" class="pad-fixsel-ch-tab" data-edge="end">结尾：选最后一个要改的字</button>'
             + '</div>'
-            + '<div class="so-fixsel-ch-nav">'
-            + '<button type="button" class="so-fixsel-ch-prevunit">‹ 上一句</button>'
-            + `<button type="button" class="so-fixsel-ch-prev">‹ 前 ${FIXSEL_CH_PAGE} 字</button>`
-            + `<button type="button" class="so-fixsel-ch-next">后 ${FIXSEL_CH_PAGE} 字 ›</button>`
-            + '<button type="button" class="so-fixsel-ch-nextunit">下一句 ›</button>'
-            + '<span class="so-fixsel-ch-spacer"></span>'
-            + '<button type="button" class="so-fixsel-ch-nudge-l" title="边界前移一字">‹ 一字</button>'
-            + '<button type="button" class="so-fixsel-ch-nudge-r" title="边界后移一字">一字 ›</button>'
+            + '<div class="pad-fixsel-ch-nav">'
+            + '<button type="button" class="pad-fixsel-ch-prevunit">‹ 上一句</button>'
+            + `<button type="button" class="pad-fixsel-ch-prev">‹ 前 ${FIXSEL_CH_PAGE} 字</button>`
+            + `<button type="button" class="pad-fixsel-ch-next">后 ${FIXSEL_CH_PAGE} 字 ›</button>`
+            + '<button type="button" class="pad-fixsel-ch-nextunit">下一句 ›</button>'
+            + '<span class="pad-fixsel-ch-spacer"></span>'
+            + '<button type="button" class="pad-fixsel-ch-nudge-l" title="边界前移一字">‹ 一字</button>'
+            + '<button type="button" class="pad-fixsel-ch-nudge-r" title="边界后移一字">一字 ›</button>'
             + '</div>'
-            + '<div class="so-fixsel-ch-cells"></div>'
-            + '<div class="so-fixsel-ch-preview"></div>'
-            + '<div class="so-fixsel-ch-foot">'
-            + '<button type="button" class="so-fixsel-ch-done">完成</button>'
-            + '<button type="button" class="so-fixsel-ch-cancel">取消微调</button>'
+            + '<div class="pad-fixsel-ch-cells"></div>'
+            + '<div class="pad-fixsel-ch-preview"></div>'
+            + '<div class="pad-fixsel-ch-foot">'
+            + '<button type="button" class="pad-fixsel-ch-done">完成</button>'
+            + '<button type="button" class="pad-fixsel-ch-cancel">取消微调</button>'
             + '</div>';
-        el.querySelector('#so-fixsel-card').insertBefore(chooser, strip);
+        el.querySelector('#pad-fixsel-card').insertBefore(chooser, strip);
     }
     // 微调选择器的「先落定、再继续」钩子：卡上【不在】点选布线块里的那些动作（📌）要在改动草稿之前
     // 先把微调窗收掉。旗关 / 没建选择器时恒为 null，调用点一律 if (chCommit) …。
     let chCommit = null;
-    const ta = el.querySelector('.so-fixsel-text');
-    const overlay = el.querySelector('.so-fixsel-overlay');
-    const info = el.querySelector('.so-fixsel-info');
-    const go = el.querySelector('.so-fixsel-go');
+    const ta = el.querySelector('.pad-fixsel-text');
+    const overlay = el.querySelector('.pad-fixsel-overlay');
+    const info = el.querySelector('.pad-fixsel-info');
+    const go = el.querySelector('.pad-fixsel-go');
     const close = () => { el.classList.remove('open'); clearFixChatSel(); };   // 关卡即弃划选记忆（go 三分支都先 close() → 「开始校正」也覆盖）
 
     el.addEventListener('click', (e) => { if (e.target === el) close(); });   // 点遮罩关闭（点卡内不关）
-    el.querySelector('.so-warn-x').addEventListener('click', close);
-    el.querySelector('.so-fixsel-cancel').addEventListener('click', close);
+    el.querySelector('.pad-warn-x').addEventListener('click', close);
+    el.querySelector('.pad-fixsel-cancel').addEventListener('click', close);
     document.addEventListener('keydown', (e) => {   // Esc 关卡（1.42.0；同 ⋯ 工具菜单的 document 级先例）
         if (e.key === 'Escape' && el.classList.contains('open')) close();
     });
@@ -586,7 +586,7 @@ function buildFixSelCard() {
         const sel = resolveRecordedSelection(
             { focused: document.activeElement === ta, start: ta.selectionStart, end: ta.selectionEnd },
             fixSelStored, ta.value.length);
-        const pinBtn = el.querySelector('.so-fixsel-pin-btn');
+        const pinBtn = el.querySelector('.pad-fixsel-pin-btn');
         const nPins = (fixSelState && fixSelState.pins) ? fixSelState.pins.length : 0;
         if (sel && (sel.end - sel.start) >= 2) {
             fixSelState.start = sel.start; fixSelState.end = sel.end; fixSelState.text = ta.value.slice(sel.start, sel.end);
@@ -623,7 +623,7 @@ function buildFixSelCard() {
     ta.addEventListener('scroll', () => { overlay.scrollTop = ta.scrollTop; overlay.scrollLeft = ta.scrollLeft; }, { passive: true });
 
     // 📌 钉住这段：规整（收白边 / 查重叠 / 查上限）→ 入列 → 清活选区（手机上顺序流：划一段钉一段）
-    el.querySelector('.so-fixsel-pin-btn').addEventListener('click', () => {
+    el.querySelector('.pad-fixsel-pin-btn').addEventListener('click', () => {
         if (!fixSelState || fixSelState.text.length < 2) return;
         if (chCommit) chCommit();   // 微调窗开着时按钉 = 先落定当下这个区间（不还原快照），再照常钉
         const r = normalizePinAdd(fixSelState.pins, { start: fixSelState.start, end: fixSelState.end }, fixSelState.full, MULTIFIX_MAX_PINS);
@@ -639,13 +639,13 @@ function buildFixSelCard() {
         renderFixSelPins(el);
         paintFixSelOverlayAll(el);
         info.textContent = fixSelHint('pinned', fixSelState.pins.length);
-        el.querySelector('.so-fixsel-pin-btn').disabled = true;
+        el.querySelector('.pad-fixsel-pin-btn').disabled = true;
         updateFixSelGo(el);
         fixSelSyncStrip(el);
     });
 
     go.addEventListener('click', () => {
-        const instr = (el.querySelector('.so-fixsel-instr').value || '').trim();
+        const instr = (el.querySelector('.pad-fixsel-instr').value || '').trim();
         const pins = (fixSelState && fixSelState.pins) || [];
         // 裁定 0.4（两种模式同守）：有钉在手时，还亮着的那段草稿必须先钉住或清除——看得见的暖色高亮
         // 绝不能被悄悄丢掉。放在最前面，三条派发路都在它后面。
@@ -675,12 +675,12 @@ function buildFixSelCard() {
     });
 
     if (ENABLE_FIX_TAP_SELECT) {   // 点选布线（旗关时一个监听都不挂）：闸门 → 单元点击 → 操作条 → 头部切换
-        const bodyBox = el.querySelector('#so-fixsel-body');
-        const picker = el.querySelector('.so-fixsel-picker');
+        const bodyBox = el.querySelector('#pad-fixsel-body');
+        const picker = el.querySelector('.pad-fixsel-picker');
         // 写回 = 共识 11 的那两行之后半段：apply() 出信息行 / 📌 / go 态，重画出高亮。预选支借
-        // so-fixsel-refresh 走同一段，所以卡里只有【一处】写回代码。
+        // pad-fixsel-refresh 走同一段，所以卡里只有【一处】写回代码。
         const writeBack = () => { apply(); paintFixSelOverlayAll(el); };
-        el.addEventListener('so-fixsel-refresh', writeBack);
+        el.addEventListener('pad-fixsel-refresh', writeBack);
 
         // 一次被接受的轻点变成草稿的【唯一】出口，它自己什么都不裁决：能不能要（收白边 / ≥2 字 /
         // 与钉段重叠 / 到没到上限）全由既有的 normalizePinAdd 说了算（§5 fable：诊断书里最怕的就是
@@ -728,7 +728,7 @@ function buildFixSelCard() {
         picker.addEventListener('click', (e) => {
             const d = fixSelGate.down;
             const v = fixSelJudgeTap(d, performance.now(), { x: e.clientX, y: e.clientY }, bodyBox.scrollTop, fixSelGate.lastScrollAt);
-            const u = (e.target && e.target.closest) ? e.target.closest('.so-fixsel-u') : null;
+            const u = (e.target && e.target.closest) ? e.target.closest('.pad-fixsel-u') : null;
             const line = {
                 dt: v.dt, reason: v.reason || 'ok', unit: u ? u.dataset.i : '-',
                 dx: d ? Math.abs(e.clientX - d.x) : '-', dy: d ? Math.abs(e.clientY - d.y) : '-',
@@ -741,7 +741,7 @@ function buildFixSelCard() {
             onUnitTap(Number(u.dataset.i));
         });
 
-        el.querySelector('.so-fixsel-expand').addEventListener('click', () => {
+        el.querySelector('.pad-fixsel-expand').addEventListener('click', () => {
             if (!fixSelStored || fixSelStored.end <= fixSelStored.start) { info.textContent = '先点一句，再按扩选。'; return; }
             fixSelExpandArmed = !fixSelExpandArmed;
             fixSelSyncStrip(el);
@@ -749,7 +749,7 @@ function buildFixSelCard() {
             else apply();   // 收手 = 提示行回到「已选中 N 字」
             fixSelLog('EXPAND', { reason: fixSelExpandArmed ? 'armed' : 'disarmed' });
         });
-        el.querySelector('.so-fixsel-clear').addEventListener('click', () => {
+        el.querySelector('.pad-fixsel-clear').addEventListener('click', () => {
             closeChooser(true);   // 清除 = 连微调一起收掉，且【不】把快照放回来（草稿就是要没了）
             fixSelStored = null;
             fixSelExpandArmed = false;
@@ -765,11 +765,11 @@ function buildFixSelCard() {
          * 哪一头 / 哪一句 / 第几页 / 打开那一刻的快照。选区真相仍然只有 fixSelStored 一个；CH 里
          * 没有第二份区间（snapshot 只为「取消」服务，落定后立刻扔掉）。
          * ------------------------------------------------------------------ */
-        const chooser = el.querySelector('.so-fixsel-chooser');
-        const pinsBox = el.querySelector('.so-fixsel-pins');   // 开窗期间要把它藏起来（见 openChooser）
+        const chooser = el.querySelector('.pad-fixsel-chooser');
+        const pinsBox = el.querySelector('.pad-fixsel-pins');   // 开窗期间要把它藏起来（见 openChooser）
         const CH = { edge: 'start', unit: 0, page: 0, snapshot: null, pinsDisplay: null };
         const chIsOpen = () => chooser.classList.contains('open');
-        const chCells = chooser.querySelector('.so-fixsel-ch-cells');
+        const chCells = chooser.querySelector('.pad-fixsel-ch-cells');
 
         // 挑一格 = 把那一头挪到这一格的边上。写草稿的路与轻点【同一条】：判定问 fixSelChProbe（= 唯一
         // 那处 normalizePinAdd），采纳它规整后的区间，然后走 writeBack。
@@ -809,7 +809,7 @@ function buildFixSelCard() {
             if (!chIsOpen()) return;
             const d = fixSelStored;
             if (!d || d.end <= d.start || !fixSelState) { closeChooser(true); return; }
-            chooser.querySelectorAll('.so-fixsel-ch-tab').forEach((b) => b.classList.toggle('on', b.dataset.edge === CH.edge));
+            chooser.querySelectorAll('.pad-fixsel-ch-tab').forEach((b) => b.classList.toggle('on', b.dataset.edge === CH.edge));
             const us = fixSelState.units || [];
             if (!us[CH.unit] || us[CH.unit].kind !== 'prose') {
                 CH.unit = fixSelChUnitAt(us, CH.edge === 'start' ? d.start : d.end - 1);
@@ -822,11 +822,11 @@ function buildFixSelCard() {
             gs.slice(CH.page * FIXSEL_CH_PAGE, (CH.page + 1) * FIXSEL_CH_PAGE).forEach((g) => {
                 const b = document.createElement('button');
                 b.type = 'button';
-                b.className = 'so-fixsel-ch-cell';
+                b.className = 'pad-fixsel-ch-cell';
                 b.dataset.s = String(g.start); b.dataset.e = String(g.end);
                 if (/^\s+$/.test(g.g)) {   // 空白字素得看得见，否则用户以为这一格是空的
                     const w = document.createElement('span');
-                    w.className = 'so-fixsel-ch-ws';
+                    w.className = 'pad-fixsel-ch-ws';
                     w.textContent = /\n/.test(g.g) ? '↵' : '␣';
                     b.appendChild(w);
                 } else { b.textContent = g.g; }
@@ -837,9 +837,9 @@ function buildFixSelCard() {
                 b.addEventListener('click', () => chPick(g));
                 chCells.appendChild(b);
             });
-            chooser.querySelector('.so-fixsel-ch-prev').disabled = CH.page === 0;
-            chooser.querySelector('.so-fixsel-ch-next').disabled = CH.page >= pages - 1;
-            chooser.querySelector('.so-fixsel-ch-preview').textContent = fixSelState.full.slice(d.start, d.end);
+            chooser.querySelector('.pad-fixsel-ch-prev').disabled = CH.page === 0;
+            chooser.querySelector('.pad-fixsel-ch-next').disabled = CH.page >= pages - 1;
+            chooser.querySelector('.pad-fixsel-ch-preview').textContent = fixSelState.full.slice(d.start, d.end);
         };
 
         const openChooser = (edge) => {
@@ -854,14 +854,14 @@ function buildFixSelCard() {
             chooser.classList.add('open');
             // 1.79 手机实测：贴底条在 540px 高的窗里已经吃掉约 227px，微调窗只剩约 51px（滚动条后面才是
             // 格子）。微调与「写要求」从来不是同时用的两件事 —— 开窗期间把钉选 chips 与整体要求框藏起来，
-            // 信息行留着（它显示实时的「已选中 N 字」）。CSS 那条类规则管得住 .so-fixsel-instr；
+            // 信息行留着（它显示实时的「已选中 N 字」）。CSS 那条类规则管得住 .pad-fixsel-instr；
             // 钉选框管不住 —— renderFixSelPins 给它写的是【内联】display（flex/none），内联压过类规则
             //（1.45.0 那条地雷的同族）。所以钉选框走「开窗时记下内联值、改 none，关窗时原样放回」。
             // 记下的值不会过期：开窗期间 renderFixSelPins 一次也跑不到（📌 会先 chCommit() 收窗，
             // 移除 × 那些行本身正被藏着，开卡那条路进来时窗必然是关的）。
             CH.pinsDisplay = pinsBox ? pinsBox.style.display : null;
             if (pinsBox) pinsBox.style.display = 'none';
-            el.classList.add('so-fixsel-ch-open');
+            el.classList.add('pad-fixsel-ch-open');
             fixSelLog('CH-OPEN', { reason: `edge=${CH.edge}`, unit: CH.unit });
             renderChooser();
         };
@@ -871,7 +871,7 @@ function buildFixSelCard() {
             if (!chIsOpen()) return;
             if (!commit && CH.snapshot) fixSelStored = { start: CH.snapshot.start, end: CH.snapshot.end };
             chooser.classList.remove('open');
-            el.classList.remove('so-fixsel-ch-open');
+            el.classList.remove('pad-fixsel-ch-open');
             // 只还原【显示】，绝不碰值：用户在整体要求框里敲的字原样还在（那是 textarea 的 value，
             // 从头到尾没人动过）。钉选框放回开窗前那个内联值。
             if (pinsBox) pinsBox.style.display = CH.pinsDisplay === null || CH.pinsDisplay === undefined ? '' : CH.pinsDisplay;
@@ -882,8 +882,8 @@ function buildFixSelCard() {
         };
         chCommit = () => closeChooser(true);   // 给布线块【外面】那颗 📌 的钩子
 
-        el.querySelector('.so-fixsel-adjust').addEventListener('click', () => openChooser('start'));
-        chooser.querySelectorAll('.so-fixsel-ch-tab').forEach((tab) => {
+        el.querySelector('.pad-fixsel-adjust').addEventListener('click', () => openChooser('start'));
+        chooser.querySelectorAll('.pad-fixsel-ch-tab').forEach((tab) => {
             tab.addEventListener('click', () => {   // 换一头 = 按【当前草稿的那一头】重新找句子，回到第 0 页
                 if (!fixSelStored) return;
                 CH.edge = tab.dataset.edge === 'end' ? 'end' : 'start';
@@ -892,28 +892,28 @@ function buildFixSelCard() {
                 renderChooser();
             });
         });
-        chooser.querySelector('.so-fixsel-ch-prev').addEventListener('click', () => { CH.page--; renderChooser(); });
-        chooser.querySelector('.so-fixsel-ch-next').addEventListener('click', () => { CH.page++; renderChooser(); });
+        chooser.querySelector('.pad-fixsel-ch-prev').addEventListener('click', () => { CH.page--; renderChooser(); });
+        chooser.querySelector('.pad-fixsel-ch-next').addEventListener('click', () => { CH.page++; renderChooser(); });
         const chMoveUnit = (dir) => {   // 只落在散文句上：换行 / 空白那些 gap 单元一律跳过
             const us = (fixSelState && fixSelState.units) || [];
             for (let k = CH.unit + dir; k >= 0 && k < us.length; k += dir) {
                 if (us[k].kind === 'prose') { CH.unit = k; CH.page = 0; renderChooser(); return; }
             }
         };
-        chooser.querySelector('.so-fixsel-ch-prevunit').addEventListener('click', () => chMoveUnit(-1));
-        chooser.querySelector('.so-fixsel-ch-nextunit').addEventListener('click', () => chMoveUnit(1));
-        chooser.querySelector('.so-fixsel-ch-nudge-l').addEventListener('click', () => chNudge(-1));
-        chooser.querySelector('.so-fixsel-ch-nudge-r').addEventListener('click', () => chNudge(1));
-        chooser.querySelector('.so-fixsel-ch-done').addEventListener('click', () => closeChooser(true));
-        chooser.querySelector('.so-fixsel-ch-cancel').addEventListener('click', () => closeChooser(false));
+        chooser.querySelector('.pad-fixsel-ch-prevunit').addEventListener('click', () => chMoveUnit(-1));
+        chooser.querySelector('.pad-fixsel-ch-nextunit').addEventListener('click', () => chMoveUnit(1));
+        chooser.querySelector('.pad-fixsel-ch-nudge-l').addEventListener('click', () => chNudge(-1));
+        chooser.querySelector('.pad-fixsel-ch-nudge-r').addEventListener('click', () => chNudge(1));
+        chooser.querySelector('.pad-fixsel-ch-done').addEventListener('click', () => closeChooser(true));
+        chooser.querySelector('.pad-fixsel-ch-cancel').addEventListener('click', () => closeChooser(false));
 
         // 头部切换：只写 localStorage + 换模式（草稿 / 钉选 / 两处指令全原样留着；扩选武装作废）。
-        el.querySelectorAll('.so-fixsel-mode-btn').forEach((btn) => {
+        el.querySelectorAll('.pad-fixsel-mode-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const mode = btn.dataset.mode === 'tap' ? 'tap' : 'drag';
                 if (mode === fixSelMode) return;
                 closeChooser(true);   // 换模式 = 先落定微调（拖选那边没有停靠选择器）
-                try { localStorage.setItem('so.fixsel.mode', mode); } catch (e) { /* 隐私模式写不进，不挡本次切换 */ }
+                try { localStorage.setItem('pad.fixsel.mode', mode); } catch (e) { /* 隐私模式写不进，不挡本次切换 */ }
                 fixSelMode = mode;
                 fixSelApplyMode(el);
                 apply();   // 提示行换成新模式的说法
@@ -923,15 +923,15 @@ function buildFixSelCard() {
     return el;
 }
 
-// 多段 overlay 全量重画（规则4/5 的多段版）：钉选段（.so-fixsel-hl-pin，冷色）+ 失焦存档选区
-//（.so-fixsel-hl，暖色）。聚焦时只画钉——活选区让位原生黄选。无任何区间 = 隐藏（与旧版一致）。
+// 多段 overlay 全量重画（规则4/5 的多段版）：钉选段（.pad-fixsel-hl-pin，冷色）+ 失焦存档选区
+//（.pad-fixsel-hl，暖色）。聚焦时只画钉——活选区让位原生黄选。无任何区间 = 隐藏（与旧版一致）。
 function paintFixSelOverlayAll(card) {
     if (ENABLE_FIX_TAP_SELECT && fixSelMode === 'tap') { renderFixSelPicker(card); return; }   // 点选层是它自己的画布
-    const ta = card.querySelector('.so-fixsel-text');
-    const overlay = card.querySelector('.so-fixsel-overlay');
-    const ranges = ((fixSelState && fixSelState.pins) || []).map((p) => ({ start: p.start, end: p.end, cls: 'so-fixsel-hl-pin' }));
+    const ta = card.querySelector('.pad-fixsel-text');
+    const overlay = card.querySelector('.pad-fixsel-overlay');
+    const ranges = ((fixSelState && fixSelState.pins) || []).map((p) => ({ start: p.start, end: p.end, cls: 'pad-fixsel-hl-pin' }));
     if (document.activeElement !== ta && fixSelStored && fixSelStored.end > fixSelStored.start) {
-        ranges.push({ start: fixSelStored.start, end: fixSelStored.end, cls: 'so-fixsel-hl' });
+        ranges.push({ start: fixSelStored.start, end: fixSelStored.end, cls: 'pad-fixsel-hl' });
     }
     if (!ranges.length) { overlay.innerHTML = ''; overlay.style.display = 'none'; return; }
     overlay.innerHTML = buildFixSelOverlayHtml(ta.value || '', ranges);
@@ -945,15 +945,15 @@ function paintFixSelOverlayAll(card) {
 function scrollFixSelToOffset(card, start) {
     if (ENABLE_FIX_TAP_SELECT && fixSelMode === 'tap') {   // 点选：找 data-s ≤ start < data-e 的那一片，滚到上 1/3
         try {
-            const body = card.querySelector('#so-fixsel-body');
-            const picker = card.querySelector('.so-fixsel-picker');
+            const body = card.querySelector('#pad-fixsel-body');
+            const picker = card.querySelector('.pad-fixsel-picker');
             let mark = null;
             if (body && picker) {
                 picker.querySelectorAll('span[data-s]').forEach((sp) => {
                     if (!mark && Number(sp.dataset.s) <= start && start < Number(sp.dataset.e)) mark = sp;
                 });
-                // 量位置只能用矩形差（复审 #3）：#so-fixsel-body 与点选层都没有定位，一个片的
-                // offsetParent 其实是 #so-fixsel（position:absolute），offsetTop 量的是另一个盒子。
+                // 量位置只能用矩形差（复审 #3）：#pad-fixsel-body 与点选层都没有定位，一个片的
+                // offsetParent 其实是 #pad-fixsel（position:absolute），offsetTop 量的是另一个盒子。
                 if (mark) {
                     const top = mark.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
                     body.scrollTop = Math.max(0, top - Math.floor((body.clientHeight || 0) / 3));
@@ -963,11 +963,11 @@ function scrollFixSelToOffset(card, start) {
         return;
     }
     try {
-        const ta = card.querySelector('.so-fixsel-text');
-        const overlay = card.querySelector('.so-fixsel-overlay');
+        const ta = card.querySelector('.pad-fixsel-text');
+        const overlay = card.querySelector('.pad-fixsel-overlay');
         if (!ta || !overlay) return;
         const len = (ta.value || '').length;
-        overlay.innerHTML = buildFixSelOverlayHtml(ta.value || '', [{ start, end: Math.min(start + 1, len), cls: 'so-fixsel-hl' }]);
+        overlay.innerHTML = buildFixSelOverlayHtml(ta.value || '', [{ start, end: Math.min(start + 1, len), cls: 'pad-fixsel-hl' }]);
         overlay.style.display = 'block';
         const mark = overlay.querySelector('span');
         const top = mark ? mark.offsetTop : 0;
@@ -979,29 +979,29 @@ function scrollFixSelToOffset(card, start) {
 // 钉选 chips 重画：每段一行 = 「片段k「摘要」」+ 该段要求输入 + 移除 ×。手机端：行 flex-wrap，输入框
 // min-width 挤不下自动换整行；× ≥32px 点区。输入直写 pin.instr（对象引用，开跑时快照）。
 function renderFixSelPins(card) {
-    const box = card.querySelector('.so-fixsel-pins');
+    const box = card.querySelector('.pad-fixsel-pins');
     const pins = (fixSelState && fixSelState.pins) || [];
     box.innerHTML = '';
     box.style.display = pins.length ? 'flex' : 'none';
     pins.forEach((p, i) => {
         const row = document.createElement('div');
-        row.className = 'so-fixsel-pinrow';
+        row.className = 'pad-fixsel-pinrow';
         const tag = document.createElement('span');
-        tag.className = 'so-fixsel-pintag';
+        tag.className = 'pad-fixsel-pintag';
         tag.textContent = `片段${i + 1}「${p.text.slice(0, 12)}${p.text.length > 12 ? '…' : ''}」`;
         const instr = document.createElement('input');
         instr.type = 'text';
-        instr.className = 'so-fixsel-pininstr';
+        instr.className = 'pad-fixsel-pininstr';
         instr.placeholder = '这段怎么改？（留空则用下方整体要求）';
         instr.value = p.instr || '';
         instr.addEventListener('input', () => { p.instr = instr.value; });
         const rm = document.createElement('button');
-        rm.type = 'button'; rm.className = 'so-fixsel-pinrm'; rm.title = '移除此段';
+        rm.type = 'button'; rm.className = 'pad-fixsel-pinrm'; rm.title = '移除此段';
         rm.innerHTML = '<i class="fa-solid fa-xmark"></i>';
         rm.addEventListener('click', () => {
             fixSelState.pins.splice(i, 1);
             renderFixSelPins(card); paintFixSelOverlayAll(card); updateFixSelGo(card);
-            const info = card.querySelector('.so-fixsel-info');   // 终审补钉：移除后同步刷新提示行（防「已钉 n 段」滞留旧数）
+            const info = card.querySelector('.pad-fixsel-info');   // 终审补钉：移除后同步刷新提示行（防「已钉 n 段」滞留旧数）
             if (info) info.textContent = fixSelState.pins.length ? fixSelHint('pinned', fixSelState.pins.length) : fixSelHint('none');
             fixSelSyncStrip(card);
         });
@@ -1013,7 +1013,7 @@ function renderFixSelPins(card) {
 // go 键三态（H1 可视化 + V4 成本提示）：0 钉 = 今天的「开始校正」（活选区门控）；1 钉 = 同标签（走旧路）；
 // 2+ = 「开始多段校正（n 段，n 次调用）」——调用数写在脸上，成本绝不意外。
 function updateFixSelGo(card) {
-    const go = card.querySelector('.so-fixsel-go');
+    const go = card.querySelector('.pad-fixsel-go');
     const pins = (fixSelState && fixSelState.pins) || [];
     if (pins.length >= 2) { go.textContent = `开始多段校正（${pins.length} 段，${pins.length} 次调用）`; go.disabled = false; }
     else if (pins.length === 1) { go.textContent = '开始校正'; go.disabled = false; }
@@ -1051,7 +1051,7 @@ async function runFixSelect(instruction) {
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
-    const contentEl = assistantEl.querySelector('.so-content');
+    const contentEl = assistantEl.querySelector('.pad-content');
     const clearTyping = showTyping(contentEl);
     const ctl = beginGeneration();
     const timer = setTimeout(() => { try { ctl.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
@@ -1059,15 +1059,15 @@ async function runFixSelect(instruction) {
     try {
         // 传输四格收进 fixCallTransport（1.37.0 单一来源）；onCum 累计语义 = 原 profile 流分支原样，
         // direct 流从「+= 增量」改「= 累计」——同一字符串级数，最终画面逐字节一致。
-        if (s.stream) contentEl.classList.add('so-streaming');
+        if (s.stream) contentEl.classList.add('pad-streaming');
         finalText = await fixCallTransport(s, messages, ctl.signal, (full) => { clearTyping(); contentEl.textContent = full; if (soFollowStream) scrollToBottom(); });
-        contentEl.classList.remove('so-streaming');
+        contentEl.classList.remove('pad-streaming');
         clearTyping();
         renderFixSelectResult(assistantEl, contentEl, sel, finalText);
     } catch (e) {
         clearTyping();
         if (isUserAbort(e)) contentEl.textContent = '(已停止)';
-        else { contentEl.textContent = '选段校正失败：' + (e?.message || e); contentEl.classList.add('so-hint-error'); }
+        else { contentEl.textContent = '选段校正失败：' + (e?.message || e); contentEl.classList.add('pad-hint-error'); }
     } finally {
         clearTimeout(timer); finishGeneration();
         if (soFollowStream) scrollToBottom();
@@ -1090,20 +1090,20 @@ function renderFixSelectResult(assistantEl, contentEl, sel, finalText) {
     const newSpan = parsed.span;
     const outside = sel.full.slice(0, sel.start) + sel.full.slice(sel.end);
     const v = validateSpanFix(sel.text, newSpan, outside);   // 回插前体检（fail-open 守卫）
-    const bubble = assistantEl.querySelector('.so-bubble') || contentEl.parentElement;
+    const bubble = assistantEl.querySelector('.pad-bubble') || contentEl.parentElement;
     contentEl.textContent = newSpan;
     for (const w of v.warnings) {   // 警示（近抄 / 越界 / 长度异常）——不拦，只提醒看 diff
         const warn = document.createElement('div');
-        warn.className = 'so-fix-nearcopy-warn';
+        warn.className = 'pad-fix-nearcopy-warn';
         warn.textContent = w;
         bubble.appendChild(warn);
     }
     const diff = renderDiffCard(sel.text, newSpan);   // 片段小 → diff 便宜可读
     diff.style.display = 'none';
-    const bar = document.createElement('div'); bar.className = 'so-apply-bar';
-    const applyBtn = document.createElement('button'); applyBtn.className = 'so-apply-btn'; applyBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 应用（回插这段）';
-    const diffBtn = document.createElement('button'); diffBtn.className = 'so-apply-btn'; diffBtn.innerHTML = '<i class="fa-solid fa-eye"></i> 看改动';
-    const status = document.createElement('span'); status.className = 'so-apply-status';
+    const bar = document.createElement('div'); bar.className = 'pad-apply-bar';
+    const applyBtn = document.createElement('button'); applyBtn.className = 'pad-apply-btn'; applyBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 应用（回插这段）';
+    const diffBtn = document.createElement('button'); diffBtn.className = 'pad-apply-btn'; diffBtn.innerHTML = '<i class="fa-solid fa-eye"></i> 看改动';
+    const status = document.createElement('span'); status.className = 'pad-apply-status';
     diffBtn.addEventListener('click', () => { diff.style.display = (diff.style.display === 'none') ? 'block' : 'none'; });
     applyBtn.addEventListener('click', async () => {
         applyBtn.disabled = true;
@@ -1214,7 +1214,7 @@ async function runFixSelectBatch(sharedInstr) {
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
-    const contentEl = assistantEl.querySelector('.so-content');
+    const contentEl = assistantEl.querySelector('.pad-content');
     const clearTyping = showTyping(contentEl);
     const ctl = beginGeneration();
     const batchSignal = ctl.signal;
@@ -1233,7 +1233,7 @@ async function runFixSelectBatch(sharedInstr) {
     } catch (e) {
         clearTyping();
         contentEl.textContent = '多段校正失败：' + ((e && e.message) || e);
-        contentEl.classList.add('so-hint-error');
+        contentEl.classList.add('pad-hint-error');
     } finally {
         finishGeneration();
         if (soFollowStream) scrollToBottom();
@@ -1242,7 +1242,7 @@ async function runFixSelectBatch(sharedInstr) {
 
 // 评审卡（多段选段，侧聊气泡内——不占遮罩、天然随窗滚动，无手机夹死风险）：逐段一行 = 状态 + diff +
 // 勾选（ok 默认勾 / warned 默认不勾 / 其余无勾选框）。头部诚实计数；应用勾选段一次性回插；失败段一键重试。
-// 幂等：先摘旧 .so-multifix-box 再画（重试后整卡重画走这条）。控件是内存闭包 —— 与今天的单段结果卡同一
+// 幂等：先摘旧 .pad-multifix-box 再画（重试后整卡重画走这条）。控件是内存闭包 —— 与今天的单段结果卡同一
 // 持久化档次（重载后按钮消失，v1 有意一致）。
 function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
     const rows = prepareBatchRows(job, results);
@@ -1250,21 +1250,21 @@ function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
     const kept = rows.filter((r) => r.status === 'nochange').length;
     const failed = rows.length - changed - kept;
     contentEl.textContent = `多段校正完成：改了 ${changed} 段 / 保留 ${kept} 段 / 失败 ${failed} 段。逐段核对后应用勾选的段。`;
-    const bubble = assistantEl.querySelector('.so-bubble') || contentEl.parentElement;
-    const old = bubble.querySelector('.so-multifix-box');
+    const bubble = assistantEl.querySelector('.pad-bubble') || contentEl.parentElement;
+    const old = bubble.querySelector('.pad-multifix-box');
     if (old) old.remove();
     const box = document.createElement('div');
-    box.className = 'so-multifix-box';
+    box.className = 'pad-multifix-box';
     const STATUS_LABEL = { nochange: '未改动（模型按原样返回）', truncated: '疑似截断——保留原文', unparseable: '未解析出改写稿——保留原文', failed: '调用失败——保留原文', aborted: '已停止——保留原文' };
     rows.forEach((r, i) => {
         const row = document.createElement('div');
-        row.className = 'so-multifix-row so-multifix-' + r.status;
+        row.className = 'pad-multifix-row pad-multifix-' + r.status;
         const head = document.createElement('div');
-        head.className = 'so-multifix-rowhead';
+        head.className = 'pad-multifix-rowhead';
         const excerpt = r.pin.text.slice(0, 15) + (r.pin.text.length > 15 ? '…' : '');
         if (r.status === 'ok' || r.status === 'warned') {
             const cb = document.createElement('input');
-            cb.type = 'checkbox'; cb.className = 'so-multifix-accept';
+            cb.type = 'checkbox'; cb.className = 'pad-multifix-accept';
             cb.checked = (r.status === 'ok');
             cb.dataset.row = String(i);
             const lb = document.createElement('label');
@@ -1272,13 +1272,13 @@ function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
             lb.appendChild(document.createTextNode(` 片段${i + 1}「${excerpt}」`));
             head.appendChild(lb);
             const diffBtn = document.createElement('button');
-            diffBtn.className = 'so-apply-btn so-multifix-diffbtn';
+            diffBtn.className = 'pad-apply-btn pad-multifix-diffbtn';
             diffBtn.textContent = '看改动';
             head.appendChild(diffBtn);
             row.appendChild(head);
             for (const w of (r.warnings || [])) {
                 const warn = document.createElement('div');
-                warn.className = 'so-fix-nearcopy-warn';
+                warn.className = 'pad-fix-nearcopy-warn';
                 warn.textContent = w;
                 row.appendChild(warn);
             }
@@ -1293,21 +1293,21 @@ function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
         box.appendChild(row);
     });
     const bar = document.createElement('div');
-    bar.className = 'so-apply-bar so-multifix-bar';
+    bar.className = 'pad-apply-bar pad-multifix-bar';
     const applyBtn = document.createElement('button');
-    applyBtn.className = 'so-apply-btn';
+    applyBtn.className = 'pad-apply-btn';
     const status = document.createElement('span');
-    status.className = 'so-apply-status';
+    status.className = 'pad-apply-status';
     const updateApplyLabel = () => {
-        const k = box.querySelectorAll('.so-multifix-accept:checked').length;
+        const k = box.querySelectorAll('.pad-multifix-accept:checked').length;
         applyBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 应用勾选的 ' + k + ' 段';
         applyBtn.disabled = k === 0;
     };
-    box.addEventListener('change', (e) => { if (e.target && e.target.classList && e.target.classList.contains('so-multifix-accept')) updateApplyLabel(); });
+    box.addEventListener('change', (e) => { if (e.target && e.target.classList && e.target.classList.contains('pad-multifix-accept')) updateApplyLabel(); });
     applyBtn.addEventListener('click', async () => {
         applyBtn.disabled = true;
         const accepted = [];
-        box.querySelectorAll('.so-multifix-accept:checked').forEach((cb) => {
+        box.querySelectorAll('.pad-multifix-accept:checked').forEach((cb) => {
             const r = rows[Number(cb.dataset.row)];
             if (r && typeof r.span === 'string') accepted.push(r);
         });
@@ -1319,7 +1319,7 @@ function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
     const retriable = rows.filter((r) => r.status === 'failed' || r.status === 'truncated' || r.status === 'unparseable' || r.status === 'aborted');
     if (retriable.length) {
         const retryBtn = document.createElement('button');
-        retryBtn.className = 'so-apply-btn';
+        retryBtn.className = 'pad-apply-btn';
         retryBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> 重试失败的 ' + retriable.length + ' 段';
         retryBtn.addEventListener('click', () => retryFixSelectBatch(assistantEl, contentEl, job, rows));
         bar.appendChild(retryBtn);
@@ -1393,7 +1393,7 @@ export async function runFixByTargets(options = {}) {
     const scopeDec = fixContext.scopeDecision;
     if (scopeDec && scopeDec.action === 'detected') {
         setFixCfg({ fixA_scopeTag: scopeDec.tag, fixA_scopeManual: false });
-        const scopeEl = win && win.querySelector('#so-fix-scope');
+        const scopeEl = win && win.querySelector('#pad-fix-scope');
         if (scopeEl) scopeEl.value = scopeDec.tag;
         addSystemNote(fixScopeNoteText(scopeDec.note).body);
     } else if (scopeDec && (scopeDec.action === 'suggest' || scopeDec.action === 'skip')) {
@@ -1409,7 +1409,7 @@ export async function runFixByTargets(options = {}) {
             const cur = getEffectiveFixCfg(s, getFixCfg());
             if (cur.fixA_pieceMode !== 'wrapped' || cur.fixA_scopeTag !== pd.tag) {
                 setFixCfg({ fixA_pieceMode: 'wrapped', fixA_scopeTag: pd.tag, fixA_scopeManual: false });
-                const scopeEl = win && win.querySelector('#so-fix-scope');
+                const scopeEl = win && win.querySelector('#pad-fix-scope');
                 if (scopeEl) scopeEl.value = pd.tag;
                 if (!pd.adopt.quiet) addSystemNote(fixScopeNoteText(pd.note).body);
             }
@@ -1444,16 +1444,16 @@ export async function runFixByTargets(options = {}) {
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = options.assistantEl || addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
-    const contentEl = assistantEl.querySelector('.so-content');
+    const contentEl = assistantEl.querySelector('.pad-content');
     const clearTyping = (options.showTyping || showTyping)(contentEl);
     const ctl = beginGeneration();
     const timer = setTimeout(() => { try { ctl.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
     try {
         const effMaxTokens = fixEffMaxTokens(s);   // Tier 0 ③：可被 fixMaxTokens 顶高（长楼层）
         const onCum = s.stream ? (full) => { clearTyping(); contentEl.textContent = full; if (soFollowStream) scrollToBottom(); } : undefined;
-        if (s.stream) contentEl.classList.add('so-streaming');
+        if (s.stream) contentEl.classList.add('pad-streaming');
         const finalText = await fixCallTransport(s, messages, ctl.signal, onCum, effMaxTokens, options.transport);
-        if (s.stream) contentEl.classList.remove('so-streaming');
+        if (s.stream) contentEl.classList.remove('pad-streaming');
         clearTyping();
         if ((options.renderFixCard || renderFixCard)(assistantEl, contentEl, aEntry, finalText, fixContext) !== 'ok') {
             contentEl.textContent = finalText || '（空回复）';
@@ -1465,7 +1465,7 @@ export async function runFixByTargets(options = {}) {
             contentEl.textContent = '(已停止)';                       // 用户点停止键中断 → 平静收尾，不当报错（与 generateReply 一致）
         } else {
             contentEl.textContent = '校正失败：' + (e?.message || e);
-            contentEl.classList.add('so-hint-error');
+            contentEl.classList.add('pad-hint-error');
         }
     } finally {
         clearTimeout(timer);
@@ -1494,7 +1494,7 @@ async function runFixByTargetsPieces(s, fixContext) {
     const aEntry = { id: nextCid(), role: 'assistant', content: '' };
     const assistantEl = addMessage('assistant', '', aEntry);
     aEntry._el = assistantEl;
-    const contentEl = assistantEl.querySelector('.so-content');
+    const contentEl = assistantEl.querySelector('.pad-content');
     const clearTyping = showTyping(contentEl);
     const ctl = beginGeneration();
     const results = join ? [] : plan.entries.map((e) => ({ status: e.status }));
@@ -1507,7 +1507,7 @@ async function runFixByTargetsPieces(s, fixContext) {
             contentEl.textContent = joinHead;
             const timer = setTimeout(() => { try { ctl.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
             try {
-                contentEl.classList.add('so-streaming');
+                contentEl.classList.add('pad-streaming');
                 // ✨ 1.18.3：按钮路径流式直播草稿（尊重全局 流式 开关；锚点 / <FixedReply> 标签会原样闪过——
                 // 定稿后由下方卡片渲染替换，同弧线实时输出的契约）。
                 joinResult = await fixJoinCall(ctx, s, directive, join, ctl.signal,
@@ -1515,7 +1515,7 @@ async function runFixByTargetsPieces(s, fixContext) {
             } catch (e) {
                 if (isUserAbort(e)) { stopped = true; }
                 else joinResult = { status: 'failed', reason: 'error' };
-            } finally { clearTimeout(timer); contentEl.classList.remove('so-streaming'); }
+            } finally { clearTimeout(timer); contentEl.classList.remove('pad-streaming'); }
         } else {
             for (let k = 0; k < plan.attempts.length; k += 1) {
                 const i = plan.attempts[k];
@@ -1524,13 +1524,13 @@ async function runFixByTargetsPieces(s, fixContext) {
                 contentEl.textContent = pieceHead;
                 const timer = setTimeout(() => { try { ctl.abort(); } catch (e) { /* ignore */ } }, POST_REPLY_CALL_TIMEOUT_MS);
                 try {
-                    contentEl.classList.add('so-streaming');
+                    contentEl.classList.add('pad-streaming');
                     results[i] = await fixPieceCall(ctx, s, a, directive, table.pieces[i], ctl.signal,
                         (full) => { contentEl.textContent = pieceHead + '\n\n' + full; if (soFollowStream) scrollToBottom(); }, fixContext);
                 } catch (e) {
                     if (isUserAbort(e)) { stopped = true; break; }
                     results[i] = { status: 'failed', reason: 'error' };
-                } finally { clearTimeout(timer); contentEl.classList.remove('so-streaming'); }
+                } finally { clearTimeout(timer); contentEl.classList.remove('pad-streaming'); }
             }
         }
         clearTyping();
@@ -1552,17 +1552,17 @@ async function runFixByTargetsPieces(s, fixContext) {
             const html2 = renderFixResultHtml(r.after);
             if (html2 != null) {
                 contentEl.innerHTML = html2;
-                contentEl.classList.add('so-rendered');
+                contentEl.classList.add('pad-rendered');
                 contentEl.style.whiteSpace = 'normal';
             } else {
                 contentEl.textContent = r.after;
             }
             const note2 = document.createElement('div');
-            note2.className = 'so-fix-changes';
+            note2.className = 'pad-fix-changes';
             note2.textContent = `整体校正：1 次调用，${join.keepBlocks.length} 块结构锚点原位保留`
                 + (r.anchorsMissing ? `\n⚠ ${r.anchorsMissing} 个锚点被模型挪动 / 弄丢，内容已兜底接回正文末尾（位置若不对可不应用）` : '')
                 + (r.problems ? '\n发现并修正：\n' + r.problems : '');
-            assistantEl.querySelector('.so-bubble')?.appendChild(note2);
+            assistantEl.querySelector('.pad-bubble')?.appendChild(note2);
             // 重画保真（1.33.1）：登记应用材料，换房重画时最新一条凭它重挂（说明文一并原样重挂）。
             registerFixApply(aEntry, { fixed: r.after, problems: '' }, r.before, fixContext.targetIdx, [], { active: false }, fixContext.captured, spliced2, note2.textContent);
             addFixApplyControls(assistantEl, { fixed: r.after, problems: '' }, r.before, fixContext.targetIdx, [], { active: false }, fixContext.captured, spliced2, { entry: aEntry });
@@ -1581,17 +1581,17 @@ async function runFixByTargetsPieces(s, fixContext) {
         const html = renderFixResultHtml(summary.afterJoined);
         if (html != null) {
             contentEl.innerHTML = html;
-            contentEl.classList.add('so-rendered');
+            contentEl.classList.add('pad-rendered');
             contentEl.style.whiteSpace = 'normal';
         } else {
             contentEl.textContent = summary.afterJoined;
         }
         const note = document.createElement('div');
-        note.className = 'so-fix-changes';
+        note.className = 'pad-fix-changes';
         note.textContent = summary.headline
             + (summary.failLines.length ? '\n' + summary.failLines.join('\n') : '')
             + (summary.problems ? '\n发现并修正：\n' + summary.problems : '');
-        assistantEl.querySelector('.so-bubble')?.appendChild(note);
+        assistantEl.querySelector('.pad-bubble')?.appendChild(note);
         // 应用控件：finalOverride = splice 好的整条；diff 用修好各段的 prose↔prose 拼接（keep 空、scope 关）。
         // 重画保真（1.33.1）：登记应用材料，换房重画时最新一条凭它重挂（说明文一并原样重挂）。
         registerFixApply(aEntry, { fixed: summary.afterJoined, problems: '' }, summary.beforeJoined, fixContext.targetIdx, [], { active: false }, fixContext.captured, spliced, note.textContent);
@@ -1599,7 +1599,7 @@ async function runFixByTargetsPieces(s, fixContext) {
     } catch (e) {
         clearTyping();
         contentEl.textContent = '校正失败：' + (e?.message || e);
-        contentEl.classList.add('so-hint-error');
+        contentEl.classList.add('pad-hint-error');
     } finally {
         finishGeneration();
         if (soFollowStream) scrollToBottom();
@@ -1630,7 +1630,7 @@ export function addAutoFixNote(status, problems, fix = null, meta = null) {
         // fix（仅 'fixed' 结果带）= { idx, before, after, fixSwipeId }，给记录挂「用原文 / 看改动」按钮。
         // 注意：和手动校正回复一样，按钮只在【本会话】可用——重载后记录是纯文本（fix 不进 persistConvo）。
         appendNoteToRoom('fix', entry, fix ? { fix } : null);   // 自动校正记录归入【校正房间】（不可见时直接落其元数据、不上屏）
-    } catch (e) { console.warn('[Story Oracle] 自动校正记录写入侧聊失败：', e); }
+    } catch (e) { console.warn('[剧情推进] 自动校正记录写入侧聊失败：', e); }
 }
 
 // ✨ 分段校正「需要确认一次」（设计 §3 阶梯 8；1.17.4 toast-as-button 惯例）：散文+结构混排的卡第一次
@@ -1685,7 +1685,7 @@ export function confirmPieceBare() {
 // 用户确认「正文包在 <tag> 里」（梯 7.5 未知包裹名提案）：按聊天记住 wrapped + 标签（非手填，之后仍可自纠）。
 export function confirmPieceWrapped(tag) {
     setFixCfg({ fixA_pieceMode: 'wrapped', fixA_scopeTag: tag, fixA_scopeManual: false });
-    const scopeEl = win && win.querySelector('#so-fix-scope');
+    const scopeEl = win && win.querySelector('#pad-fix-scope');
     if (scopeEl) scopeEl.value = tag;
     try { window.toastr && window.toastr.success && window.toastr.success(`已确认：之后自动校正只改 <${tag}> 里的正文，标签外与内嵌结构块原样保留。`, '剧情推进 · 自动校正'); } catch (e) { /* ignore */ }
     updateFixVerdict();

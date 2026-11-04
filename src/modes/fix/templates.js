@@ -311,7 +311,7 @@ function fixHubParseLibrary(body) {
         seen.add(t.id);
         templates.push(t);
     }
-    if (skipped && !fixHubSkipWarned) { fixHubSkipWarned = true; console.warn(`[Story Oracle] 模板广场：${skipped} 个条目格式不对，已跳过`); }
+    if (skipped && !fixHubSkipWarned) { fixHubSkipWarned = true; console.warn(`[剧情推进] 模板广场：${skipped} 个条目格式不对，已跳过`); }
     return { ok: true, lib: { generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : '', tags, templates }, skipped };
 }
 
@@ -370,7 +370,7 @@ function fixHubLibraryUrlsDefault() {
  * 🌐 模板广场 UI（1.86.0）——拉取 / 缓存 / 渲染 / 下载。广场文字不可信：一律 textContent。
  * 卡片骨架（buildFixHubCard 里那段静态 innerHTML）不含任何外来数据。
  * ------------------------------------------------------------------ */
-const FIX_HUB_CACHE_KEY = 'so-fixhub-cache-v1';
+const FIX_HUB_CACHE_KEY = 'pad-fixhub-cache-v1';
 
 
 // 缓存 = localStorage 里的 { fetchedAt, url, body }；每次读写都 try/catch（隐私模式 / 满了 / 被禁用都照常能用）。
@@ -459,33 +459,33 @@ function fixHubRenderList(listEl, entries, ctx) {
     listEl.textContent = '';
     const mk = (tag, cls, text) => { const el = document.createElement(tag); if (cls) el.className = cls; if (text != null) el.textContent = text; return el; };
     for (const e of entries) {
-        const item = mk('div', 'so-fixhub-item');
+        const item = mk('div', 'pad-fixhub-item');
         item.dataset.id = e.id;
-        const head = mk('div', 'so-fixhub-item-head');
-        head.appendChild(mk('span', 'so-fixhub-name', e.name));
-        head.appendChild(mk('span', 'so-fixhub-meta', `v${e.version} · ${e.author || '匿名'}`));
+        const head = mk('div', 'pad-fixhub-item-head');
+        head.appendChild(mk('span', 'pad-fixhub-name', e.name));
+        head.appendChild(mk('span', 'pad-fixhub-meta', `v${e.version} · ${e.author || '匿名'}`));
         item.appendChild(head);
-        if (e.description) item.appendChild(mk('div', 'so-fixhub-desc', e.description));
-        item.appendChild(mk('div', 'so-fixhub-tagline', e.tags.map((t) => '#' + t).join('  ') + (e.model ? `  测试模型：${e.model}` : '')));
-        const btns = mk('div', 'so-fixhub-item-btns');
+        if (e.description) item.appendChild(mk('div', 'pad-fixhub-desc', e.description));
+        item.appendChild(mk('div', 'pad-fixhub-tagline', e.tags.map((t) => '#' + t).join('  ') + (e.model ? `  测试模型：${e.model}` : '')));
+        const btns = mk('div', 'pad-fixhub-item-btns');
         const open = ctx.open.has(e.id);
-        const pv = mk('button', 'so-fixhub-btn so-fixhub-preview', open ? '收起' : '预览');
+        const pv = mk('button', 'pad-fixhub-btn pad-fixhub-preview', open ? '收起' : '预览');
         pv.type = 'button';
         const status = fixHubInstallStatus(e, ctx.installed, ctx.localNames);
-        const dl = mk('button', 'so-fixhub-btn so-fixhub-dl', status === 'installed' ? '已下载' : status === 'update' ? '有新版本' : '下载');
+        const dl = mk('button', 'pad-fixhub-btn pad-fixhub-dl', status === 'installed' ? '已下载' : status === 'update' ? '有新版本' : '下载');
         dl.type = 'button';
         if (status === 'installed') dl.disabled = true;
-        if (status === 'update') dl.classList.add('so-fixhub-update');
+        if (status === 'update') dl.classList.add('pad-fixhub-update');
         btns.append(pv, dl);
         item.appendChild(btns);
-        if (open) item.appendChild(mk('pre', 'so-fixhub-prompt', e.prompt));
+        if (open) item.appendChild(mk('pre', 'pad-fixhub-prompt', e.prompt));
         if (ctx.pending === e.id) {
             const localName = (ctx.installed[e.id] && ctx.installed[e.id].name) || e.name;
-            const row = mk('div', 'so-fixhub-confirm');
-            row.appendChild(mk('span', 'so-fixhub-confirm-q', '这个模板有新版本。'));
-            const ow = mk('button', 'so-fixhub-btn so-fixhub-overwrite', `覆盖本地的〔${localName}〕`); ow.type = 'button';
-            const cp = mk('button', 'so-fixhub-btn so-fixhub-copy', '另存一份'); cp.type = 'button';
-            const cc = mk('button', 'so-fixhub-btn so-fixhub-cancel', '取消'); cc.type = 'button';
+            const row = mk('div', 'pad-fixhub-confirm');
+            row.appendChild(mk('span', 'pad-fixhub-confirm-q', '这个模板有新版本。'));
+            const ow = mk('button', 'pad-fixhub-btn pad-fixhub-overwrite', `覆盖本地的〔${localName}〕`); ow.type = 'button';
+            const cp = mk('button', 'pad-fixhub-btn pad-fixhub-copy', '另存一份'); cp.type = 'button';
+            const cc = mk('button', 'pad-fixhub-btn pad-fixhub-cancel', '取消'); cc.type = 'button';
             row.append(ow, cp, cc);
             item.appendChild(row);
         }
@@ -514,8 +514,8 @@ async function fixHubDownload(entry, mode) {
     save();
     setFixCfg({ fixC_template: name });
     populateFixTemplates();
-    const sel = win && win.querySelector('#so-fixc-template');
-    const box = win && win.querySelector('#so-fixc-prompt');
+    const sel = win && win.querySelector('#pad-fixc-template');
+    const box = win && win.querySelector('#pad-fixc-prompt');
     if (sel) sel.value = name;
     if (box) box.value = entry.prompt;
     fixTplDirty = false; fixTplDirtyFor = name; updateFixTplDirtyMarker();
@@ -526,50 +526,50 @@ async function fixHubDownload(entry, mode) {
 }
 
 function buildFixHubCard() {
-    let el = win.querySelector('#so-fixhub');
+    let el = win.querySelector('#pad-fixhub');
     if (el) return el;
     el = document.createElement('div');
-    el.id = 'so-fixhub';
+    el.id = 'pad-fixhub';
     el.innerHTML =
-        '<div id="so-fixhub-card">' +
-        '<div id="so-fixhub-head"><span class="so-warn-title">🌐 模板广场</span>' +
-        '<span class="so-fixhub-headbtns"><div class="so-iconbtn" id="so-fixhub-refresh" title="刷新"><i class="fa-solid fa-rotate-right"></i></div>' +
-        '<div class="so-iconbtn so-warn-x" title="关闭"><i class="fa-solid fa-xmark"></i></div></span></div>' +
-        '<input id="so-fixhub-search" type="search" placeholder="搜索名字 / 作者 / 说明……">' +
-        '<div id="so-fixhub-tags"></div>' +
-        '<div id="so-fixhub-status" class="so-hint"></div>' +
-        '<div id="so-fixhub-list"></div>' +
-        '<div id="so-fixhub-foot" class="so-hint"></div>' +
+        '<div id="pad-fixhub-card">' +
+        '<div id="pad-fixhub-head"><span class="pad-warn-title">🌐 模板广场</span>' +
+        '<span class="pad-fixhub-headbtns"><div class="pad-iconbtn" id="pad-fixhub-refresh" title="刷新"><i class="fa-solid fa-rotate-right"></i></div>' +
+        '<div class="pad-iconbtn pad-warn-x" title="关闭"><i class="fa-solid fa-xmark"></i></div></span></div>' +
+        '<input id="pad-fixhub-search" type="search" placeholder="搜索名字 / 作者 / 说明……">' +
+        '<div id="pad-fixhub-tags"></div>' +
+        '<div id="pad-fixhub-status" class="pad-hint"></div>' +
+        '<div id="pad-fixhub-list"></div>' +
+        '<div id="pad-fixhub-foot" class="pad-hint"></div>' +
         '</div>';
     win.appendChild(el);
     el.addEventListener('click', (e) => { if (e.target === el) closeFixHub(); });   // 点遮罩关闭
-    el.querySelector('.so-warn-x').addEventListener('click', closeFixHub);
-    el.querySelector('#so-fixhub-refresh').addEventListener('click', () => fixHubRefresh(true));
-    el.querySelector('#so-fixhub-search').addEventListener('input', (e) => { fixHubState.q = e.target.value; fixHubRender(); });
-    el.querySelector('#so-fixhub-tags').addEventListener('click', (e) => {
-        const chip = e.target.closest('.so-fixhub-chip');
+    el.querySelector('.pad-warn-x').addEventListener('click', closeFixHub);
+    el.querySelector('#pad-fixhub-refresh').addEventListener('click', () => fixHubRefresh(true));
+    el.querySelector('#pad-fixhub-search').addEventListener('input', (e) => { fixHubState.q = e.target.value; fixHubRender(); });
+    el.querySelector('#pad-fixhub-tags').addEventListener('click', (e) => {
+        const chip = e.target.closest('.pad-fixhub-chip');
         if (!chip) return;
         fixHubState.tag = chip.dataset.tag || '';
         fixHubRender();
     });
-    el.querySelector('#so-fixhub-list').addEventListener('click', async (e) => {
-        const item = e.target.closest('.so-fixhub-item');
+    el.querySelector('#pad-fixhub-list').addEventListener('click', async (e) => {
+        const item = e.target.closest('.pad-fixhub-item');
         if (!item || !fixHubState.lib) return;
         const entry = fixHubState.lib.templates.find((t) => t.id === item.dataset.id);
         if (!entry) return;
-        if (e.target.closest('.so-fixhub-preview')) {
+        if (e.target.closest('.pad-fixhub-preview')) {
             if (fixHubState.open.has(entry.id)) fixHubState.open.delete(entry.id); else fixHubState.open.add(entry.id);
-        } else if (e.target.closest('.so-fixhub-dl')) {
+        } else if (e.target.closest('.pad-fixhub-dl')) {
             const st = fixHubInstallStatus(entry, getSettings().fixHubInstalled || {}, fixHubLocalNames());
             if (st === 'update') fixHubState.pending = entry.id;
             else if (st === 'none') await fixHubDownload(entry, 'new');
-        } else if (e.target.closest('.so-fixhub-overwrite')) {
+        } else if (e.target.closest('.pad-fixhub-overwrite')) {
             fixHubState.pending = '';
             await fixHubDownload(entry, 'overwrite');
-        } else if (e.target.closest('.so-fixhub-copy')) {
+        } else if (e.target.closest('.pad-fixhub-copy')) {
             fixHubState.pending = '';
             await fixHubDownload(entry, 'copy');
-        } else if (e.target.closest('.so-fixhub-cancel')) {
+        } else if (e.target.closest('.pad-fixhub-cancel')) {
             fixHubState.pending = '';
         } else return;
         fixHubRender();
@@ -579,12 +579,12 @@ function buildFixHubCard() {
 
 // 按 fixHubState 重画标签条 / 列表 / 状态行 / 页脚。本地那份被改名或删掉的已下载记录在这里剪掉并落盘（spec §3.6）。
 function fixHubRender() {
-    const el = win && win.querySelector('#so-fixhub');
+    const el = win && win.querySelector('#pad-fixhub');
     if (!el) return;
-    const statusEl = el.querySelector('#so-fixhub-status');
-    const listEl = el.querySelector('#so-fixhub-list');
-    const tagsEl = el.querySelector('#so-fixhub-tags');
-    const footEl = el.querySelector('#so-fixhub-foot');
+    const statusEl = el.querySelector('#pad-fixhub-status');
+    const listEl = el.querySelector('#pad-fixhub-list');
+    const tagsEl = el.querySelector('#pad-fixhub-tags');
+    const footEl = el.querySelector('#pad-fixhub-foot');
     const libNow = fixHubState.lib;
     tagsEl.textContent = '';
     if (!libNow) { listEl.textContent = ''; footEl.textContent = ''; return; }
@@ -592,7 +592,7 @@ function fixHubRender() {
     for (const t of ['', ...libNow.tags]) {
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = 'so-fixhub-chip' + (fixHubState.tag === t ? ' so-on' : '');
+        chip.className = 'pad-fixhub-chip' + (fixHubState.tag === t ? ' pad-on' : '');
         chip.dataset.tag = t;
         chip.textContent = t || '全部';
         tagsEl.appendChild(chip);
@@ -611,19 +611,19 @@ function fixHubRender() {
 }
 
 async function fixHubRefresh(force) {
-    const el = win && win.querySelector('#so-fixhub');
+    const el = win && win.querySelector('#pad-fixhub');
     if (!el) return;
     const r = await fixHubLoadLibrary({ force });
-    const statusEl = el.querySelector('#so-fixhub-status');
+    const statusEl = el.querySelector('#pad-fixhub-status');
     if (!r.ok) {
-        el.querySelector('#so-fixhub-list').textContent = '';
-        el.querySelector('#so-fixhub-tags').textContent = '';
-        el.querySelector('#so-fixhub-foot').textContent = '';
+        el.querySelector('#pad-fixhub-list').textContent = '';
+        el.querySelector('#pad-fixhub-tags').textContent = '';
+        el.querySelector('#pad-fixhub-foot').textContent = '';
         statusEl.textContent = r.reason === 'schema' ? '模板广场格式已更新，请先更新剧情推进' : '广场暂时连不上';
         if (r.reason === 'unreachable') {
             const retry = document.createElement('button');
             retry.type = 'button';
-            retry.className = 'so-fixhub-btn';
+            retry.className = 'pad-fixhub-btn';
             retry.textContent = '重试';
             retry.addEventListener('click', () => fixHubRefresh(true));
             statusEl.appendChild(document.createTextNode(' '));
@@ -649,7 +649,7 @@ export function openFixHub() {
 }
 
 function closeFixHub() {
-    const el = win && win.querySelector('#so-fixhub');
+    const el = win && win.querySelector('#pad-fixhub');
     if (el) el.classList.remove('open');
     fixHubState.pending = '';
 }
@@ -659,7 +659,7 @@ function closeFixHub() {
  * 往 GitHub 开 Issue）已移除，见 docs/agent/removed/fix-hub-submit/README.md。复制纯本地、不联网、不受
  * ENABLE_FIX_TEMPLATE_HUB 管；旗开时开卡会顺带读广场（现行标签表 + 「更新」下拉），旗关只用内置标签表。
  * ------------------------------------------------------------------ */
-const FIX_HUB_AUTHOR_KEY = 'so-fixhub-author-v1';
+const FIX_HUB_AUTHOR_KEY = 'pad-fixhub-author-v1';
 const FIX_HUB_TAGS_FALLBACK = ['去AI味', '润色文风', '翻译', '格式整理', '视角人称', '扩写补写', '精简', '其他'];
    // 每次开卡 +1：开卡时的异步拉取回来晚了（卡已关 / 已重开）就不再往卡上写
 
@@ -681,17 +681,17 @@ function fixHubShareText(value) {
 
 function fixHubShareCollect(el, tags, knownIds) {
     const val = (id) => el.querySelector(id).value;
-    const chosen = [...el.querySelectorAll('#so-fixshare-tags .so-fixhub-chip.so-on')].map((c) => c.dataset.tag);
-    const isUpd = el.querySelector('#so-fixshare-isupdate').checked;
+    const chosen = [...el.querySelectorAll('#pad-fixshare-tags .pad-fixhub-chip.pad-on')].map((c) => c.dataset.tag);
+    const isUpd = el.querySelector('#pad-fixshare-isupdate').checked;
     return fixHubValidateSubmission({
-        name: val('#so-fixshare-name'), prompt: val('#so-fixshare-prompt'), author: val('#so-fixshare-author'),
-        description: val('#so-fixshare-desc'), tags: chosen, model: val('#so-fixshare-model'),
-        updateOf: isUpd ? val('#so-fixshare-updateof') : null, client: SO_VERSION,
+        name: val('#pad-fixshare-name'), prompt: val('#pad-fixshare-prompt'), author: val('#pad-fixshare-author'),
+        description: val('#pad-fixshare-desc'), tags: chosen, model: val('#pad-fixshare-model'),
+        updateOf: isUpd ? val('#pad-fixshare-updateof') : null, client: SO_VERSION,
     }, tags, knownIds);
 }
 
 function fixHubShowErrors(el, lines) {
-    const box = el.querySelector('#so-fixshare-errors');
+    const box = el.querySelector('#pad-fixshare-errors');
     box.textContent = lines.join('\n');
     box.hidden = !lines.length;
     // 报错行在滚动体最底下（公开须知之后）：窗口矮时不滚过去就看不见原因。没有 scrollIntoView（jsdom 等）就跳过。
@@ -705,7 +705,7 @@ function fixHubShareErrorLines(errors) {
 // 复制前的整表检查：勾了「更新」却没选条目 → 拦下（不复制）；否则走提交规则（与仓库 lib 同一张夹具表）。
 // 返回 { ok:true, value } | { ok:false, lines }（lines = 行内报错文案）。
 function fixHubShareCheck(el) {
-    if (el.querySelector('#so-fixshare-isupdate').checked && !el.querySelector('#so-fixshare-updateof').value) {
+    if (el.querySelector('#pad-fixshare-isupdate').checked && !el.querySelector('#pad-fixshare-updateof').value) {
         return { ok: false, lines: ['选择要更新的模板'] };
     }
     const r = fixHubShareCollect(el, el._soTags, el._soKnown);
@@ -718,7 +718,7 @@ async function fixHubCopy(el, value) {
         await getHostGlobal('navigator').clipboard.writeText(text);   // 非安全上下文（局域网 http）里 clipboard 不存在 → 抛 → 走兜底
         getHostGlobal('toastr')?.success?.('已复制——发到神谕 Discord 的模板分享频道就行');
     } catch (e) {
-        const box = el.querySelector('#so-fixshare-copybox');
+        const box = el.querySelector('#pad-fixshare-copybox');
         box.hidden = false;
         box.value = text;
         box.focus();
@@ -729,13 +729,13 @@ async function fixHubCopy(el, value) {
 
 // 标签 chips（重画时保留已选中的同名标签——开卡先用内置表，广场拉回来再换成现行表）。
 function fixHubShareRenderTags(el, tags) {
-    const tagsEl = el.querySelector('#so-fixshare-tags');
-    const picked = new Set([...tagsEl.querySelectorAll('.so-fixhub-chip.so-on')].map((c) => c.dataset.tag));
+    const tagsEl = el.querySelector('#pad-fixshare-tags');
+    const picked = new Set([...tagsEl.querySelectorAll('.pad-fixhub-chip.pad-on')].map((c) => c.dataset.tag));
     tagsEl.textContent = '';
     for (const t of tags) {
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = 'so-fixhub-chip' + (picked.has(t) ? ' so-on' : '');
+        chip.className = 'pad-fixhub-chip' + (picked.has(t) ? ' pad-on' : '');
         chip.dataset.tag = t;
         chip.textContent = t;
         tagsEl.appendChild(chip);
@@ -744,12 +744,12 @@ function fixHubShareRenderTags(el, tags) {
 
 // 「这是对已分享模板的更新」：广场可用且非空才显示；下拉项 = 广场条目（名字经 textContent）。
 function fixHubShareRenderUpdate(el, libNow) {
-    const upd = el.querySelector('#so-fixshare-updateof');
-    const box = el.querySelector('#so-fixshare-isupdate');
+    const upd = el.querySelector('#pad-fixshare-updateof');
+    const box = el.querySelector('#pad-fixshare-isupdate');
     upd.textContent = '';
     box.checked = false;
     upd.hidden = true;
-    el.querySelector('#so-fixshare-isupdate-row').hidden = !libNow || !libNow.templates.length;
+    el.querySelector('#pad-fixshare-isupdate-row').hidden = !libNow || !libNow.templates.length;
     if (!libNow) return;
     const ph = document.createElement('option');
     ph.value = '';
@@ -764,39 +764,39 @@ function fixHubShareRenderUpdate(el, libNow) {
 }
 
 function buildFixShareCard() {
-    let el = win.querySelector('#so-fixshare');
+    let el = win.querySelector('#pad-fixshare');
     if (el) return el;
     el = document.createElement('div');
-    el.id = 'so-fixshare';
+    el.id = 'pad-fixshare';
     el.innerHTML =
-        '<div id="so-fixshare-card">' +
-        '<div id="so-fixshare-head"><span class="so-warn-title">📤 分享模板</span><div class="so-iconbtn so-warn-x" title="关闭"><i class="fa-solid fa-xmark"></i></div></div>' +
-        '<div id="so-fixshare-body">' +
-        '<label class="so-fixshare-label">模板名字<input id="so-fixshare-name" type="text"></label>' +
-        '<label class="so-fixshare-label">模板正文（只读预览）<textarea id="so-fixshare-prompt" rows="5" readonly></textarea></label>' +
-        '<label class="so-fixshare-label">作者（可不填）<input id="so-fixshare-author" type="text"></label>' +
-        '<label class="so-fixshare-label">一句话说明<input id="so-fixshare-desc" type="text"></label>' +
-        '<div class="so-fixshare-label">标签（1–3 个）</div><div id="so-fixshare-tags"></div>' +
-        '<label class="so-fixshare-label">测试过的模型<input id="so-fixshare-model" type="text"></label>' +
-        '<label class="so-check so-lb-check" id="so-fixshare-isupdate-row"><input id="so-fixshare-isupdate" type="checkbox"><span>这是对已分享模板的更新</span></label>' +
-        '<select id="so-fixshare-updateof" hidden></select>' +
-        '<div class="so-hint">点「复制分享文本」，把复制到的内容发到神谕 Discord 的模板分享频道。分享出去的模板是公开的，任何人都能拿去用。</div>' +
-        '<div id="so-fixshare-errors" class="so-hint so-fixshare-errors" hidden></div>' +
-        '<textarea id="so-fixshare-copybox" rows="4" readonly hidden></textarea>' +
+        '<div id="pad-fixshare-card">' +
+        '<div id="pad-fixshare-head"><span class="pad-warn-title">📤 分享模板</span><div class="pad-iconbtn pad-warn-x" title="关闭"><i class="fa-solid fa-xmark"></i></div></div>' +
+        '<div id="pad-fixshare-body">' +
+        '<label class="pad-fixshare-label">模板名字<input id="pad-fixshare-name" type="text"></label>' +
+        '<label class="pad-fixshare-label">模板正文（只读预览）<textarea id="pad-fixshare-prompt" rows="5" readonly></textarea></label>' +
+        '<label class="pad-fixshare-label">作者（可不填）<input id="pad-fixshare-author" type="text"></label>' +
+        '<label class="pad-fixshare-label">一句话说明<input id="pad-fixshare-desc" type="text"></label>' +
+        '<div class="pad-fixshare-label">标签（1–3 个）</div><div id="pad-fixshare-tags"></div>' +
+        '<label class="pad-fixshare-label">测试过的模型<input id="pad-fixshare-model" type="text"></label>' +
+        '<label class="pad-check pad-lb-check" id="pad-fixshare-isupdate-row"><input id="pad-fixshare-isupdate" type="checkbox"><span>这是对已分享模板的更新</span></label>' +
+        '<select id="pad-fixshare-updateof" hidden></select>' +
+        '<div class="pad-hint">点「复制分享文本」，把复制到的内容发到神谕 Discord 的模板分享频道。分享出去的模板是公开的，任何人都能拿去用。</div>' +
+        '<div id="pad-fixshare-errors" class="pad-hint pad-fixshare-errors" hidden></div>' +
+        '<textarea id="pad-fixshare-copybox" rows="4" readonly hidden></textarea>' +
         '</div>' +
-        '<div id="so-fixshare-btns">' +
-        '<button type="button" id="so-fixshare-copy" class="so-fixhub-btn so-fixshare-go">复制分享文本</button>' +
+        '<div id="pad-fixshare-btns">' +
+        '<button type="button" id="pad-fixshare-copy" class="pad-fixhub-btn pad-fixshare-go">复制分享文本</button>' +
         '</div></div>';
     win.appendChild(el);
     el.addEventListener('click', (e) => { if (e.target === el) closeFixShare(); });   // 点遮罩关闭
-    el.querySelector('.so-warn-x').addEventListener('click', closeFixShare);
-    el.querySelector('#so-fixshare-tags').addEventListener('click', (e) => {
-        const chip = e.target.closest('.so-fixhub-chip');
-        if (chip) chip.classList.toggle('so-on');
+    el.querySelector('.pad-warn-x').addEventListener('click', closeFixShare);
+    el.querySelector('#pad-fixshare-tags').addEventListener('click', (e) => {
+        const chip = e.target.closest('.pad-fixhub-chip');
+        if (chip) chip.classList.toggle('pad-on');
     });
-    el.querySelector('#so-fixshare-isupdate').addEventListener('change', (e) => { el.querySelector('#so-fixshare-updateof').hidden = !e.target.checked; });
-    el.querySelector('#so-fixshare-author').addEventListener('change', (e) => { try { getHostStorage().setItem(FIX_HUB_AUTHOR_KEY, e.target.value); } catch (err) { /* 不记也行 */ } });
-    el.querySelector('#so-fixshare-copy').addEventListener('click', async () => {
+    el.querySelector('#pad-fixshare-isupdate').addEventListener('change', (e) => { el.querySelector('#pad-fixshare-updateof').hidden = !e.target.checked; });
+    el.querySelector('#pad-fixshare-author').addEventListener('change', (e) => { try { getHostStorage().setItem(FIX_HUB_AUTHOR_KEY, e.target.value); } catch (err) { /* 不记也行 */ } });
+    el.querySelector('#pad-fixshare-copy').addEventListener('click', async () => {
         const r = fixHubShareCheck(el);
         if (!r.ok) { fixHubShowErrors(el, r.lines); return; }
         fixHubShowErrors(el, []);
@@ -810,22 +810,22 @@ function buildFixShareCard() {
 export async function openFixShare() {
     if (!win) return;
     const s = getSettings();
-    const name = (win.querySelector('#so-fixc-template') || {}).value || '';
+    const name = (win.querySelector('#pad-fixc-template') || {}).value || '';
     const blocked = fixHubShareBlockedReason(name, s, fixTplDirty);
     if (blocked) { getHostGlobal('toastr')?.info?.(blocked); return; }
     const tpl = normalizeFixTemplates(s.fixTemplates).find((t) => t.name === name);
     const el = buildFixShareCard();
     const seq = ++fixShareOpenSeq;
-    el.querySelector('#so-fixshare-name').value = tpl.name;
-    el.querySelector('#so-fixshare-prompt').value = tpl.prompt;
+    el.querySelector('#pad-fixshare-name').value = tpl.name;
+    el.querySelector('#pad-fixshare-prompt').value = tpl.prompt;
     let author = '';
     try { author = getHostStorage().getItem(FIX_HUB_AUTHOR_KEY) || ''; } catch (e) { author = ''; }
-    el.querySelector('#so-fixshare-author').value = author;
-    el.querySelector('#so-fixshare-desc').value = '';
-    el.querySelector('#so-fixshare-model').value = '';
-    el.querySelector('#so-fixshare-copybox').hidden = true;
+    el.querySelector('#pad-fixshare-author').value = author;
+    el.querySelector('#pad-fixshare-desc').value = '';
+    el.querySelector('#pad-fixshare-model').value = '';
+    el.querySelector('#pad-fixshare-copybox').hidden = true;
     fixHubShowErrors(el, []);
-    el.querySelector('#so-fixshare-tags').textContent = '';
+    el.querySelector('#pad-fixshare-tags').textContent = '';
     el._soTags = FIX_HUB_TAGS_FALLBACK;
     el._soKnown = null;
     fixHubShareRenderTags(el, el._soTags);
@@ -848,7 +848,7 @@ export async function openFixShare() {
 
 function closeFixShare() {
     fixShareOpenSeq = fixShareOpenSeq + (1);
-    const el = win && win.querySelector('#so-fixshare');
+    const el = win && win.querySelector('#pad-fixshare');
     if (el) el.classList.remove('open');
 }
 
@@ -1112,7 +1112,7 @@ function registerGuideSlot(text) {
         ctx.setExtensionPrompt(ADVISOR_PROMPT_KEY, text, pos, depth, true, role);
         return true;
     } catch (e) {
-        console.warn('[Story Oracle] setExtensionPrompt failed:', e);
+        console.warn('[剧情推进] setExtensionPrompt failed:', e);
         return false;
     }
 }
@@ -1282,15 +1282,15 @@ export function onPromptReadyGlue(data) {
         if (!r.chat) {
             if (r.reason === 'empty-slots') return glueNote(false, r.reason);
             if (r.reason === 'slot-missing' && !glueArrayCarriesOurs(data.chat, slots)) return false;
-            console.info('[Story Oracle] 贴合注入未生效：' + r.reason);
+            console.info('[剧情推进] 贴合注入未生效：' + r.reason);
             return glueNote(false, r.reason);
         }
         data.chat.splice(0, data.chat.length, ...r.chat);
-        console.debug('[Story Oracle] 贴合注入 ok');
+        console.debug('[剧情推进] 贴合注入 ok');
         return glueNote(true, 'ok');
     } catch (e) {
-        console.warn('[Story Oracle] 贴合注入跳过（出站提示词未改）：', e);
-        if (eligible) console.info('[Story Oracle] 贴合注入未生效：error');
+        console.warn('[剧情推进] 贴合注入跳过（出站提示词未改）：', e);
+        if (eligible) console.info('[剧情推进] 贴合注入未生效：error');
         return glueNote(false, 'error');
     }
 }

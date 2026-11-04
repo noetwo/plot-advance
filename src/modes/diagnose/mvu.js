@@ -33,7 +33,7 @@ export async function getMvuStatData() {
     try {
         return mvuStatOf(Mvu.getMvuData(mvuMsgOpts()));
     } catch (e) {
-        console.warn('[Story Oracle] getMvuData failed:', e);
+        console.warn('[剧情推进] getMvuData failed:', e);
         return null;
     }
 }

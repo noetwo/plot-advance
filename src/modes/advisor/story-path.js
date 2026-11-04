@@ -1,10 +1,11 @@
 import { soCallModel } from '../../bootstrap.js';
-import { convoStreamKeyForMode, persistConvo } from '../../core/chat-metadata.js';
+import { convoStreamKeyForMode, persistConvo, saveChatMetadata } from '../../core/chat-metadata.js';
+import { migrateChatNamespace } from '../../core/namespace-migration.js';
 import { cancelPostReply, postReplyCancelsOnChatSwitch } from '../../core/post-reply.js';
 import { POST_REPLY_CALL_TIMEOUT_MS, getCtx, getSettings, uiConfirm } from '../../core/settings.js';
 
 import { addSystemNote, clearNoteOpts, loadConvoForChat } from './cards.js';
-import { ADVISOR_REMIND_AFTER, dropLegacyGuides, getPath, setPath } from './metadata.js';
+import { ADVISOR_REMIND_AFTER, getPath, setPath } from './metadata.js';
 import { discardPathEdit, renderPlanBar } from './ui.js';
 import { toggleAdvisor } from '../builder/ui.js';
 import { buildAdvisorPrompt, primeLwbFromMetadata, stripReasoningTags } from '../chat/context.js';
@@ -300,8 +301,8 @@ function parseNodeDetail(text) {
 export function syncNodeDetailSeg() {
     if (!win) return;
     const later = wantAutoDetail();
-    win.querySelectorAll('#so-adv-detail-seg [data-v]').forEach((b) => b.classList.toggle('active', (b.dataset.v === 'later') === later));
-    const hint = win.querySelector('#so-adv-detail-hint');
+    win.querySelectorAll('#pad-adv-detail-seg [data-v]').forEach((b) => b.classList.toggle('active', (b.dataset.v === 'later') === later));
+    const hint = win.querySelector('#pad-adv-detail-hint');
     if (hint) {
         hint.textContent = later
             ? '参谋先只写第 1 个节点的详细；每完成一个节点，参谋看着刚演完的剧情写下一个。更贴合，但每换一个节点多一次调用。'
@@ -323,36 +324,13 @@ export function checkPlanReminder() {
         : `方案「${path.title || '未命名'}」已持续 ${n} 条消息——剧情走到了吗？可以在剧情参谋里问我「检查进度」，或在上方方案条里完成 / 调整它。`);
 }
 
-// 1.3.0：落拍感应已移除。旧回复末尾残留的 <so_seq> 状态行，在显示和发给模型的提示词里都剥掉（存档原文不动）：
-// 酒馆正则同时勾 markdownOnly + promptOnly 即两处都生效（regex/engine.js getRegexedString）。沿用旧规则的固定 id，
-// 老用户那条「只藏显示、提示词保留」的规则原地升级。⚠ placement 不能含 0（会被酒馆迁移成只作用于提示词）。
-const SO_SEQ_CLEANUP_ID = 'so-seq-pulse-hide';
-export function ensureSoSeqCleanupRegex() {
-    const ctx = getCtx();
-    const es = ctx && ctx.extensionSettings;
-    if (!es) return;
-    if (!Array.isArray(es.regex)) es.regex = [];
-    const script = {
-        id: SO_SEQ_CLEANUP_ID,
-        scriptName: '剧情推进 · 清除旧状态行',
-        findRegex: '/<so_seq\\b[^>\\r\\n]*>[^<\\r\\n]*<\\/so_seq>/gi',
-        replaceString: '', trimStrings: [],
-        placement: [1, 2],
-        disabled: false, markdownOnly: true, promptOnly: true,
-        runOnEdit: true, substituteRegex: 0, minDepth: null, maxDepth: null,
-    };
-    const i = es.regex.findIndex((r) => r && r.id === SO_SEQ_CLEANUP_ID);
-    const prev = i >= 0 ? es.regex[i] : null;
-    const next = { ...(prev || {}), ...script };
-    if (prev && JSON.stringify(prev) === JSON.stringify(next)) return;   // 已是最新：不写盘
-    if (i >= 0) es.regex[i] = next; else es.regex.push(next);
-    if (typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
-}
 
 // Chat switched (or first chat loaded): re-register from THIS chat's metadata —
 // registers its plan, or clears any previous chat's injection. The extension's
 // only event-driven side effect; everything else stays pull-based.
 export function onChatChanged() {
+    const ctx = getCtx();
+    if (migrateChatNamespace(ctx.chatMetadata)) saveChatMetadata();
     primeLwbFromMetadata();   // 小白X 记忆桥(a)：从本聊天 metadata 快照回填缓存（重开酒馆 / 切聊天即暖；自守门）
     // ✨ Phase 4 P-CORRUPT 的【1.77.0 修订】（Prince 亲裁 2026-09-04）：切聊天不再无条件作废在途那一轮。
     //   · 🩺 自动诊断 / 🎛 修改器写的是【当前聊天】的 MVU 状态 —— 切走即作废，这一条不变。
@@ -370,8 +348,7 @@ export function onChatChanged() {
     clearNoteOpts();      // 换聊天即作废本会话的记录按钮材料：撤销 / 换 swipe 针对的是旧聊天的 MVU / 楼层，跨聊天重挂会写错对象
     closeMvuEditor();     // 🎛 变量编辑器：卡里摆的是【旧聊天】的 stat_data 快照与脏表，跨聊天按「应用」就是往新聊天写旧路径 —— 直接关掉（没开时是空操作）
     cancelMvuedScan();    // 🎛 并掐掉在途的「分析取值规则」（它的结果已注定被丢弃：白烧钱，还会让新聊天的扫描键僵在「分析中…」最长 120 秒）。刻意不放进 closeMvuEditor —— ✕ / 点背景关卡不该中断本聊天的扫描
-    // 剧情脉络（2.5.0）：旧版的单拍方案 / 序列直接丢掉；「到了再写」在途的调用属于旧聊天，掐掉；方案条上没保存的修改作废。
-    dropLegacyGuides();
+    // 剧情脉络：「到了再写」在途的调用属于旧聊天，掐掉；方案条上没保存的修改作废。
     abortNodeDetailJob();
     discardPathEdit();
     applyPlanInjection();
@@ -387,7 +364,7 @@ export function onChatChanged() {
     // ✨/📋 1.77.0：回到这个聊天时，把切走那会儿暂存下来的校正 / 模板成品落地。放在【最后】——记录要落进
     // loadConvoForChat() 刚载好的那份侧聊里。不 await（与 drainPendingPostReply 同一约定：事件监听不该被
     // 一趟 saveChat 拖住）；没有暂存时是即时返回的空操作。
-    Promise.resolve(fixDrainParked()).catch((e) => console.warn('[Story Oracle] 暂存的校正结果落地失败：', e));
+    Promise.resolve(fixDrainParked()).catch((e) => console.warn('[剧情推进] 暂存的校正结果落地失败：', e));
 }
 
 // 1.3.2 暂停引导（用户功能请求：想先跑偏一阵再回来）：paused 记在当前聊天的剧情脉络上。暂停期间主聊天不注入、

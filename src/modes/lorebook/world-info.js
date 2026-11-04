@@ -51,7 +51,7 @@ export async function getActiveScanUids(extraScanText) {
         const res = await wiMod.checkWorldInfo(chatForWI, budget, /*isDryRun*/ true, globalScanData);
         return activeUidsFromScan(res && res.allActivatedEntries);
     } catch (e) {
-        console.warn('[Story Oracle] Active WI scan failed:', e);
+        console.warn('[剧情推进] Active WI scan failed:', e);
         return {};
     }
 }
@@ -134,7 +134,7 @@ export async function getActiveBookNames() {
         const sorted = await mod.getSortedEntries();
         return [...new Set((sorted || []).map((e) => e && e.world).filter(Boolean))];
     } catch (e) {
-        console.warn('[Story Oracle] Could not enumerate active world books:', e);
+        console.warn('[剧情推进] Could not enumerate active world books:', e);
         return [];
     }
 }

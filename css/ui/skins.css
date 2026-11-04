@@ -2,15 +2,15 @@
    用户上报：毛玻璃美化主题下神谕正文「看得字都糊了」。跟随酒馆主题是有意设计（见文件头
    注释），但半透明底 + 高 blur 的主题会让主聊天渗上来。出路 = 两档【不跟随主题】的固定配色。
 
-   机制：<body> 上挂 so-skin-dark / so-skin-light（跟随主题 = 不挂），在三个 body 级根上
+   机制：<body> 上挂 pad-skin-dark / pad-skin-light（跟随主题 = 不挂），在三个 body 级根上
    重新声明主题变量；既有规则本来就在读这些变量，故绝大部分界面自动改色。
-   特异度 body.so-skin-x #so-window (1,1,1) 压过 #so-window (1,0,0)，无需 !important。
+   特异度 body.pad-skin-x #pad-window (1,1,1) 压过 #pad-window (1,0,0)，无需 !important。
 
    深色一列全部逐字取自本文件原有的 var() 兜底值 —— 那就是这个扩展「没有任何主题」时
    本来的样子，不是新设计。真正发明出来的只有浅色。
-   注意：#so-chatbar-button 与 ✂️ 快捷按钮住在酒馆自己的 UI 里，【有意】不在这三个根之下。 */
-body.so-skin-dark #so-window,
-body.so-skin-dark #so-plan-float {
+   注意：#pad-chatbar-button 与 ✂️ 快捷按钮住在酒馆自己的 UI 里，【有意】不在这三个根之下。 */
+body.pad-skin-dark #pad-window,
+body.pad-skin-dark #pad-plan-float {
     --SmartThemeBodyColor: #e6e6e6;
     --SmartThemeBlurTintColor: #16171a;
     --SmartThemeBorderColor: rgba(255, 255, 255, 0.12);
@@ -30,13 +30,13 @@ body.so-skin-dark #so-plan-float {
        (#1f2430) → 对勾要浅。深色档这一行在原生酒馆上恰好与继承来的值同向、看着像多余的，
        但那只是巧合（取决于用户主题），所以照样钉死。 */
     --SmartThemeCheckboxTickColor: #1f2430;
-    --so-ink: 255, 255, 255;
-    --so-field: rgba(0, 0, 0, 0.32);
-    --so-scrim: rgba(8, 9, 12, 0.84);
+    --pad-ink: 255, 255, 255;
+    --pad-field: rgba(0, 0, 0, 0.32);
+    --pad-scrim: rgba(8, 9, 12, 0.84);
 }
 
-body.so-skin-light #so-window,
-body.so-skin-light #so-plan-float {
+body.pad-skin-light #pad-window,
+body.pad-skin-light #pad-plan-float {
     --SmartThemeBodyColor: #1f2430;
     --SmartThemeBlurTintColor: #f7f8fa;
     --SmartThemeBorderColor: rgba(0, 0, 0, 0.14);
@@ -48,67 +48,67 @@ body.so-skin-light #so-plan-float {
     /* 见深色档同名声明的长注释。这一档的方框底是深的（#1f2430），对勾必须给浅色，
        否则就是原生酒馆上实测的 1.35:1 —— 对勾看不见。 */
     --SmartThemeCheckboxTickColor: #f7f8fa;
-    --so-ink: 0, 0, 0;
-    --so-field: rgba(0, 0, 0, 0.05);
-    --so-scrim: rgba(20, 22, 28, 0.55);
+    --pad-ink: 0, 0, 0;
+    --pad-field: rgba(0, 0, 0, 0.05);
+    --pad-scrim: rgba(20, 22, 28, 0.55);
 }
 
 /* 固定配色下毛玻璃彻底关掉。底色已不透明、blur 本就不可见；置 none 是【构造性】保证 ——
    无论用户的美化把 --blurStrength 调多高、把主聊天弄成什么样，都渗不进窗口 —— 顺带省一层
    GPU 合成。--SmartThemeBlurStrength: 0px 是第二道防线，防将来有人新写一条 blur(calc(…))。 */
-body.so-skin-dark #so-window, body.so-skin-light #so-window, body.so-skin-dark #so-debug, body.so-skin-light #so-debug, body.so-skin-dark #so-curate, body.so-skin-light #so-curate, body.so-skin-dark #so-summary, body.so-skin-light #so-summary {
+body.pad-skin-dark #pad-window, body.pad-skin-light #pad-window, body.pad-skin-dark #pad-debug, body.pad-skin-light #pad-debug, body.pad-skin-dark #pad-curate, body.pad-skin-light #pad-curate, body.pad-skin-dark #pad-summary, body.pad-skin-light #pad-summary {
     backdrop-filter: none;
 }
 
 /* 三张固定深色卡（1.27.1 起硬编码 #1b1d23 底 + 钉死浅色文字）：深色档与跟随主题档保持原样，
    浅色档整体翻浅。在固定皮肤下这样做是安全的，因为固定皮肤【同时知道底色和文字色】——
    1.27.1 当年只能「钉文字、不敢改底」，正是因为主题变量的取值不可知。
-   第四张 #so-fixsel-card 不在此列：1.27.1 已把它改成读 var(--SmartThemeBlurTintColor)，
-   随皮肤自动改色。卡内按钮的 hover 由 --so-ink 统一覆盖，三档下都自洽。 */
-body.so-skin-light #so-cur-card {
+   第四张 #pad-fixsel-card 不在此列：1.27.1 已把它改成读 var(--SmartThemeBlurTintColor)，
+   随皮肤自动改色。卡内按钮的 hover 由 --pad-ink 统一覆盖，三档下都自洽。 */
+body.pad-skin-light #pad-cur-card {
     background-color: #f7f8fa;
     color: #1f2430;
 }
 
 /* 卡内按钮自带钉死的浅色文字（1.27.1 为恒深色卡而钉），子元素的显式 color 不会被上面那条
    卡级覆盖继承 —— 浅色档下就是浅字压浅底、按钮直接隐形。故一并翻深。
-   注意 #so-autowarn-ok 不在此列：它是白字压红底（!important），任何皮肤下都正确。 */
-body.so-skin-light .so-cur-btn {
+   注意 #pad-autowarn-ok 不在此列：它是白字压红底（!important），任何皮肤下都正确。 */
+body.pad-skin-light .pad-cur-btn {
     color: #1f2430;
 }
 
 /* 固定配色下毛玻璃彻底关掉。底色已不透明、blur 本就不可见；置 none 是【构造性】保证 ——
    无论用户的美化把 --blurStrength 调多高、把主聊天弄成什么样，都渗不进窗口 —— 顺带省一层
    GPU 合成。--SmartThemeBlurStrength: 0px 是第二道防线，防将来有人新写一条 blur(calc(…))。 */
-body.so-skin-dark #so-window, body.so-skin-light #so-window,
-body.so-skin-dark #so-debug, body.so-skin-light #so-debug,
-body.so-skin-dark #so-curate, body.so-skin-light #so-curate,
-body.so-skin-dark #so-summary, body.so-skin-light #so-summary,
-body.so-skin-dark #so-autowarn, body.so-skin-light #so-autowarn,
-body.so-skin-dark #so-fixwarn, body.so-skin-light #so-fixwarn,
-body.so-skin-dark #so-fixsel, body.so-skin-light #so-fixsel,
-body.so-skin-dark #so-fixsel-card, body.so-skin-light #so-fixsel-card {
+body.pad-skin-dark #pad-window, body.pad-skin-light #pad-window,
+body.pad-skin-dark #pad-debug, body.pad-skin-light #pad-debug,
+body.pad-skin-dark #pad-curate, body.pad-skin-light #pad-curate,
+body.pad-skin-dark #pad-summary, body.pad-skin-light #pad-summary,
+body.pad-skin-dark #pad-autowarn, body.pad-skin-light #pad-autowarn,
+body.pad-skin-dark #pad-fixwarn, body.pad-skin-light #pad-fixwarn,
+body.pad-skin-dark #pad-fixsel, body.pad-skin-light #pad-fixsel,
+body.pad-skin-dark #pad-fixsel-card, body.pad-skin-light #pad-fixsel-card {
     backdrop-filter: none;
 }
 
 /* 三张固定深色卡（1.27.1 起硬编码 #1b1d23 底 + 钉死浅色文字）：深色档与跟随主题档保持原样，
    浅色档整体翻浅。在固定皮肤下这样做是安全的，因为固定皮肤【同时知道底色和文字色】——
    1.27.1 当年只能「钉文字、不敢改底」，正是因为主题变量的取值不可知。
-   第四张 #so-fixsel-card 不在此列：1.27.1 已把它改成读 var(--SmartThemeBlurTintColor)，
-   随皮肤自动改色。卡内按钮的 hover 由 --so-ink 统一覆盖，三档下都自洽。 */
-body.so-skin-light #so-cur-card,
-body.so-skin-light #so-autowarn-card,
-body.so-skin-light #so-fixwarn-card {
+   第四张 #pad-fixsel-card 不在此列：1.27.1 已把它改成读 var(--SmartThemeBlurTintColor)，
+   随皮肤自动改色。卡内按钮的 hover 由 --pad-ink 统一覆盖，三档下都自洽。 */
+body.pad-skin-light #pad-cur-card,
+body.pad-skin-light #pad-autowarn-card,
+body.pad-skin-light #pad-fixwarn-card {
     background-color: #f7f8fa;
     color: #1f2430;
 }
 
 /* 卡内按钮自带钉死的浅色文字（1.27.1 为恒深色卡而钉），子元素的显式 color 不会被上面那条
    卡级覆盖继承 —— 浅色档下就是浅字压浅底、按钮直接隐形。故一并翻深。
-   注意 #so-autowarn-ok 不在此列：它是白字压红底（!important），任何皮肤下都正确。 */
-body.so-skin-light .so-cur-btn,
-body.so-skin-light #so-autowarn-btns button,
-body.so-skin-light #so-fixwarn-btns button {
+   注意 #pad-autowarn-ok 不在此列：它是白字压红底（!important），任何皮肤下都正确。 */
+body.pad-skin-light .pad-cur-btn,
+body.pad-skin-light #pad-autowarn-btns button,
+body.pad-skin-light #pad-fixwarn-btns button {
     color: #1f2430;
 }
 
@@ -118,8 +118,8 @@ body.so-skin-light #so-fixwarn-btns button {
    翻深【不能】直接用正文色 #1f2430：那样徽章就只是个灰底方块，读不出「这条被停用了」的
    警示意味。取同一色相（#e89a9a 的深色对位，hsl 0° 62%）的 #952323 = 6.36:1。
    ⚠ 这条能生效的前提：index.js 那个 <span> 上【没有】内联样式。它原本内联了一份与
-   .so-cur-disabled 逐条重复的声明，内联压过类规则 —— 本条会被静默吃掉。已一并删除。 */
-body.so-skin-light .so-cur-disabled {
+   .pad-cur-disabled 逐条重复的声明，内联压过类规则 —— 本条会被静默吃掉。已一并删除。 */
+body.pad-skin-light .pad-cur-disabled {
     color: #952323;
 }
 

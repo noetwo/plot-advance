@@ -1,44 +1,44 @@
 /* ---------- reply-fix mode (校正) ---------- */
 /* 校正模式的「淡金」色调：作为当前模式时是一抹淡金（16% 底纹），与「自动校正」指示灯同一支金
    （#e3b341）——active 淡、auto 亮，同属一个金色系；同样用主题强调色调温以融入主题。 */
-#so-window { --so-fix-accent: color-mix(in srgb, var(--so-accent) 45%, #e3b341 55%); }
+#pad-window { --pad-fix-accent: color-mix(in srgb, var(--pad-accent) 45%, #e3b341 55%); }
 
-#so-fix-btn.so-fix-active {
-    color: var(--so-fix-accent);
-    background-color: color-mix(in srgb, var(--so-fix-accent) 16%, transparent);
+#pad-fix-btn.pad-fix-active {
+    color: var(--pad-fix-accent);
+    background-color: color-mix(in srgb, var(--pad-fix-accent) 16%, transparent);
     opacity: 1;
 }
-/* ✨ 自动校正开启：把校正图标染成更亮的金（用户功能请求）。只改 color/opacity——本块在 .so-fix-active
+/* ✨ 自动校正开启：把校正图标染成更亮的金（用户功能请求）。只改 color/opacity——本块在 .pad-fix-active
    之后、源序更高，故自动开启时亮金图标优先；又因不改 background，仍保留 active 的淡金底纹（同一金色系，
    由淡→亮 = 「校正模式 + 自动开启」）。 */
-#so-fix-btn.so-fix-auto {
-    color: var(--so-fix-auto-gold, #e3b341);
+#pad-fix-btn.pad-fix-auto {
+    color: var(--pad-fix-auto-gold, #e3b341);
     opacity: 1;
 }
 /* ✨ 自动校正「等你确认一次」（Option B「kill the silence」，2026-07-07）：这张卡是散文+结构混排的 bare
    形态，还没确认过一次，runAutoFix 正被 pending 分支逐条静默跳过 —— 把图标染成琥珀 + 轻脉冲，让关着设置
-   面板的用户也一目了然（金 = 正常自动跑，琥珀脉冲 = 等你点一次确认）。与 .so-fix-auto 互斥（按钮只处一态）。 */
-#so-fix-btn.so-fix-pending {
-    color: var(--so-fix-pending-amber, #d98324);
+   面板的用户也一目了然（金 = 正常自动跑，琥珀脉冲 = 等你点一次确认）。与 .pad-fix-auto 互斥（按钮只处一态）。 */
+#pad-fix-btn.pad-fix-pending {
+    color: var(--pad-fix-pending-amber, #d98324);
     opacity: 1;
-    animation: so-fix-pending-pulse 1.6s ease-in-out infinite;
+    animation: pad-fix-pending-pulse 1.6s ease-in-out infinite;
 }
-@keyframes so-fix-pending-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-@media (prefers-reduced-motion: reduce) { #so-fix-btn.so-fix-pending { animation: none; } }
+@keyframes pad-fix-pending-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { #pad-fix-btn.pad-fix-pending { animation: none; } }
 /* 进入校正模式时给标题栏一抹淡金，和 advisor / lorebook / diagnose 一样让整窗染上模式色。 */
-#so-window.so-fix-on #so-header {
+#pad-window.pad-fix-on #pad-header {
     background: linear-gradient(180deg,
-        color-mix(in srgb, var(--so-fix-accent) 22%, transparent),
+        color-mix(in srgb, var(--pad-fix-accent) 22%, transparent),
         transparent);
 }
 /* 校正稿卡片里"改了哪些"的小字摘要。 */
-.so-fix-changes { margin-top: 6px; font-size: 0.85em; opacity: 0.78; line-height: 1.4; white-space: pre-wrap; }
+.pad-fix-changes { margin-top: 6px; font-size: 0.85em; opacity: 0.78; line-height: 1.4; white-space: pre-wrap; }
 /* 「看改动」内联差异卡：原文→校正稿，删划掉红、增高亮绿。 */
-.so-diff-card { white-space: pre-wrap; font-size: 0.9em; margin-top: 6px; padding: 6px 8px; border-radius: var(--so-r-md, 8px); background: color-mix(in srgb, var(--so-accent) 6%, transparent); line-height: 1.5; }
-.so-diff-del { background: color-mix(in srgb, #e5544b 30%, transparent); text-decoration: line-through; opacity: 0.85; }
-.so-diff-ins { background: color-mix(in srgb, #2a9d6f 32%, transparent); }
+.pad-diff-card { white-space: pre-wrap; font-size: 0.9em; margin-top: 6px; padding: 6px 8px; border-radius: var(--pad-r-md, 8px); background: color-mix(in srgb, var(--pad-accent) 6%, transparent); line-height: 1.5; }
+.pad-diff-del { background: color-mix(in srgb, #e5544b 30%, transparent); text-decoration: line-through; opacity: 0.85; }
+.pad-diff-ins { background: color-mix(in srgb, #2a9d6f 32%, transparent); }
 
-#so-diag-pill {
+#pad-diag-pill {
     display: none;
     margin-left: 4px;
     padding: 1px 7px;
@@ -48,16 +48,16 @@
     letter-spacing: 0.08em;
     vertical-align: middle;
     color: #fff;
-    background-color: var(--so-diag-accent);
+    background-color: var(--pad-diag-accent);
     background: linear-gradient(160deg,
-        color-mix(in srgb, var(--so-diag-accent) 95%, white 5%),
-        color-mix(in srgb, var(--so-diag-accent) 78%, black 6%));
+        color-mix(in srgb, var(--pad-diag-accent) 95%, white 5%),
+        color-mix(in srgb, var(--pad-diag-accent) 78%, black 6%));
 }
-#so-window.so-diag-on #so-diag-pill { display: inline-block; }
+#pad-window.pad-diag-on #pad-diag-pill { display: inline-block; }
 
-#so-window.so-diag-on #so-header {
+#pad-window.pad-diag-on #pad-header {
     background: linear-gradient(180deg,
-        color-mix(in srgb, var(--so-diag-accent) 22%, transparent),
+        color-mix(in srgb, var(--pad-diag-accent) 22%, transparent),
         transparent);
 }
 

@@ -69,25 +69,25 @@ export async function copyTextRobust(text) {
 }
 
 export function addMessage(role, content, entry) {
-    const empty = messagesEl.querySelector('.so-empty');
+    const empty = messagesEl.querySelector('.pad-empty');
     if (empty) empty.remove();
     // 📤 新的 AI 气泡到场 = 气泡行上的 📥📤 回来了 → 撤掉那枚兜底的空页导入入口（它只在「本房一条
-    // AI 气泡都没有」时才该在，否则会孤零零卡在消息中间）。空态卡片里的那枚随 .so-empty 一起走，
+    // AI 气泡都没有」时才该在，否则会孤零零卡在消息中间）。空态卡片里的那枚随 .pad-empty 一起走，
     // 这里收的是直接挂在消息区上的独立那枚。
     if (role === 'assistant') {
-        for (const e of messagesEl.querySelectorAll(':scope > .so-empty-io')) e.remove();
+        for (const e of messagesEl.querySelectorAll(':scope > .pad-empty-io')) e.remove();
     }
 
     const wrap = document.createElement('div');
-    wrap.className = `so-msg so-${role}`;
+    wrap.className = `pad-msg pad-${role}`;
     // 1.85.3 入场动画只给【直播新到】的气泡：批量重画出来的历史不挂；挂了的在动画放完后摘掉，
     // 否则每次开窗（display:none → flex 会重启 CSS 动画）几百条历史一起重播淡入。
     // 判 target + 动画名：气泡里子元素动画的 animationend 也会冒泡上来。
     if (soBulkRenderDepth === 0) {
-        wrap.classList.add('so-msg-new');
+        wrap.classList.add('pad-msg-new');
         wrap.addEventListener('animationend', function soMsgNewDone(ev) {
-            if (ev.target !== wrap || (ev.animationName && ev.animationName !== 'so-msg-in')) return;
-            wrap.classList.remove('so-msg-new');
+            if (ev.target !== wrap || (ev.animationName && ev.animationName !== 'pad-msg-in')) return;
+            wrap.classList.remove('pad-msg-new');
             wrap.removeEventListener('animationend', soMsgNewDone);
         });
     }
@@ -96,57 +96,57 @@ export function addMessage(role, content, entry) {
     const label = role === 'user' ? '你' : '剧情推进';
 
     const copyBtn = role === 'assistant'
-        ? `<button class="so-msg-btn so-copy-btn" type="button" title="复制" aria-label="复制此回复"><i class="fa-solid fa-copy"></i></button>`
+        ? `<button class="pad-msg-btn pad-copy-btn" type="button" title="复制" aria-label="复制此回复"><i class="fa-solid fa-copy"></i></button>`
         : '';
     // Per-message actions (shown on hover): edit (user) / regenerate (assistant) + delete.
     let actionBtns = '';
     if (entry) {
         if (role === 'user') {
-            actionBtns += `<button class="so-msg-btn so-edit-btn" type="button" title="编辑并重新生成"><i class="fa-solid fa-pen"></i></button>`;
+            actionBtns += `<button class="pad-msg-btn pad-edit-btn" type="button" title="编辑并重新生成"><i class="fa-solid fa-pen"></i></button>`;
         } else {
-            actionBtns += `<button class="so-msg-btn so-regen-btn" type="button" title="重新生成（会丢弃其后的内容）"><i class="fa-solid fa-rotate"></i></button>`;
+            actionBtns += `<button class="pad-msg-btn pad-regen-btn" type="button" title="重新生成（会丢弃其后的内容）"><i class="fa-solid fa-rotate"></i></button>`;
         }
-        actionBtns += `<button class="so-msg-btn so-del-btn" type="button" title="删除"><i class="fa-solid fa-trash"></i></button>`;
+        actionBtns += `<button class="pad-msg-btn pad-del-btn" type="button" title="删除"><i class="fa-solid fa-trash"></i></button>`;
     }
     // 📥📤 整页导出 / 导入（1.61.0，Prince 点名要在气泡这一行也够得着）。它们是【整页】操作，不针对本条
     // 消息，所以哪条 AI 气泡上点都一样；只挂在 AI 气泡上（与复制同一惯例，用户气泡那行留给编辑/删除）。
     // 可见性【不】在这里判定就完事 —— 见 soApplyConvoIoVisual 的说明（换房重画覆盖不到所有模式过渡）。
     const convIoBtns = role === 'assistant'
-        ? `<button class="so-msg-btn so-convio-btn so-msg-export-btn" type="button" title="导出本页对话" aria-label="导出本页对话"><i class="fa-solid fa-file-export"></i></button>`
-          + `<button class="so-msg-btn so-convio-btn so-msg-import-btn" type="button" title="导入对话文件" aria-label="导入对话文件"><i class="fa-solid fa-file-import"></i></button>`
+        ? `<button class="pad-msg-btn pad-convio-btn pad-msg-export-btn" type="button" title="导出本页对话" aria-label="导出本页对话"><i class="fa-solid fa-file-export"></i></button>`
+          + `<button class="pad-msg-btn pad-convio-btn pad-msg-import-btn" type="button" title="导入对话文件" aria-label="导入对话文件"><i class="fa-solid fa-file-import"></i></button>`
         : '';
 
     wrap.innerHTML =
-        `<div class="so-avatar"><i class="fa-solid ${icon}"></i></div>` +
-        `<div class="so-bubble"><div class="so-role"><span class="so-role-label">${label}</span></div>` +
-        `<div class="so-content"></div><span class="so-actions">${copyBtn}${actionBtns}${convIoBtns}</span></div>`;
-    const contentEl = wrap.querySelector('.so-content');
+        `<div class="pad-avatar"><i class="fa-solid ${icon}"></i></div>` +
+        `<div class="pad-bubble"><div class="pad-role"><span class="pad-role-label">${label}</span></div>` +
+        `<div class="pad-content"></div><span class="pad-actions">${copyBtn}${actionBtns}${convIoBtns}</span></div>`;
+    const contentEl = wrap.querySelector('.pad-content');
     contentEl.textContent = content;
 
-    wrap.querySelector('.so-msg-export-btn')?.addEventListener('click', exportConvo);
-    wrap.querySelector('.so-msg-import-btn')?.addEventListener('click', importConvo);
+    wrap.querySelector('.pad-msg-export-btn')?.addEventListener('click', exportConvo);
+    wrap.querySelector('.pad-msg-import-btn')?.addEventListener('click', importConvo);
     soApplyConvoIoVisual(wrap);   // 建出来就按当前模式定初值（此后由切模式时的整片刷新维持）
 
-    const cBtn = wrap.querySelector('.so-copy-btn');
+    const cBtn = wrap.querySelector('.pad-copy-btn');
     if (cBtn) {
         cBtn.addEventListener('click', async () => {
             const ok = await copyTextRobust(contentEl.textContent);
-            cBtn.classList.add('so-copied');
+            cBtn.classList.add('pad-copied');
             cBtn.innerHTML = ok ? '<i class="fa-solid fa-check"></i>' : '<i class="fa-solid fa-xmark"></i>';
             cBtn.title = ok ? '已复制' : '复制失败 —— 请手动选择文本';
             setTimeout(() => {
-                cBtn.classList.remove('so-copied');
+                cBtn.classList.remove('pad-copied');
                 cBtn.innerHTML = '<i class="fa-solid fa-copy"></i>';
                 cBtn.title = '复制';
             }, 1200);
         });
     }
     if (entry) {
-        const editBtn = wrap.querySelector('.so-edit-btn');
+        const editBtn = wrap.querySelector('.pad-edit-btn');
         if (editBtn) editBtn.addEventListener('click', () => editUserMessage(entry));
-        const regenBtn = wrap.querySelector('.so-regen-btn');
+        const regenBtn = wrap.querySelector('.pad-regen-btn');
         if (regenBtn) regenBtn.addEventListener('click', () => regenerateFrom(entry));
-        const delBtn = wrap.querySelector('.so-del-btn');
+        const delBtn = wrap.querySelector('.pad-del-btn');
         if (delBtn) delBtn.addEventListener('click', async () => {
             // 1.22.0 删除二次确认（原生化自二创）：真消息先主题化确认；错误气泡（不在 convo 里）直接删不打扰。
             const i = convo.indexOf(entry);
@@ -173,7 +173,7 @@ export function addMessage(role, content, entry) {
 
 // Re-show the empty placeholder if no real messages remain.
 function maybeRenderEmpty() {
-    if (!messagesEl.querySelector('.so-msg')) { messagesEl.innerHTML = ''; renderEmptyState(); }
+    if (!messagesEl.querySelector('.pad-msg')) { messagesEl.innerHTML = ''; renderEmptyState(); }
     // 📤 删到一条 AI 气泡都不剩 → 📥📤 跟着消失（它们只挂在 AI 气泡上）。这里【当场】补上导入入口，
     // 否则用户要切一次房 / F5 才拿得回来（loadConvoForChat 那次兜底是同一条件、同一个幂等函数）。
     // 删除是唯一能把房间删成「有消息但没有 AI 回复」的路径，所以补这一处就够。
@@ -222,22 +222,22 @@ function editUserMessage(entry) {
     if (isGenerating) return;
     const el = entry._el;
     if (!el) return;
-    const bubble = el.querySelector('.so-bubble');
-    const contentEl = bubble.querySelector('.so-content');
-    if (bubble.querySelector('.so-edit-box')) return; // already editing
+    const bubble = el.querySelector('.pad-bubble');
+    const contentEl = bubble.querySelector('.pad-content');
+    if (bubble.querySelector('.pad-edit-box')) return; // already editing
 
     const box = document.createElement('div');
-    box.className = 'so-edit-box';
+    box.className = 'pad-edit-box';
     const ta = document.createElement('textarea');
-    ta.className = 'so-edit-ta';
+    ta.className = 'pad-edit-ta';
     ta.value = entry.content;
     ta.rows = Math.min(12, Math.max(2, entry.content.split('\n').length));
     const actions = document.createElement('div');
-    actions.className = 'so-edit-actions';
+    actions.className = 'pad-edit-actions';
     const saveBtn = document.createElement('button');
-    saveBtn.className = 'so-edit-save'; saveBtn.textContent = '保存并重新生成';
+    saveBtn.className = 'pad-edit-save'; saveBtn.textContent = '保存并重新生成';
     const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'so-edit-cancel'; cancelBtn.textContent = '取消';
+    cancelBtn.className = 'pad-edit-cancel'; cancelBtn.textContent = '取消';
     actions.appendChild(saveBtn); actions.appendChild(cancelBtn);
     box.appendChild(ta); box.appendChild(actions);
     contentEl.style.display = 'none';
@@ -265,18 +265,18 @@ function editUserMessage(entry) {
     });
 }
 
-// 失败回复气泡上的【常显】「↻ 重试」按钮（用户功能请求）。.so-actions 里的 regen 按钮只在 hover 时出现，
+// 失败回复气泡上的【常显】「↻ 重试」按钮（用户功能请求）。.pad-actions 里的 regen 按钮只在 hover 时出现，
 // 手机上够不着；这里显式加一个一直可见的按钮。点它 = regenerateFrom(entry)：去掉这条失败气泡，对当前侧聊尾部
-// （刚发的那条用户消息还在）重新生成——不用重打。复用 .so-apply-bar/.so-apply-btn 样式（零新 CSS）。
+// （刚发的那条用户消息还在）重新生成——不用重打。复用 .pad-apply-bar/.pad-apply-btn 样式（零新 CSS）。
 export function addRetryControl(assistantEl, entry) {
     if (!assistantEl) return;
-    const bubble = assistantEl.querySelector('.so-bubble');
-    if (!bubble || bubble.querySelector('.so-retry-btn')) return;   // 防重复添加
+    const bubble = assistantEl.querySelector('.pad-bubble');
+    if (!bubble || bubble.querySelector('.pad-retry-btn')) return;   // 防重复添加
     const bar = document.createElement('div');
-    bar.className = 'so-apply-bar so-retry-bar';
+    bar.className = 'pad-apply-bar pad-retry-bar';
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'so-apply-btn so-retry-btn';
+    btn.className = 'pad-apply-btn pad-retry-btn';
     btn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> 重试';
     bar.appendChild(btn);
     bubble.appendChild(bar);
@@ -303,10 +303,10 @@ export async function diagSchemaAfterManualReply(assistantEl, finalText, aEntry,
         const block = extractUpdateBlock(finalText);
         const sf = block ? diagSchemaFilterPatch(repairDiagPatch(block, mvuStatOf(md)).text, md) : null;
         const lines = sf ? diagSchemaDryLines(sf.dry) : '';
-        const bar = assistantEl && assistantEl.querySelector('.so-apply-bar');
+        const bar = assistantEl && assistantEl.querySelector('.pad-apply-bar');
         if (lines && bar) {
             const pv = document.createElement('div');
-            pv.className = 'so-hint so-diag-schema-preview';
+            pv.className = 'pad-hint pad-diag-schema-preview';
             pv.textContent = lines.replace(/^\n/, '');
             bar.parentNode.insertBefore(pv, bar);
         }
@@ -319,7 +319,7 @@ export async function diagSchemaAfterManualReply(assistantEl, finalText, aEntry,
         await new Promise((res) => { const t = setInterval(() => { if (!isGenerating) { clearInterval(t); res(); } }, 100); });
         if (convo[convo.length - 1] !== aEntry) return;
         // 第二张在生成时先锁住第一张的「应用」，免得两张都点、同一处 delta 算两遍（minors M7）。只锁还是「应用」态的键。
-        const applyBtn = bar && bar.querySelector('.so-apply-btn');
+        const applyBtn = bar && bar.querySelector('.pad-apply-btn');
         const lockable = !!(applyBtn && !applyBtn.disabled && /将修复应用到状态/.test(applyBtn.textContent || ''));
         if (lockable) applyBtn.disabled = true;
         const entry = { id: nextCid(), role: 'user', content: plan.message, schemaRetry: true };
@@ -332,12 +332,12 @@ export async function diagSchemaAfterManualReply(assistantEl, finalText, aEntry,
         const replaced = !!(last && last !== entry && last.role === 'assistant' && extractUpdateBlock(String(last.content || '')));
         if (replaced && bar) {
             const n = document.createElement('div');
-            n.className = 'so-hint';
+            n.className = 'pad-hint';
             n.textContent = '已由下一张替代';
             bar.parentNode.insertBefore(n, bar);
         } else if (lockable) applyBtn.disabled = false;
     } catch (e) {
-        console.warn('[Story Oracle] 🩺 schema 预演 / 重写失败（不影响应用）：', e);
+        console.warn('[剧情推进] 🩺 schema 预演 / 重写失败（不影响应用）：', e);
     }
 }
 
@@ -347,25 +347,25 @@ export async function diagSchemaAfterManualReply(assistantEl, finalText, aEntry,
 // 本身：那仍挡得住「一个包装块里两个区块」这一档，只是「两个包装块」那一档在重画后回到旧行为。
 export function addApplyControls(assistantEl, patchBlock, entry, replyText) {
     const bar = document.createElement('div');
-    bar.className = 'so-apply-bar';
+    bar.className = 'pad-apply-bar';
     const btn = document.createElement('button');
-    btn.className = 'so-apply-btn';
+    btn.className = 'pad-apply-btn';
     btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 将修复应用到状态';
     const status = document.createElement('span');
-    status.className = 'so-apply-status';
+    status.className = 'pad-apply-status';
     // 已应用状态（1.33.2）：会话内应用过（注册表有快照）→ 撤销态重生；只剩持久标记（重载过，
     // 快照已失）→ 不出应用按钮、只留说明——旧补丁对已前进的状态重放不安全（delta 会二次叠加）。
     const sess = entry ? ((peekNoteOpts(convoStreamKey, entry) || {}).diagApplied || null) : null;
     if (!sess && entry && isRecordApplied(convoStreamKey, entry)) {
         status.textContent = '此前已应用过此补丁，应用按钮已收起（重载后撤销不可用）。需要再修请重新诊断。';
         bar.appendChild(status);
-        assistantEl.querySelector('.so-bubble').appendChild(bar);
+        assistantEl.querySelector('.pad-bubble').appendChild(bar);
         scrollToBottom();
         return;
     }
     bar.appendChild(btn);
     bar.appendChild(status);
-    assistantEl.querySelector('.so-bubble').appendChild(bar);
+    assistantEl.querySelector('.pad-bubble').appendChild(bar);
     scrollToBottom();
 
     let snapshot = null;
@@ -381,7 +381,7 @@ export function addApplyControls(assistantEl, patchBlock, entry, replyText) {
         status.textContent = '已应用 —— 状态已更新。';
     }
     btn.addEventListener('click', async () => {
-        status.classList.remove('so-hint-error');
+        status.classList.remove('pad-hint-error');
         if (snapshot) {
             // currently applied -> undo
             btn.disabled = true;
@@ -410,7 +410,7 @@ export function addApplyControls(assistantEl, patchBlock, entry, replyText) {
                 status.textContent = '已还原到之前的状态。' + (n ? '\n' + n : '');
             } catch (e) {
                 status.textContent = '还原失败：' + (e?.message || e);
-                status.classList.add('so-hint-error');
+                status.classList.add('pad-hint-error');
             }
             btn.disabled = false;
             return;
@@ -481,7 +481,7 @@ export function addApplyControls(assistantEl, patchBlock, entry, replyText) {
                         }
                     }
                 } catch (e) {
-                    console.warn('[Story Oracle] 诊断修正写进正文失败（变量修正照常生效）：', e);
+                    console.warn('[剧情推进] 诊断修正写进正文失败（变量修正照常生效）：', e);
                 }
                 if (entry) {
                     // 已应用状态（1.33.2）：登记会话快照（换房重画以撤销态重生）+ 落持久标记（重载后只留说明）。
@@ -501,7 +501,7 @@ export function addApplyControls(assistantEl, patchBlock, entry, replyText) {
             }
         } catch (e) {
             status.textContent = '应用失败：' + (e?.message || e);
-            status.classList.add('so-hint-error');
+            status.classList.add('pad-hint-error');
         }
         btn.disabled = dead;
     });
@@ -528,20 +528,20 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
     const staleMessage = dependencies?.staleMsg || staleMsg;
     const nearCopyNote = dependencies?.fixNearCopyNote || fixNearCopyNote;
     const bar = document.createElement('div');
-    bar.className = 'so-apply-bar';
+    bar.className = 'pad-apply-bar';
     const btn = document.createElement('button');
-    btn.className = 'so-apply-btn';
+    btn.className = 'pad-apply-btn';
     btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 应用到回复';
     // 「看改动」：原文（去机制块，prose↔prose）→ 校正稿的内联差异卡，懒构建一次后切 hidden 复用。
     const diffBtn = document.createElement('button');
-    diffBtn.className = 'so-apply-btn';
+    diffBtn.className = 'pad-apply-btn';
     diffBtn.innerHTML = '<i class="fa-solid fa-eye"></i> 看改动';
     const status = document.createElement('span');
-    status.className = 'so-apply-status';
+    status.className = 'pad-apply-status';
     bar.appendChild(btn);
     bar.appendChild(diffBtn);
     bar.appendChild(status);
-    const bubble = assistantEl.querySelector('.so-bubble');
+    const bubble = assistantEl.querySelector('.pad-bubble');
     bubble.appendChild(bar);
     // 近抄警示（Tier 0 ①，Prince 定案：手动只【警示】、不拦应用）：稿子与原文几乎相同时如实告知——高上下文
     // DeepSeek 的「抄原文不改」此前以一枚正常「应用」按钮示人（fixNoOp 只抓逐字相同）。警示是加分项、包 try 不阻断。
@@ -552,7 +552,7 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
             const ncNote = nearCopyNote(ncBefore, (parsed && parsed.fixed) || '');
             if (ncNote) {
                 const warn = document.createElement('div');
-                warn.className = 'so-fix-nearcopy-warn';
+                warn.className = 'pad-fix-nearcopy-warn';
                 warn.textContent = ncNote;
                 bubble.insertBefore(warn, bar);
             }
@@ -587,7 +587,7 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
     }
     btn.addEventListener('click', async () => {
         if (applied) return;
-        status.classList.remove('so-hint-error');
+        status.classList.remove('pad-hint-error');
         btn.disabled = true;
         status.textContent = '正在应用…';
         try {
@@ -596,7 +596,7 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
             const st = targetStale(captured, currentSnapshot(targetIdx));
             if (st.stale) {
                 status.textContent = staleMessage(st.reason);
-                status.classList.add('so-hint-error');
+                status.classList.add('pad-hint-error');
                 btn.disabled = false;
                 return;
             }
@@ -604,7 +604,7 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
             // 分段校正（finalOverride）已逐段查过截断，整稿复检跳过（拼接稿的「断句 + 偏短」启发式不适用）。
             if (finalOverride == null && outputTruncated(parsed.fixed, undefined, captured && captured.prose).truncated) {
                 status.textContent = '校正稿似乎被截断了，未应用。请点 ↻ 重试或调大「最大 token 数」后重新校正。';
-                status.classList.add('so-hint-error');
+                status.classList.add('pad-hint-error');
                 btn.disabled = false;
                 return;
             }
@@ -624,12 +624,12 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
                 status.textContent = '已作为新 swipe 写入这条回复。';
             } else {
                 status.textContent = '应用失败：没找到目标消息或保存失败。';
-                status.classList.add('so-hint-error');
+                status.classList.add('pad-hint-error');
                 btn.disabled = false;
             }
         } catch (e) {
             status.textContent = '应用失败：' + (e?.message || e);
-            status.classList.add('so-hint-error');
+            status.classList.add('pad-hint-error');
             btn.disabled = false;
         }
     });
@@ -641,15 +641,15 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
 export function addLorebookApplyControls(assistantEl, parsed, entry) {
     const ops = (parsed && parsed.ops) || [];
     const errors = (parsed && parsed.errors) || [];
-    const bubble = assistantEl.querySelector('.so-bubble');
+    const bubble = assistantEl.querySelector('.pad-bubble');
 
     const bar = document.createElement('div');
-    bar.className = 'so-apply-bar';
+    bar.className = 'pad-apply-bar';
     const btn = document.createElement('button');
-    btn.className = 'so-apply-btn';
+    btn.className = 'pad-apply-btn';
     btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 将改动应用到世界书';
     const status = document.createElement('span');
-    status.className = 'so-apply-status';
+    status.className = 'pad-apply-status';
     // 已应用状态（1.33.2）：会话内应用过（注册表有快照+结果）→ 撤销态重生；只剩持久标记（重载过，
     // 快照已失）→ 不出应用按钮、只留说明——重放旧书快照会回滚整本书；再点应用则 create 类操作会出重复条目。
     const sess = entry ? ((peekNoteOpts(convoStreamKey, entry) || {}).lbApplied || null) : null;
@@ -666,25 +666,25 @@ export function addLorebookApplyControls(assistantEl, parsed, entry) {
 
     // B5 应用前预检行（fire-and-fill 填入，见函数末尾）。放在结果区之前、按钮之下。
     const previewEl = document.createElement('div');
-    previewEl.className = 'so-lb-preview';
+    previewEl.className = 'pad-lb-preview';
     bubble.appendChild(previewEl);
 
     // Per-op outcomes, rendered after Apply.
     const resultsEl = document.createElement('div');
-    resultsEl.className = 'so-lb-results';
+    resultsEl.className = 'pad-lb-results';
     bubble.appendChild(resultsEl);
 
     // Surface any blocks we couldn't parse — never silently drop them.
     if (errors.length) {
         const e = document.createElement('div');
-        e.className = 'so-lb-parse-errors so-hint-error';
+        e.className = 'pad-lb-parse-errors pad-hint-error';
         e.textContent = `另有 ${errors.length} 处改动无法解析（已忽略）：` + errors.map((x) => x.error).join('；');
         bubble.appendChild(e);
     }
 
     if (!ops.length) {
         btn.disabled = true;
-        status.classList.add('so-hint-error');
+        status.classList.add('pad-hint-error');
         status.textContent = errors.length
             ? '这次的改动没能解析出来。让我「把刚才的改动严格按格式重发一次」即可，或把改动拆小一点再试。'
             : '没有检测到可应用的改动。';
@@ -699,12 +699,12 @@ export function addLorebookApplyControls(assistantEl, parsed, entry) {
         resultsEl.innerHTML = '';
         for (const r of results) {
             const line = document.createElement('div');
-            line.className = 'so-lb-result ' + (r.ok ? 'so-lb-ok' : 'so-lb-skip');
+            line.className = 'pad-lb-result ' + (r.ok ? 'pad-lb-ok' : 'pad-lb-skip');
             line.textContent = lbFormatApplyLine(r);   // F3c 共用格式化（✓ 带尺寸回声 / ⤫ 跳过原因）
             resultsEl.appendChild(line);
             // B4/B6/改锚/T2 附注：同名转编辑 / 无键自动常驻 / 已改锚 / 常驻目标等，落地结果也一并说明。
-            if (r.note) { const n = document.createElement('div'); n.className = 'so-lb-note'; n.textContent = '↳ ' + r.note; resultsEl.appendChild(n); }
-            if (r.warn) { const w = document.createElement('div'); w.className = 'so-lb-warn-note'; w.textContent = '⚠ ' + r.warn; resultsEl.appendChild(w); }
+            if (r.note) { const n = document.createElement('div'); n.className = 'pad-lb-note'; n.textContent = '↳ ' + r.note; resultsEl.appendChild(n); }
+            if (r.warn) { const w = document.createElement('div'); w.className = 'pad-lb-warn-note'; w.textContent = '⚠ ' + r.warn; resultsEl.appendChild(w); }
         }
     };
 
@@ -717,7 +717,7 @@ export function addLorebookApplyControls(assistantEl, parsed, entry) {
         status.textContent = `已应用：${sess.summary}。世界书已保存。`;
     }
     btn.addEventListener('click', async () => {
-        status.classList.remove('so-hint-error');
+        status.classList.remove('pad-hint-error');
         if (snapshots) {
             // currently applied -> undo
             btn.disabled = true;
@@ -731,7 +731,7 @@ export function addLorebookApplyControls(assistantEl, parsed, entry) {
                 status.textContent = `已还原。待应用：${lbSummaryOf(ops)}`;
             } catch (e) {
                 status.textContent = '还原失败：' + (e?.message || e);
-                status.classList.add('so-hint-error');
+                status.classList.add('pad-hint-error');
             }
             btn.disabled = false;
             return;
@@ -755,11 +755,11 @@ export function addLorebookApplyControls(assistantEl, parsed, entry) {
             } else {
                 snapshots = null;
                 status.textContent = '没有任何改动被应用（全部跳过，见下方原因）。';
-                status.classList.add('so-hint-error');
+                status.classList.add('pad-hint-error');
             }
         } catch (e) {
             status.textContent = '应用失败：' + (e?.message || e);
-            status.classList.add('so-hint-error');
+            status.classList.add('pad-hint-error');
         }
         btn.disabled = false;
         scrollToBottom();
@@ -775,19 +775,19 @@ export function addLorebookApplyControls(assistantEl, parsed, entry) {
             if (!verdicts || snapshots) return;   // 模块不可用 / 预检返回前已应用 → 不渲染
             previewEl.innerHTML = '';
             const head = document.createElement('div');
-            head.className = 'so-lb-preview-head';
+            head.className = 'pad-lb-preview-head';
             head.textContent = '应用前预检（点「应用」时以当前世界书为准）：';
             previewEl.appendChild(head);
             for (const v of verdicts) {
                 const row = lbVerdictRow(v);
                 const el = document.createElement('div');
-                el.className = 'so-lb-prow ' + row.cls;
+                el.className = 'pad-lb-prow ' + row.cls;
                 const main = document.createElement('div');
-                main.className = 'so-lb-prow-main';
+                main.className = 'pad-lb-prow-main';
                 main.textContent = row.line;
                 el.appendChild(main);
-                if (row.note) { const n = document.createElement('div'); n.className = 'so-lb-note'; n.textContent = '↳ ' + row.note; el.appendChild(n); }
-                if (row.warn) { const w = document.createElement('div'); w.className = 'so-lb-warn-note'; w.textContent = '⚠ ' + row.warn; el.appendChild(w); }
+                if (row.note) { const n = document.createElement('div'); n.className = 'pad-lb-note'; n.textContent = '↳ ' + row.note; el.appendChild(n); }
+                if (row.warn) { const w = document.createElement('div'); w.className = 'pad-lb-warn-note'; w.textContent = '⚠ ' + row.warn; el.appendChild(w); }
                 previewEl.appendChild(el);
             }
             scrollToBottom();
