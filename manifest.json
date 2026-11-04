@@ -1,12 +1,12 @@
 {
-    "display_name": "故事神谕·二创版 (Story Oracle Fork)",
+    "display_name": "剧情推进",
     "loading_order": 105,
     "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
     "author": "原作 namelessone88 · 二创",
-    "version": "2.5.1",
-    "homePage": "https://github.com/noetwo/story-oracle",
+    "version": "2.6.0",
+    "homePage": "https://github.com/noetwo/plot-advance",
     "auto_update": false
 }

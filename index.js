@@ -1,5 +1,5 @@
 /*
- * 故事神谕·二创版（Story Oracle Fork）—— SillyTavern 的侧边问答窗口。
+ * 剧情推进 —— SillyTavern 的侧边问答窗口。
  *
  * 基于原版「故事神谕」1.89.0 的二创：先精简成只有普通聊天 + 剧情参谋的精简版（1.x），
  * 2.0 起把诊断、世界书、校正、角色工坊加了回来。各模式：
@@ -27,7 +27,7 @@
 const MODULE = 'storyOracle';
 
 const DEFAULT_SYSTEM_PROMPT =
-`你是「故事神谕」，一个为正在进行的角色扮演/故事服务的“戏外”分析者。
+`你是「剧情推进」，一个为正在进行的角色扮演/故事服务的“戏外”分析者。
 下方提供了当前的故事上下文（角色信息与最近的对话记录）。
 请基于这些上下文，准确地回答用户关于这个故事的问题。
 
@@ -80,7 +80,7 @@ const DIAGNOSE_SYSTEM_PROMPT =
 - 如果实际上没有任何问题，请如实说明，并在 JSONPatch 中输出一个空数组（[]）。一次没有缺陷的干净更新是合法且常见的结果——不要为了凑出一个补丁而制造问题。`;
 
 const LOREBOOK_SYSTEM_PROMPT =
-`你是「故事神谕」的世界书管家——一个专门帮用户阅读、梳理、并按要求修改 SillyTavern 世界书（世界信息 / lorebook）的助手。
+`你是「剧情推进」的世界书管家——一个专门帮用户阅读、梳理、并按要求修改 SillyTavern 世界书（世界信息 / lorebook）的助手。
 
 当前要处理的世界书条目，放在本条对话【最末尾】的〔世界书快照〕区块里（标题形如「世界书快照 · 第 N 版」），按「世界书 → 条目」的层级列出（有时只发给你其中一部分——标题栏会注明「已选 X / 共 N 条」；此时请只针对你看得到的条目作答或改动，不要引用没列出的 uid）。每个条目都带有：
 - uid：该条目在所属世界书中的唯一编号（修改时用它来精确定位，务必照抄，绝不要自己编）。
@@ -188,7 +188,7 @@ uid: 7
  * 悄悄引导主线 AI ——详见下方 plan 机制一节。
  * ------------------------------------------------------------------ */
 const ADVISOR_SYSTEM_PROMPT =
-`你是「故事神谕」的剧情参谋——一个为正在进行的角色扮演/故事服务的"戏外"剧情顾问。
+`你是「剧情推进」的剧情参谋——一个为正在进行的角色扮演/故事服务的"戏外"剧情顾问。
 下方提供了完整的故事上下文（角色信息、世界观设定与整段对话记录）。你的工作是帮用户构思"接下来可以怎么走"：找出沉睡的伏笔、未兑现的线索、人物弧光的下一步，提出真正贴合这个故事的剧情走向。
 
 职责：
@@ -2205,7 +2205,7 @@ const defaults = {
     // 这里写 'dark' 是给【全新安装】的默认；老档由 getSettings 里的一次性迁移补 'theme'，
     // 那段跑在本循环之前，所以老用户读不到这个默认值。
     windowSkin: 'dark',
-    showQrButton: true,        // 精简版 1.2：输入框上方快捷回复栏（「柏宝书」那一排）里放一个「故事神谕」文字按钮；默认开
+    showQrButton: true,        // 精简版 1.2：输入框上方快捷回复栏（「柏宝书」那一排）里放一个「剧情推进」文字按钮；默认开
     showChatBarButton: false,  // 用户功能请求：在 ST 聊天输入栏（☰ 旁）放一个 🌙 快捷按钮一键开 / 关神谕窗口；默认关、设置里开
     // 用户功能请求（1.48.0）：点击窗外（酒馆正文等非本扩展区域）自动收起神谕窗。默认关＝行为字节不变；
     // 收起只是隐藏（toggleWindow(false)），一切状态保留，从魔杖 / 🌙 再点开即恢复。
@@ -2494,7 +2494,7 @@ async function uiPrompt(message, defaultValue = '') {
 // kind：'preset' 连接预设｜'userPair' 提问且其后紧跟神谕回复（成对删）｜'user' 单独提问｜'assistant' 回复。
 function soDeleteConfirmMessage(kind, name) {
     if (kind === 'preset') return `删除连接存档「${name || ''}」？此操作无法撤销。`;
-    if (kind === 'userPair') return '删除这条提问？它下面的神谕回复会一并删除，且无法撤销。';
+    if (kind === 'userPair') return '删除这条提问？它下面的剧情推进回复会一并删除，且无法撤销。';
     if (kind === 'user') return '删除这条提问？此操作无法撤销。';
     return '删除这条回复？此操作无法撤销。';
 }
@@ -2843,7 +2843,7 @@ async function qpSend(q) {
     renderModelBar();
     if (!inputEl) return;
     if (isGenerating) {
-        try { toastr.info('神谕还在回复，等它说完再点。', '快捷指令'); } catch (e) { /* toastr 缺席 */ }
+        try { toastr.info('剧情推进还在回复，等它说完再点。', '快捷指令'); } catch (e) { /* toastr 缺席 */ }
         return;
     }
     const text = qpText(q);
@@ -3230,7 +3230,7 @@ async function soCallModel(messages, opts = {}) {
 // 原版还没跑时，它的脚本标签也已经在页面上（酒馆按 /scripts/extensions/third-party/<目录>/ 加载）。
 // 末尾的 / 让它匹配不到 story-oracle-lite 自己。
 // 自己这份脚本的路径（酒馆用 import() 按 ES 模块加载扩展）。启动守卫靠它把自己从脚本标签里排除——
-// 从 GitHub 按网址安装时，二创版的文件夹名就叫 story-oracle，和原版同名。
+// 仓库改名 plot-advance 之前从 GitHub 按网址安装的剧情推进，文件夹名就叫 story-oracle，和原版同名。
 const SO_SELF_PATH = (() => {
     try { return decodeURIComponent(new URL(import.meta.url).pathname); } catch (e) { return ''; }
 })();
@@ -3247,7 +3247,7 @@ const SO_FORKS = (() => {
     } catch (e) { return []; }
 })();
 const SO_ORIGINAL_WAIT_MS = 8000;
-// 另一个「故事神谕」在跑吗？'other' = 该让路；'none' = 放心启动；'wait' = 有个叫 story-oracle 的文件夹（原版的
+// 原版「故事神谕」或另一份剧情推进在跑吗？'other' = 该让路；'none' = 放心启动；'wait' = 有个叫 story-oracle 的文件夹（原版的
 // 名字）挂了脚本、但它既没登记成二创版也还没建窗口——多半是原版还没跑到初始化，等它一会儿再判。
 // 只认文件夹名【正好是】story-oracle：社区的 story-oracle-next-beat 这类配套插件不该让我们白等。
 function otherOracleState() {
@@ -3264,16 +3264,16 @@ function otherOracleState() {
     } catch (e) { return 'none'; }
 }
 
-// 启动：先确认没有别的「故事神谕」在跑（otherOracleState），再正式初始化（initNow）。
+// 启动：先确认没有原版「故事神谕」或另一份剧情推进在跑（otherOracleState），再正式初始化（initNow）。
 function init() {
     const startedAt = Date.now();
     const check = () => {
         const st = otherOracleState();
         if (st === 'wait' && Date.now() - startedAt < SO_ORIGINAL_WAIT_MS) { setTimeout(check, 200); return; }
         if (st === 'other') {
-            const msg = '检测到另一个「故事神谕」（原版或另一份二创版）也已启用。两者不能同时使用，请在扩展管理里只留一个启用，然后刷新页面。';
-            console.error('[故事神谕·二创版] ' + msg);
-            try { toastr.error(msg, '故事神谕·二创版', { timeOut: 0, extendedTimeOut: 0 }); } catch (e) { /* toastr 缺席 */ }
+            const msg = '检测到原版「故事神谕」或另一份「剧情推进」也已启用。两者不能同时使用，请在扩展管理里只留一个启用，然后刷新页面。';
+            console.error('[剧情推进] ' + msg);
+            try { toastr.error(msg, '剧情推进', { timeOut: 0, extendedTimeOut: 0 }); } catch (e) { /* toastr 缺席 */ }
             return;
         }
         try {
@@ -3294,7 +3294,7 @@ function initNow() {
         if (mig.migrated) {
             save();
             if (typeof toastr !== 'undefined' && toastr.info) {
-                toastr.info('手动校正默认已改为精简上下文（' + mig.hit.join(' / ') + ' 已关，角色卡保留）——长聊天下更稳更省。如需全量前文，可在「校正设置」把「加载前文条数」改回 -1。', '故事神谕', { timeOut: 12000 });
+                toastr.info('手动校正默认已改为精简上下文（' + mig.hit.join(' / ') + ' 已关，角色卡保留）——长聊天下更稳更省。如需全量前文，可在「校正设置」把「加载前文条数」改回 -1。', '剧情推进', { timeOut: 12000 });
             }
         }
     } catch (e) { console.warn('[Story Oracle] fix lean 迁移失败：', e); }
@@ -3305,9 +3305,9 @@ function initNow() {
             save();
             if (typeof toastr !== 'undefined' && toastr.info) {
                 toastr.info('已为你默认启用内置破限「初心破限 1.2」（作者：' + BUILTIN_JB_AUTHOR + '）——'
-                    + '它包裹在故事神谕自己的提示词外面，默认只作用于【普通聊天】。'
+                    + '它包裹在剧情推进自己的提示词外面，默认只作用于【普通聊天】。'
                     + '不想要可在「系统提示词 → 补全预设」里换回「自定义」。',
-                    '故事神谕', { timeOut: 15000 });
+                    '剧情推进', { timeOut: 15000 });
             }
         }
     } catch (e) { console.warn('[Story Oracle] 内置破限迁移失败：', e); }
@@ -3316,7 +3316,7 @@ function initNow() {
     buildWindow();
     if (getSettings().toolsInHeader) applyToolsInHeader();   // A5：开了「工具移到标题栏」就在建窗后搬一次
     syncChatBarButton();   // 用户功能请求：按设置在聊天栏放 / 撤快捷按钮
-    syncQrButton();        // 精简版 1.2：快捷回复栏里的「故事神谕」按钮
+    syncQrButton();        // 精简版 1.2：快捷回复栏里的「剧情推进」按钮
     syncFixSelBarButton();   // ✂️ 按设置在输入框上方那一排放 / 撤「选段校正」快捷按钮（1.44.0）
     loadRegexEngine(); // warm the cache so it's ready by first send
     ensureSoSeqCleanupRegex();   // 1.3.0：旧回复里残留的落拍感应状态行，显示和提示词里都剥掉
@@ -4828,7 +4828,7 @@ const LB_SMART_EXCERPT_PAD = 20;          // 搜索摘录：命中词两侧各�
 // 喂给模型的指令提示词。中文、家规口吻；【绝不含反引号】（本身是模板字符串，内嵌反引号 = SyntaxError），
 // 内联字面一律用「」。三块文法与引擎解析器（parseLbSearch/Fetch/SelectBlocks）逐字对齐。
 const LB_SMART_SELECT_PROMPT = [
-    '你是《故事神谕》世界书选择器里的「智能选条」助手。用户会用自然语言下一条勾选指令（例如「把讲战争线的绿灯条目全勾上」',
+    '你是《剧情推进》世界书选择器里的「智能选条」助手。用户会用自然语言下一条勾选指令（例如「把讲战争线的绿灯条目全勾上」',
     '「取消所有涉及感情戏的」「勾上包含某某设定的那几本书」）。你的唯一职责：产出一份【勾选计划】，指明每本书要勾选 / 取消勾选',
     '哪些条目。',
     '',
@@ -6552,14 +6552,14 @@ function buildConvoExportMd(list, meta) {
     if (!turns.length) return '';
     const m = meta || {};
     const head = [
-        '# 故事神谕对话导出',
+        '# 剧情推进对话导出',
         '',
         `- 模式：${String(m.modeLabel == null ? '' : m.modeLabel)}`,
         `- 聊天：${String(m.chatName == null ? '' : m.chatName)}`,
         `- 导出时间：${String(m.when == null ? '' : m.when)}`,
         `- 共 ${turns.length} 条对话`,
     ].join('\n');
-    const body = turns.map((t) => `**${t.role === 'user' ? '【我】' : '【神谕】'}**\n\n${t.content}`);
+    const body = turns.map((t) => `**${t.role === 'user' ? '【我】' : '【剧情推进】'}**\n\n${t.content}`);
     return [head, ...body].join('\n\n---\n\n') + '\n';
 }
 
@@ -6576,10 +6576,10 @@ function soSanitizeFileName(name) {
     return cleaned || '未命名';
 }
 
-// 纯函数：导出文件名 故事神谕-{模式}-{聊天名}-{YYYYMMDD-HHMM}.md。三段都过一遍清洗
+// 纯函数：导出文件名 剧情推进-{模式}-{聊天名}-{YYYYMMDD-HHMM}.md。三段都过一遍清洗
 // （模式名是内置常量，聊天名才是用户数据；一视同仁省得日后加来源时漏掉）。
 function buildConvoExportFileName(modeLabel, chatName, stamp) {
-    return `故事神谕-${soSanitizeFileName(modeLabel)}-${soSanitizeFileName(chatName)}-${soSanitizeFileName(stamp)}.md`;
+    return `剧情推进-${soSanitizeFileName(modeLabel)}-${soSanitizeFileName(chatName)}-${soSanitizeFileName(stamp)}.md`;
 }
 
 // 纯函数（Date 由调用端传进来，单测才不碰时钟）：导出用的两种时间写法——正文里的可读时间 +
@@ -6601,7 +6601,7 @@ function soExportTimeParts(d) {
    ② 反过来说：正文里若原样出现「空行 `---` 空行 `**【我】**`」，它【会】被切成新的一轮。边界可伪造，
       这一点与导出侧评审的结论一致（accepted-by-design）：导出是纯文本档案，不是带校验的容器格式。
    ③ 容错：BOM / CRLF / 标记行尾空格 / 抬头被改被删 / 抬头与首轮之间那条 `---` 被人手删掉（粘连找回）。
-   ④ 一条有效对话都没读到 → null（调用端据此报「这不是故事神谕导出的对话文件」）。
+   ④ 一条有效对话都没读到 → null（调用端据此报「这不是剧情推进导出的对话文件」）。
    ⑤ 正文【逐字】还原：不 trim、不去转义、不渲染 —— 与导出侧的逐字照抄对称。
    ⑥ 切出来了却认不出的段 → 计进 `skipped`（调用端在成功提示里如实说 N/M，绝不静默吞）。
    文件末尾那个换行是导出器加的（`+ '\n'`），这里精确脱掉一个，round-trip 才是字节级的逆。 */
@@ -6610,9 +6610,9 @@ function parseConvoExportMd(text) {
     const t = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').replace(/\n$/, '');
     if (!t) return null;
     // split 对正则恒按全局切，无需 /g；lookahead 保证只在真段界处下刀。
-    const segs = t.split(/\n[ \t]*\n[ \t]*-{3,}[ \t]*\n[ \t]*\n(?=\*\*【(?:我|神谕)】\*\*)/);
+    const segs = t.split(/\n[ \t]*\n[ \t]*-{3,}[ \t]*\n[ \t]*\n(?=\*\*【(?:我|神谕|剧情推进)】\*\*)/);
     const meta = {};
-    if (segs.length && !/^\*\*【(?:我|神谕)】\*\*/.test(segs[0])) {
+    if (segs.length && !/^\*\*【(?:我|神谕|剧情推进)】\*\*/.test(segs[0])) {
         let head = segs.shift();
         // 抬头与首轮之间的 `---` 被删时首轮会粘在抬头里 —— 从抬头里第一个【行首】说话人标记处切开找回；
         // 不做这一步则首轮被静默吞掉。这条找回路要过【两道】闸（review 2026-08-09 m1 抓到的假阳：
@@ -6621,11 +6621,11 @@ function parseConvoExportMd(text) {
         //   ② 被切掉的那截前缀必须【确实长得像我们的抬头】（标题行 / `- 模式：`… / `- 共 N 条对话`），
         //      或者本就是空白。别人的笔记里出现一行 `**【神谕】**` → 两闸不过 → 整份判 null，
         //      而不是悄悄吞掉前半篇。
-        const glue = /(?:^|\n)\*\*【(?:我|神谕)】\*\*[ \t]*(?:\n\n|\n|$)/.exec(head);
+        const glue = /(?:^|\n)\*\*【(?:我|神谕|剧情推进)】\*\*[ \t]*(?:\n\n|\n|$)/.exec(head);
         const at = glue ? (glue.index === 0 ? 0 : glue.index + 1) : -1;
         const prefix = at >= 0 ? head.slice(0, at) : '';
         if (at >= 0 && (!prefix.trim()
-            || /^#[ \t]*故事神谕对话导出[ \t]*$|^-[ \t]*(?:模式|聊天|导出时间)：|^-[ \t]*共[ \t]*\d+[ \t]*条对话[ \t]*$/m.test(prefix))) {
+            || /^#[ \t]*(?:故事神谕|剧情推进)对话导出[ \t]*$|^-[ \t]*(?:模式|聊天|导出时间)：|^-[ \t]*共[ \t]*\d+[ \t]*条对话[ \t]*$/m.test(prefix))) {
             segs.unshift(head.slice(at));
             head = prefix;
         }
@@ -6643,7 +6643,7 @@ function parseConvoExportMd(text) {
     let skipped = 0;
     for (const seg of segs) {
         // 标记行后面通常是空行 + 正文；只有一个换行（手改过）或直接到头（空内容）也认。
-        const m = /^\*\*【(我|神谕)】\*\*[ \t]*(\n\n|\n|$)/.exec(seg);
+        const m = /^\*\*【(我|神谕|剧情推进)】\*\*[ \t]*(\n\n|\n|$)/.exec(seg);
         // 不是一轮（半截文本 / 改坏了，例如 `**【我】**问题` 标记后没换行）→ 跳过、不猜，但【记账】：
         // 调用端要在成功提示里如实说「N 段无法识别、已跳过」，绝不静默吞（house N/M 诚实制）。
         if (!m) { skipped++; continue; }
@@ -7465,7 +7465,7 @@ async function fixHubRefresh(force) {
         el.querySelector('#so-fixhub-list').textContent = '';
         el.querySelector('#so-fixhub-tags').textContent = '';
         el.querySelector('#so-fixhub-foot').textContent = '';
-        statusEl.textContent = r.reason === 'schema' ? '模板广场格式已更新，请先更新神谕' : '广场暂时连不上';
+        statusEl.textContent = r.reason === 'schema' ? '模板广场格式已更新，请先更新剧情推进' : '广场暂时连不上';
         if (r.reason === 'unreachable') {
             const retry = document.createElement('button');
             retry.type = 'button';
@@ -8445,7 +8445,7 @@ function ensureSoSeqCleanupRegex() {
     if (!Array.isArray(es.regex)) es.regex = [];
     const script = {
         id: SO_SEQ_CLEANUP_ID,
-        scriptName: '故事神谕 · 清除旧状态行',
+        scriptName: '剧情推进 · 清除旧状态行',
         findRegex: '/<so_seq\\b[^>\\r\\n]*>[^<\\r\\n]*<\\/so_seq>/gi',
         replaceString: '', trimStrings: [],
         placement: [1, 2],
@@ -8522,7 +8522,7 @@ function toggleGuidePause() {
     renderPlanBar();
     if (window.toastr) {
         window.toastr.info(path.paused ? '已暂停引导：主聊天先不注入剧情导向，进度都保留，随时点「继续」。' : '已继续引导。',
-            '故事神谕', { timeOut: 2500 });
+            '剧情推进', { timeOut: 2500 });
     }
 }
 
@@ -10445,13 +10445,13 @@ async function maybePostReply(messageId) {
                 // 修改器有意静默——不弹 toast，只留上面这行 console.warn）。
                 if (step === 'diag' && !autoDiagErrorToasted) {
                     autoDiagErrorToasted = true;
-                    try { window.toastr && window.toastr.warning && window.toastr.warning('故事神谕：自动诊断这一轮没跑成（详见控制台）。后续回复会继续尝试。', '自动诊断'); } catch (e2) { /* ignore */ }
+                    try { window.toastr && window.toastr.warning && window.toastr.warning('剧情推进：自动诊断这一轮没跑成（详见控制台）。后续回复会继续尝试。', '自动诊断'); } catch (e2) { /* ignore */ }
                 }
             }
         }
     } finally {
         // 用户中断：给一句确认（abort 发生在写入之前，故这条回复未被改动）。
-        if (postReplyCancelled) { try { window.toastr && window.toastr.info && window.toastr.info('已中断本轮自动处理（未改动这条回复）。', '故事神谕'); } catch (e) { /* ignore */ } }
+        if (postReplyCancelled) { try { window.toastr && window.toastr.info && window.toastr.info('已中断本轮自动处理（未改动这条回复）。', '剧情推进'); } catch (e) { /* ignore */ } }
         try { updateFixVerdict(); } catch (e) { /* 窗口没开等——判定预览行刷新失败无碍（✨ 1.18.0） */ }
         if (activePostReplyRun === run) activePostReplyRun = null;
         postReplyCancelled = false;
@@ -11700,7 +11700,7 @@ async function openMvuEditor(opts) {
     if (!ENABLE_MVU_EDITOR || !win) return;
     const Mvu = await getMvu();
     if (!Mvu || typeof Mvu.getMvuData !== 'function') {
-        try { window.toastr && window.toastr.info && window.toastr.info('未检测到 MVU —— 本聊天没有可编辑的变量。', '故事神谕 · 变量编辑器'); } catch (e) { /* ignore */ }
+        try { window.toastr && window.toastr.info && window.toastr.info('未检测到 MVU —— 本聊天没有可编辑的变量。', '剧情推进 · 变量编辑器'); } catch (e) { /* ignore */ }
         return;
     }
     let data = null;
@@ -14076,7 +14076,7 @@ async function maybeRunSaveHealth(reason) {
             appendNoteToRoom('diagnose', { id: ++cidSeq, role: 'note', content }, info);
         }
         if (d.toast && !(win && win.style.display !== 'none')) {
-            try { window.toastr && window.toastr.warning && window.toastr.warning(`故事神谕：这张卡的存档里有 ${h.total} 处不合规的值，变量更新会一直失败。打开诊断看详情。`, '故事神谕 · 存档检查', { timeOut: 8000 }); } catch (e) { /* ignore */ }
+            try { window.toastr && window.toastr.warning && window.toastr.warning(`剧情推进：这张卡的存档里有 ${h.total} 处不合规的值，变量更新会一直失败。打开诊断看详情。`, '剧情推进 · 存档检查', { timeOut: 8000 }); } catch (e) { /* ignore */ }
         }
         return h;
     } catch (e) {
@@ -14974,7 +14974,7 @@ function toastDiagChatSwitched() {
     try {
         window.toastr && window.toastr.warning && window.toastr.warning(
             '本轮已跳过：诊断期间聊天已切换（未写入，也未留记录）。',
-            '故事神谕 · 自动诊断', { timeOut: 5000 });
+            '剧情推进 · 自动诊断', { timeOut: 5000 });
     } catch (e) { /* toastr 不在就算了 */ }
 }
 
@@ -15002,12 +15002,12 @@ function notifyAutoDiagnose(result, patch, writeBack, opts) {
             window.toastr && window.toastr.success && window.toastr.success(
                 // 分房间后记录（含撤销按钮）在诊断房间——人在别的模式时提示到点上（点诊断按钮即回诊断视图）
                 head + (ENABLE_MODE_ROOMS
-                    ? '可到神谕侧聊的诊断记录里点「撤销」还原（点🩺诊断按钮即达）。'
-                    : '可在神谕侧聊里点「撤销」还原。'),
-                '故事神谕 · 自动诊断', { timeOut: 7000 });
+                    ? '可到剧情推进侧聊的诊断记录里点「撤销」还原（点🩺诊断按钮即达）。'
+                    : '可在剧情推进侧聊里点「撤销」还原。'),
+                '剧情推进 · 自动诊断', { timeOut: 7000 });
         } else if (status === 'nochange' || status === 'verified') {
             window.toastr && window.toastr.info && window.toastr.info(
-                '已检查最新回复，本回合无需改动。', '故事神谕 · 自动诊断', { timeOut: 4000 });
+                '已检查最新回复，本回合无需改动。', '剧情推进 · 自动诊断', { timeOut: 4000 });
         } else if (status === 'stale' && opts && opts.noNote) {
             // FIX 2：noNote = 这一轮【确定不会】留记录（切聊天，见下面那道早退）。原先这里照发通用的
             // stale 文案，末尾却挂着「详情见诊断记录」—— 指着一份根本没写的记录，而用户已经在别的
@@ -15032,7 +15032,7 @@ function notifyAutoDiagnose(result, patch, writeBack, opts) {
                 stale: '本轮已跳过：写入前状态 / 聊天已经变了（未写入）——详情见诊断记录。',
             }[status] || '自动诊断跑完了，但这条更新没能解析 / 应用（已跳过）。';
             window.toastr && window.toastr.warning && window.toastr.warning(
-                msg, '故事神谕 · 自动诊断', { timeOut: 5000 });
+                msg, '剧情推进 · 自动诊断', { timeOut: 5000 });
         }
     } catch (e) { /* toastr 不在就算了 */ }
 
@@ -15090,7 +15090,7 @@ function showAutoDiagGenerating(retry) {
             const msg = retry
                 ? `诊断重试中（第 ${retry.used}/${retry.max} 次）…（点此中断）`   // 文案 Prince 亲选（换序版，2026-08-28）
                 : '正在分析最新回复、生成诊断报告…（点此中断）';
-            return window.toastr.info(msg, '故事神谕 · 自动诊断', { timeOut: 0, extendedTimeOut: 0, tapToDismiss: false, onclick: () => cancelPostReply() });
+            return window.toastr.info(msg, '剧情推进 · 自动诊断', { timeOut: 0, extendedTimeOut: 0, tapToDismiss: false, onclick: () => cancelPostReply() });
         }
     } catch (e) { /* ignore */ }
     return null;
@@ -15410,7 +15410,7 @@ function injectWandButton() {
     item.id = 'so-wand-button';
     item.className = 'list-group-item flex-container flexGap5 interactable';
     item.tabIndex = 0;
-    item.innerHTML = `<i class="fa-solid fa-moon"></i><span>故事神谕</span>`;
+    item.innerHTML = `<i class="fa-solid fa-moon"></i><span>剧情推进</span>`;
     item.addEventListener('click', () => {
         // Just open our window. SillyTavern's own outside-click handler closes
         // the wand menu (our item isn't a no-close target). Do NOT touch
@@ -15459,7 +15459,7 @@ function injectChatBarButton() {
     const btn = document.createElement('div');
     btn.id = 'so-chatbar-button';
     btn.className = 'fa-solid fa-moon interactable';
-    btn.title = '故事神谕 —— 点击开 / 关侧窗';
+    btn.title = '剧情推进 —— 点击开 / 关侧窗';
     btn.tabIndex = 0;
     btn.addEventListener('click', () => toggleWindow());   // 无参 = 切换开 / 关
     bar.appendChild(soMarkEntryLive(btn));
@@ -15536,7 +15536,7 @@ function injectFixSelBarButton() {
         // 静默 no-op 会让人以为按钮坏了，故这里出声。
         const latest = getLatestAiMessage();
         if (!latest || latest.idx < 0) {
-            if (window.toastr) window.toastr.info('还没有可校正的 AI 回复', '故事神谕');
+            if (window.toastr) window.toastr.info('还没有可校正的 AI 回复', '剧情推进');
             return;
         }
         Promise.resolve(onFixChatEntryClick()).catch((err) => console.warn('[Story Oracle] 选段入口点击失败：', err));
@@ -15616,7 +15616,7 @@ function syncChatBarButton() {
     else removeChatBarButton();
 }
 
-// 精简版 1.2：在输入框上方的快捷回复栏（#qr--bar，「柏宝书」「重新处理变量」那一排）放一个「故事神谕」
+// 精简版 1.2：在输入框上方的快捷回复栏（#qr--bar，「柏宝书」「重新处理变量」那一排）放一个「剧情推进」
 // 文字按钮，一键开 / 关窗口。外观全靠酒馆快捷回复自带的 .qr--button 类，而它的样式挂在祖先选择器
 // #qr--bar > .qr--buttons 上，所以按钮必须落在这个结构里：有 #qr--bar 就复用，没有（没装 / 关了快捷
 // 回复）就自建一条同款，打上 so-qr-bar 标记，撤按钮时一并回收。快捷回复在换聊天 / 改设置时会整条
@@ -15648,8 +15648,8 @@ function injectQrButton() {
     btn.id = 'so-qr-button';
     btn.className = 'qr--button menu_button interactable';
     btn.tabIndex = 0;
-    btn.title = '故事神谕 —— 点击开 / 关窗口';
-    btn.textContent = '故事神谕';
+    btn.title = '剧情推进 —— 点击开 / 关窗口';
+    btn.textContent = '剧情推进';
     btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); toggleWindow(); });
     btn.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleWindow(); }
@@ -15718,7 +15718,7 @@ function buildWindow() {
 
     win.innerHTML = `
         <div id="so-header">
-            <div id="so-title"><i class="fa-solid fa-moon"></i> 故事神谕 <span id="so-mode-badge"></span><span id="so-diag-pill">诊断</span><span id="so-lb-pill">世界书</span><span id="so-adv-pill">参谋</span></div>
+            <div id="so-title"><i class="fa-solid fa-moon"></i> 剧情推进 <span id="so-mode-badge"></span><span id="so-diag-pill">诊断</span><span id="so-lb-pill">世界书</span><span id="so-adv-pill">参谋</span></div>
             <div id="so-header-btns">
                 <div class="so-iconbtn" id="so-advisor-btn" title="剧情参谋 —— 构思新剧情走向，并引导主线靠近它"><i class="fa-solid fa-compass"></i></div>
                 <div class="so-iconbtn" id="so-lorebook-btn" title="世界书模式 —— 聊聊或修改世界书"><i class="fa-solid fa-book"></i></div>
@@ -15729,7 +15729,7 @@ function buildWindow() {
                     <div class="so-iconbtn" id="so-tools-btn" aria-haspopup="true" aria-expanded="false" title="更多 —— 剧情概要 / 调试提示词 / 设置"><i class="fa-solid fa-ellipsis"></i></div>
                     <div id="so-tools-menu" aria-label="更多工具">
                         <div class="so-iconbtn so-tools-item" id="so-normalchat-btn" title="回到普通聊天（自动诊断如已开启会继续在后台运行）"><i class="fa-solid fa-comment"></i><span>普通聊天</span></div>
-                        <div class="so-iconbtn so-tools-item" id="so-summary-btn" title="剧情概要 —— 粘贴你的运行总结 / 前情提要，神谕会在最近对话前读到它"><i class="fa-solid fa-scroll"></i><span>剧情概要</span></div>
+                        <div class="so-iconbtn so-tools-item" id="so-summary-btn" title="剧情概要 —— 粘贴你的运行总结 / 前情提要，剧情推进会在最近对话前读到它"><i class="fa-solid fa-scroll"></i><span>剧情概要</span></div>
                         <div class="so-iconbtn so-tools-item" id="so-debug-btn" title="查看上一次发送的提示词"><i class="fa-solid fa-bug"></i><span>调试提示词</span></div>
                         ${ENABLE_CHAR_BUILDER ? '<div class="so-iconbtn so-tools-item" id="so-builder-btn" title="角色工坊 —— 和我一起打造 / 完善一个角色，写进 Persona 或世界书"><i class="fa-solid fa-masks-theater"></i><span>角色工坊</span></div>' : ''}
                         <div class="so-iconbtn so-tools-item" id="so-settings-btn" title="设置"><i class="fa-solid fa-gear"></i><span>设置</span></div>
@@ -15843,7 +15843,7 @@ function buildWindow() {
                 </div>
                 ${ENABLE_BBS_BRIDGE || ENABLE_LWB_BRIDGE ? `<div class="so-set-section">
                     <div class="so-set-title"><i class="fa-solid fa-brain"></i>记忆扩展</div>
-                    ${ENABLE_BBS_BRIDGE ? '<div class="so-opt"><label class="so-check"><input id="so-bbs" type="checkbox"><span>柏宝书的剧情总结</span></label><div class="so-hint">让神谕也记得住早期剧情。需已安装柏宝书（ST-BaiBai-Book）。</div></div>' : ''}
+                    ${ENABLE_BBS_BRIDGE ? '<div class="so-opt"><label class="so-check"><input id="so-bbs" type="checkbox"><span>柏宝书的剧情总结</span></label><div class="so-hint">让剧情推进也记得住早期剧情。需已安装柏宝书（ST-BaiBai-Book）。</div></div>' : ''}
                     ${ENABLE_LWB_BRIDGE ? '<div class="so-opt"><label class="so-check"><input id="so-lwb" type="checkbox"><span>小白X 的剧情总结</span></label><div class="so-hint">需已安装小白X（LittleWhiteBox）并开启其「剧情总结」。</div></div>' : ''}
                 </div>` : ''}
                 <div class="so-set-section">
@@ -15863,7 +15863,7 @@ function buildWindow() {
                         <div class="so-lb-row">
                             <i class="fa-solid fa-book so-lb-icon"></i>
                             <details id="so-wic-bookpick" class="so-lb-bookpick">
-                                <summary id="so-wic-bookpick-sum" title="选择要发给神谕的世界书（可多选；不选＝当前激活的全部）">全部激活的世界书</summary>
+                                <summary id="so-wic-bookpick-sum" title="选择要发给剧情推进的世界书（可多选；不选＝当前激活的全部）">全部激活的世界书</summary>
                                 <div class="so-lb-bookpick-tools">
                                     <button type="button" class="so-lb-mini" id="so-wic-book-all">全选</button>
                                     <button type="button" class="so-lb-mini" id="so-wic-book-none">全不选（＝全部激活）</button>
@@ -15904,7 +15904,7 @@ function buildWindow() {
                         <select id="so-persona"></select>
                         ${ENABLE_CUSTOM_PERSONAS ? '<div class="so-iconbtn" id="so-persona-edit" title="管理自定义人格"><i class="fa-solid fa-pen"></i></div>' : ''}
                     </div>
-                    <div class="so-hint">只改变神谕说话的语气与文采，不改变它的分析职责；参谋 / 世界书 / 角色工坊模式下同样叠加（方案与条目正文的格式不受影响），诊断与校正模式下不生效。选「普通」即不套人格。用了补全预设时，人格叠加在预设之上。</div>
+                    <div class="so-hint">只改变剧情推进说话的语气与文采，不改变它的分析职责；参谋 / 世界书 / 角色工坊模式下同样叠加（方案与条目正文的格式不受影响），诊断与校正模式下不生效。选「普通」即不套人格。用了补全预设时，人格叠加在预设之上。</div>
                     ${ENABLE_CUSTOM_PERSONAS ? `
                     <div id="so-persona-editor" style="display:none">
                         <label class="so-row"><span>选择</span>
@@ -15914,7 +15914,7 @@ function buildWindow() {
                             <input type="text" id="so-pe-name" maxlength="30" placeholder="如：嘻嘻哈哈的损友">
                         </label>
                         <div class="so-pe-field"><span>人格描述</span>
-                            <textarea id="so-pe-voice" rows="5" placeholder="只写性格、态度与说话腔调（例：一个嘻嘻哈哈爱起哄的损友）。职责规则（准确、知无不言）由神谕自带，不用写。"></textarea>
+                            <textarea id="so-pe-voice" rows="5" placeholder="只写性格、态度与说话腔调（例：一个嘻嘻哈哈爱起哄的损友）。职责规则（准确、知无不言）由剧情推进自带，不用写。"></textarea>
                         </div>
                         <div class="so-pe-field"><span>示例对话（可选）</span>
                             <textarea id="so-pe-example" rows="3" placeholder="示例问：……　示例答：……"></textarea>
@@ -15943,7 +15943,7 @@ function buildWindow() {
                 </div>
                 <div class="so-set-section">
                     <div class="so-set-title"><i class="fa-solid fa-pen-to-square"></i>提示词<span class="so-set-title-aside" id="so-prompt-summary"></span></div>
-                    <div class="so-hint">神谕各模式发给模型的每一段文字都在这里。先选分组，再点条目查看或修改；改过的会标出来，随时可以恢复默认。</div>
+                    <div class="so-hint">剧情推进各模式发给模型的每一段文字都在这里。先选分组，再点条目查看或修改；改过的会标出来，随时可以恢复默认。</div>
                     <div class="so-pgroups" id="so-pgroups"></div>
                     <div class="so-plist" id="so-plist"></div>
                     <div class="so-peditor" id="so-peditor" hidden>
@@ -15972,8 +15972,8 @@ function buildWindow() {
                 <div class="so-set-section">
                     <div class="so-set-title"><i class="fa-solid fa-palette"></i>外观与行为</div>
                     <label class="so-field"><span>窗口配色</span><select id="so-window-skin" title="深色 / 浅色为固定配色，不跟随酒馆主题"><option value="dark">深色</option><option value="light">浅色</option><option value="theme">跟随酒馆主题</option></select></label>
-                    <label class="so-check"><input id="so-qr-toggle" type="checkbox"><span>输入框上方的快捷回复栏里放一个「故事神谕」按钮</span></label>
-                    <label class="so-check"><input id="so-chatbar-toggle" type="checkbox"><span>在聊天输入栏放一个 🌙 快捷按钮（一键开 / 关神谕）</span></label>
+                    <label class="so-check"><input id="so-qr-toggle" type="checkbox"><span>输入框上方的快捷回复栏里放一个「剧情推进」按钮</span></label>
+                    <label class="so-check"><input id="so-chatbar-toggle" type="checkbox"><span>在聊天输入栏放一个 🌙 快捷按钮（一键开 / 关剧情推进）</span></label>
                     <label class="so-check"><input id="so-clickout-toggle" type="checkbox"><span>点击窗外自动收起</span></label>
                     <div class="so-opt"><label class="so-check"><input id="so-tools-header-toggle" type="checkbox"><span>把 ⋯ 里的工具按钮移到标题栏</span></label><div class="so-hint">关闭后刷新页面恢复 ⋯ 菜单。</div></div>
                 </div>
@@ -16132,7 +16132,7 @@ function buildWindow() {
                     // 「未保存」标记：fixTplDirty 的唯一可视化（updateFixTplDirtyMarker 是唯一写它的地方）。
                     // 默认 hidden——旗关时这一整段本就不渲染，旗开而不脏时它也不占视觉。
                     + '<span id="so-fixc-dirty" class="so-hint" hidden>未保存</span>'
-                    + '<textarea id="so-fixc-prompt" rows="6" placeholder="只写你要它做的事（例：把正文完整翻译成日文）。输出格式与保留标记由神谕自动附上。"></textarea>'
+                    + '<textarea id="so-fixc-prompt" rows="6" placeholder="只写你要它做的事（例：把正文完整翻译成日文）。输出格式与保留标记由剧情推进自动附上。"></textarea>'
                     + '<label class="so-check so-lb-check"><input id="so-fixc-mech" type="checkbox"><span>沿用校正的正文识别</span></label>'
                     + '<div class="so-hint">开：只处理剧情正文，状态栏、变量块等原样保留。关：整条回复交给模板，输出原样替换。</div>'
                     + '<div class="so-fix-targets-head">保留区 / 丢弃区（本档自己的）</div>'
@@ -16284,7 +16284,7 @@ function buildWindow() {
                     <div class="so-iconbtn" id="so-summary-close" title="关闭"><i class="fa-solid fa-xmark"></i></div>
                 </div>
             </div>
-            <div id="so-summary-sub">粘贴你的运行总结 / 前情提要（比如存在补全预设或别处、神谕本来读不到的剧情梗概）。它随【本聊天】保存，并在【普通聊天】与【剧情参谋】模式下插入到最近对话记录的正前方。留空即不启用。</div>
+            <div id="so-summary-sub">粘贴你的运行总结 / 前情提要（比如存在补全预设或别处、剧情推进本来读不到的剧情梗概）。它随【本聊天】保存，并在【普通聊天】与【剧情参谋】模式下插入到最近对话记录的正前方。留空即不启用。</div>
             <textarea id="so-summary-text" placeholder="在此粘贴剧情概要 / 前情提要…"></textarea>
             <div id="so-summary-foot"><span id="so-summary-count"></span></div>
         </div>
@@ -16293,7 +16293,7 @@ function buildWindow() {
             <div id="so-autowarn-card">
                 <div id="so-autowarn-head"><span class="so-warn-title"><i class="fa-solid fa-triangle-exclamation"></i> 开启自动诊断模式？</span><div class="so-iconbtn so-warn-x" title="关闭"><i class="fa-solid fa-xmark"></i></div></div>
                 <div id="so-autowarn-body">
-                    <p>开启后，每当主聊天收到一条新的 AI 回复，故事神谕都会在后台自动处理它的 MVU 变量，并<strong>自动应用</strong>（无需点击确认，每次都会弹出可撤销提示；窗口关着也照常工作）：</p>
+                    <p>开启后，每当主聊天收到一条新的 AI 回复，剧情推进都会在后台自动处理它的 MVU 变量，并<strong>自动应用</strong>（无需点击确认，每次都会弹出可撤销提示；窗口关着也照常工作）：</p>
                     <p>· 回复里<strong>带有</strong> &lt;UpdateVariable&gt; 更新 → 核验并修正它；<br>· 回复里<strong>没有</strong>更新区块 → 直接据剧情<strong>推导</strong>出本回合应有的变量更新并补上。</p>
                     <p>因此它既能<strong>替代</strong> MVU 的「额外模型解析」，也能在需要时与它配合：外部解析成功后做核验，外部解析失败 / 没有写出有效更新块时接手推导。</p>
                     <p class="so-autowarn-danger">⚠ 若要与「额外模型解析」<strong>同时</strong>使用，请在诊断设置里勾选「⏳ 兼容 MVU『额外模型解析』」。兼容开关会识别完整重试批次并在写入前协调自动校正；不勾时仍按普通自动诊断时序运行，可能与外部解析抢写。</p>
@@ -16690,7 +16690,7 @@ function bindControls() {
     // A6：连接存档（端点 + 密钥 + 模型 + 地址原样开关 + 高级选项与生成参数的命名快照）。列表行上有「使用」「删除」，这里只管存新档。
     win.querySelector('#so-conn-preset-save').addEventListener('click', async () => {
         const name = win.querySelector('#so-conn-preset-name').value.trim();
-        if (!name) { if (window.toastr) window.toastr.info('先给存档起个名字', '故事神谕'); return; }
+        if (!name) { if (window.toastr) window.toastr.info('先给存档起个名字', '剧情推进'); return; }
         // 同名会覆盖：先问一句（改了当前存档想存回去，用存档栏下面的「保存到此存档」更顺手）
         const exists = (getSettings().connPresets || []).some((p) => p.name === name);
         if (exists && !(await uiConfirm(`已经有叫「${name}」的存档了，用现在的连接覆盖它吗？`))) return;
@@ -16756,7 +16756,7 @@ function bindControls() {
         getSettings().toolsInHeader = e.target.checked;
         save();
         if (e.target.checked) applyToolsInHeader();
-        else if (window.toastr) window.toastr.info('已关闭——刷新页面后恢复 ⋯ 工具菜单', '故事神谕');
+        else if (window.toastr) window.toastr.info('已关闭——刷新页面后恢复 ⋯ 工具菜单', '剧情推进');
     });
     // 精简版 1.2：快捷回复栏按钮开关——同样立刻放 / 撤。
     win.querySelector('#so-qr-toggle').addEventListener('change', (e) => {
@@ -17013,7 +17013,7 @@ function bindControls() {
         if (e.target.checked) {
             const st = getSettings();
             const unset = (st.mode === 'direct' && (!st.endpoint || !st.model)) || (st.mode === 'profile' && !st.profileId);
-            if (unset && typeof toastr !== 'undefined') toastr.warning(fixEnvNote('connectionUnset'), '故事神谕 · 自动校正', { timeOut: 8000 });
+            if (unset && typeof toastr !== 'undefined') toastr.warning(fixEnvNote('connectionUnset'), '剧情推进 · 自动校正', { timeOut: 8000 });
         }
         updateFixVerdict();
         renderFixConfigWarnings();
@@ -17516,7 +17516,7 @@ function saveToActiveConnPreset() {
     s.connPresets = connPresetUpsert(s.connPresets, { ...connPresetSnapshot(s), name: p.name });
     save();
     updateBadge();
-    if (window.toastr) window.toastr.success(`已保存到「${p.name}」${s.model ? `（${s.model}）` : ''}`, '故事神谕', { timeOut: 1800 });
+    if (window.toastr) window.toastr.success(`已保存到「${p.name}」${s.model ? `（${s.model}）` : ''}`, '剧情推进', { timeOut: 1800 });
     return true;
 }
 // 当前连接改过、还没存回存档时，切换会把改动冲掉——先问一句。
@@ -17566,7 +17566,7 @@ async function switchConnPreset(name) {
     if (!(await confirmDiscardConnEdits())) return;
     if (!applyConnPreset(name)) return;
     const p = (getSettings().connPresets || []).find((x) => x.name === name);
-    if (window.toastr) window.toastr.info(`已切换到「${name}」${p && p.model ? `（${p.model}）` : ''}`, '故事神谕', { timeOut: 1800 });
+    if (window.toastr) window.toastr.info(`已切换到「${name}」${p && p.model ? `（${p.model}）` : ''}`, '剧情推进', { timeOut: 1800 });
 }
 
 // 设置「连接」页的存档选择：平时只占一行（当前在用的存档）；点开后在它下面【浮出】一个弹出框，盖在
@@ -17590,13 +17590,13 @@ function updateWiHint() {
     if (!hint) return;
     const mode = win.querySelector('#so-wi').value;
     if (mode === 'st') {
-        hint.textContent = '像主提示词一样扫描聊天：蓝色（常驻）条目始终注入，绿色（关键词）条目在其关键词匹配时注入。神谕侧聊最近几条问答（按世界书「扫描深度」）同样参与匹配。';
+        hint.textContent = '像主提示词一样扫描聊天：蓝色（常驻）条目始终注入，绿色（关键词）条目在其关键词匹配时注入。剧情推进侧聊最近几条问答（按世界书「扫描深度」）同样参与匹配。';
     } else if (mode === 'all') {
         hint.textContent = '无视关键词，发送所有已启用的世界书条目。适合做规划，但可能会消耗大量 token。';
     } else if (mode === 'char') {
-        hint.textContent = '只扫描角色相关世界书（角色卡内嵌 + 角色绑定 + 本对话绑定），排除全局与人设世界书；蓝灯常驻 + 绿灯关键词匹配照常（含神谕侧聊最近问答）。';
+        hint.textContent = '只扫描角色相关世界书（角色卡内嵌 + 角色绑定 + 本对话绑定），排除全局与人设世界书；蓝灯常驻 + 绿灯关键词匹配照常（含剧情推进侧聊最近问答）。';
     } else if (mode === 'custom') {
-        hint.textContent = '神谕读世界书时只用你在下方勾选的条目——无视关键词与启用 / 禁用状态（开了混合模式会再加上已选书里当前触发的绿灯）。选择按【本聊天】记忆；一本书第一次进入范围时会按当前激活情况预选一份。变量规则条目（[mvu_update]）只喂诊断，这里不列出；token 估算不含混合模式追加与 EJS 展开。';
+        hint.textContent = '剧情推进读世界书时只用你在下方勾选的条目——无视关键词与启用 / 禁用状态（开了混合模式会再加上已选书里当前触发的绿灯）。选择按【本聊天】记忆；一本书第一次进入范围时会按当前激活情况预选一份。变量规则条目（[mvu_update]）只喂诊断，这里不列出；token 估算不含混合模式追加与 EJS 展开。';
     } else {
         hint.textContent = '';
     }
@@ -18106,7 +18106,7 @@ function applySysPromptPresetUiState() {
     hint.classList.remove('so-hint-error');
     if (jbOn) {
         hint.textContent = `已启用内置破限「初心破限 1.2」（作者：${BUILTIN_JB_AUTHOR}）。`
-            + `它【包裹】在故事神谕自己的提示词外面，而不是替换——下方文本框照常生效。`
+            + `它【包裹】在剧情推进自己的提示词外面，而不是替换——下方文本框照常生效。`
             + `默认只作用于【普通聊天】；世界书 / 参谋 / 工坊访谈 / 校正 / 诊断 需各自在其设置里勾选「经自定义补全预设」才会套用。`
             + `随时可在此下拉换回「自定义」或你自己的预设。`;
         return;
@@ -18114,7 +18114,7 @@ function applySysPromptPresetUiState() {
     if (!active) {
         const have = getCompletionPresetNames().length;
         hint.textContent = have
-            ? '选择一个补全预设并挑选要保留的块；故事神谕会按预设的原始结构（角色卡 / 世界书 / 上下文插槽 + 各块角色）忠实组装。选「自定义」则使用下方文本框。'
+            ? '选择一个补全预设并挑选要保留的块；剧情推进会按预设的原始结构（角色卡 / 世界书 / 上下文插槽 + 各块角色）忠实组装。选「自定义」则使用下方文本框。'
             : '未找到已保存的补全预设。请先在 ST 的“预设”里保存一个，然后点刷新。';
         return;
     }
@@ -18383,7 +18383,7 @@ function openCuration(name, seedRows) {
             </div>
         </div>`;
     modal.querySelector('#so-cur-sub').textContent =
-        `预设「${name}」 — 列出预设里的全部块（含预设已停用的，标「预设已停用」、默认不勾选）。勾选的块会按下方顺序忠实组装；插槽（角色卡 / 世界书 / 用户人设 / 上下文）会就地填入神谕的上下文。拖动可调整顺序。`;
+        `预设「${name}」 — 列出预设里的全部块（含预设已停用的，标「预设已停用」、默认不勾选）。勾选的块会按下方顺序忠实组装；插槽（角色卡 / 世界书 / 用户人设 / 上下文）会就地填入剧情推进的上下文。拖动可调整顺序。`;
 
     // One-time heads-up about the output-regex / preset-mismatch caveat.
     maybeShowCurationWarning(modal, name);
@@ -18453,9 +18453,9 @@ function maybeShowCurationWarning(modal, name) {
         'font-size:0.78em;line-height:1.55;color:#f0d28a;' +
         'background:rgba(242,201,76,0.12);border:1px solid rgba(242,201,76,0.35);';
     warn.innerHTML =
-        '⚠️ 选用预设时，神谕会用<b>你在这里挑选的这个预设</b>来组装提示词，并用你启用的正则清理它的回复。' +
+        '⚠️ 选用预设时，剧情推进会用<b>你在这里挑选的这个预设</b>来组装提示词，并用你启用的正则清理它的回复。' +
         '这些正则是按<b>主聊天的输出格式</b>写的——如果这里挑选的预设和主聊天当前启用的预设不一样，' +
-        `正则可能匹配不上神谕的输出、清理不会生效。${tail}`;
+        `正则可能匹配不上剧情推进的输出、清理不会生效。${tail}`;
     card.insertBefore(warn, list);
 
     s.curationWarned = true;
@@ -19860,7 +19860,7 @@ function ensurePlanFloat() {
             <span class="so-plan-float-title">剧情引导</span>
             <span class="so-plan-spacer"></span>
             <div class="so-iconbtn" id="so-plan-float-collapse" title="收起成小标签 / 展开"><i class="fa-solid fa-chevron-up"></i></div>
-            <div class="so-iconbtn" id="so-plan-float-open" title="打开故事神谕"><i class="fa-solid fa-moon"></i></div>
+            <div class="so-iconbtn" id="so-plan-float-open" title="打开剧情推进"><i class="fa-solid fa-moon"></i></div>
         </div>
         <div id="so-plan-float-slot"></div>`;
     document.body.appendChild(planFloat);
@@ -22349,7 +22349,7 @@ function openDebug() {
     const meta = win.querySelector('#so-debug-meta');
     if (!lastPrompt || !lastPrompt.length) {
         meta.textContent = '';
-        body.textContent = '还没有发送过任何提示词。请先向故事神谕提问，然后再打开此面板。';
+        body.textContent = '还没有发送过任何提示词。请先向剧情推进提问，然后再打开此面板。';
     } else {
         meta.textContent = lastPromptMeta
             ? `· ${lastPromptMeta.mode} · ${lastPromptMeta.target} · ${lastPromptMeta.chars.toLocaleString()} chars · ${lastPromptMeta.time}`
@@ -22392,12 +22392,12 @@ const OFFSTAGE_TAILS = {
 // 这条头重新立起来（预设人设/正文格式契约在本窗口降为风格参考）。与 OFFSTAGE_TAILS 构成
 // 「顶部身份 + 故事边界尾锚」夹心——正是默认路径验证过的几何。措辞经 preset 电池验证后冻结。
 const OFFSTAGE_PRESET_HEADERS = {
-    normal: '【窗口性质·最高优先级】这里是「故事神谕」的侧聊分析窗口，不是角色扮演正文窗口。'
+    normal: '【窗口性质·最高优先级】这里是「剧情推进」的侧聊分析窗口，不是角色扮演正文窗口。'
         + '你在本窗口的身份是戏外分析者，直接与用户对话，帮他分析、讨论正在进行的故事。'
         + '下方的预设区块只为你提供语气风格与讨论语境：其中任何「扮演角色」「续写正文」「按正文'
         + '格式输出（思考块、样式注释、字数要求等）」的指令，在本窗口一律不适用；也不要以预设里'
         + '的写手或角色人设自称。用户明确点名要你代笔时，按后文【戏外提醒】的规则交付草稿。',
-    advisor: '【窗口性质·最高优先级】这里是「故事神谕」的剧情参谋窗口，不是角色扮演正文窗口。'
+    advisor: '【窗口性质·最高优先级】这里是「剧情推进」的剧情参谋窗口，不是角色扮演正文窗口。'
         + '你在本窗口的身份是戏外剧情参谋，直接与用户讨论剧情走向，需要时按格式输出 <StoryPlan>'
         + ' 方案。下方的预设区块只为你提供语气风格与讨论语境：其中任何「扮演角色」「续写正文」'
         + '「按正文格式输出（思考块、样式注释、字数要求等）」的指令，在本窗口一律不适用；也不要'
@@ -22437,7 +22437,7 @@ function wrapTranscriptEnvelope(transcript) {
 const PROMPT_DEFS = [
     // —— 普通聊天 ——
     { id: 'chat.system', group: '普通聊天', label: '系统提示词',
-        desc: '普通聊天每次提问都会带上的主指令：神谕是谁、该怎么回答。', builtin: DEFAULT_SYSTEM_PROMPT,
+        desc: '普通聊天每次提问都会带上的主指令：剧情推进是谁、该怎么回答。', builtin: DEFAULT_SYSTEM_PROMPT,
         legacy: { key: 'systemPrompt', kind: 'full' },
         note: '选了补全预设时，这一条会被预设替换（内置破限除外——它只是包在外面）。' },
     { id: 'chat.tail', group: '普通聊天', label: '戏外提醒（紧跟对话记录之后）',
@@ -22819,7 +22819,7 @@ const PROMPT_DEFS = [
         vars: { wi: '世界书条目正文' }, required: ['wi'] },
     { id: 'ctx.world', group: '上下文段落', label: '其它扩展的世界信息段',
         desc: '其它扩展（如世界引擎）提供的后台世界状态。',
-        builtin: '=== 其它扩展维护的世界信息（由扩展系统提供，是主聊天之外、神谕本来看不到的后台世界状态——'
+        builtin: '=== 其它扩展维护的世界信息（由扩展系统提供，是主聊天之外、剧情推进本来看不到的后台世界状态——'
             + '可据此回答与剧情世界相关的问题；其中的数值若与上方 MVU stat_data 冲突，以 stat_data 为准）===\n{%world%}',
         vars: { world: '各扩展提供的世界信息' }, required: ['world'] },
     { id: 'ctx.summary', group: '上下文段落', label: '剧情概要段',
@@ -22893,7 +22893,7 @@ function promptOverrides(s) {
 // 未渲染的提示词原文：用户覆盖 → 否则内置。旧键各按原版语义读。
 function promptRaw(id, s = getSettings()) {
     const d = promptDef(id);
-    if (!d) { console.error('[故事神谕·二创版] 未登记的提示词：', id); return ''; }
+    if (!d) { console.error('[剧情推进] 未登记的提示词：', id); return ''; }
     const lg = d.legacy;
     if (lg) {
         const v = s ? s[lg.key] : undefined;
@@ -23751,7 +23751,7 @@ function renderReplyHtml(text) {
     const ctx = getCtx();
     try {
         if (typeof ctx.messageFormatting === 'function') {
-            const html = ctx.messageFormatting(String(text || ''), ctx.name2 || '故事神谕', false, false, null);
+            const html = ctx.messageFormatting(String(text || ''), ctx.name2 || '剧情推进', false, false, null);
             if (typeof html === 'string' && html) return html;
         }
     } catch (e) {
@@ -26576,7 +26576,7 @@ async function runFixByTargetsPieces(s) {
 function showAutoFixGenerating() {
     try {
         if (window.toastr && window.toastr.info) {
-            return window.toastr.info('正在校正最新回复…（点此中断）', '故事神谕 · 自动校正', { timeOut: 0, extendedTimeOut: 0, tapToDismiss: false, onclick: () => cancelPostReply() });
+            return window.toastr.info('正在校正最新回复…（点此中断）', '剧情推进 · 自动校正', { timeOut: 0, extendedTimeOut: 0, tapToDismiss: false, onclick: () => cancelPostReply() });
         }
     } catch (e) { /* ignore */ }
     return null;
@@ -26614,7 +26614,7 @@ function emitPieceAsk(dec) {
             const body = wrappedTag
                 ? `✨校正需要确认一次：我认为这张卡的正文包在 <${wrappedTag}> 里（约 ${p.prose | 0} 字；${p.guards | 0} 块结构将原样保留）——点此确认`
                 : `✨校正需要确认一次：这张卡没有正文包裹标签，我认为正文是【标签之外的散文】（约 ${p.prose | 0} 字；${p.guards | 0} 块结构将原样保留）——点此确认`;
-            window.toastr.info(body, '故事神谕 · 自动校正',
+            window.toastr.info(body, '剧情推进 · 自动校正',
                 { timeOut: 20000, extendedTimeOut: 20000, onclick: () => (wrappedTag ? confirmPieceWrapped(wrappedTag) : confirmPieceBare()) });
         }
     } catch (e) { /* ignore */ }
@@ -26633,7 +26633,7 @@ function emitPiecePending(dec) {
             const body = wrappedTag
                 ? `✨校正等你确认一次：我认为这张卡的正文包在 <${wrappedTag}> 里（约 ${p.prose | 0} 字；${p.guards | 0} 块结构原样保留）——点此确认后开始自动校正`
                 : `✨校正等你确认一次：这张卡的正文是【标签之外的散文】（约 ${p.prose | 0} 字；${p.guards | 0} 块结构原样保留）——点此确认后开始自动校正`;
-            window.toastr.info(body, '故事神谕 · 自动校正',
+            window.toastr.info(body, '剧情推进 · 自动校正',
                 { timeOut: 12000, extendedTimeOut: 12000, onclick: () => (wrappedTag ? confirmPieceWrapped(wrappedTag) : confirmPieceBare()) });
         }
     } catch (e) { /* ignore */ }
@@ -26643,7 +26643,7 @@ function emitPiecePending(dec) {
 // 用户确认「正文是散文」：按聊天记住 bare（confirm-once 的 remember 半步）。
 function confirmPieceBare() {
     setFixCfg({ fixA_pieceMode: 'bare' });
-    try { window.toastr && window.toastr.success && window.toastr.success('已确认：之后自动校正只改【标签之外的散文】，结构块原样保留。', '故事神谕 · 自动校正'); } catch (e) { /* ignore */ }
+    try { window.toastr && window.toastr.success && window.toastr.success('已确认：之后自动校正只改【标签之外的散文】，结构块原样保留。', '剧情推进 · 自动校正'); } catch (e) { /* ignore */ }
     updateFixVerdict();
     updateFixButtonVisual();   // ✨ 确认 → pending 琥珀清除、转正常金
 }
@@ -26653,7 +26653,7 @@ function confirmPieceWrapped(tag) {
     setFixCfg({ fixA_pieceMode: 'wrapped', fixA_scopeTag: tag, fixA_scopeManual: false });
     const scopeEl = win && win.querySelector('#so-fix-scope');
     if (scopeEl) scopeEl.value = tag;
-    try { window.toastr && window.toastr.success && window.toastr.success(`已确认：之后自动校正只改 <${tag}> 里的正文，标签外与内嵌结构块原样保留。`, '故事神谕 · 自动校正'); } catch (e) { /* ignore */ }
+    try { window.toastr && window.toastr.success && window.toastr.success(`已确认：之后自动校正只改 <${tag}> 里的正文，标签外与内嵌结构块原样保留。`, '剧情推进 · 自动校正'); } catch (e) { /* ignore */ }
     updateFixVerdict();
     updateFixButtonVisual();   // ✨ 确认 → pending 琥珀清除、转正常金
 }
@@ -26875,7 +26875,7 @@ async function fixLandOrPark(payload, opts) {
     if (!st.stale) { await fixLandResult(payload); return 'landed'; }
     if (st.reason === 'chatSwitched' && cap) {
         fixParkPut(fixParked, cap.chatId, { ...payload, captured: cap, at: Date.now() });
-        try { window.toastr && window.toastr.info && window.toastr.info('结果已暂存，回到原聊天时自动落地', '故事神谕'); } catch (e) { /* ignore */ }
+        try { window.toastr && window.toastr.info && window.toastr.info('结果已暂存，回到原聊天时自动落地', '剧情推进'); } catch (e) { /* ignore */ }
         return 'parked';
     }
     addAutoFixNote('stale', st.reason, null, payload.meta || null);
@@ -28118,7 +28118,7 @@ function addMessage(role, content, entry) {
     }
     if (entry) wrap.dataset.cid = entry.id;
     const icon = role === 'user' ? 'fa-user' : 'fa-moon';
-    const label = role === 'user' ? '你' : '神谕';
+    const label = role === 'user' ? '你' : '剧情推进';
 
     const copyBtn = role === 'assistant'
         ? `<button class="so-msg-btn so-copy-btn" type="button" title="复制" aria-label="复制此回复"><i class="fa-solid fa-copy"></i></button>`
@@ -29495,7 +29495,7 @@ function downloadTextFile(filename, text) {
         return true;
     } catch (e) {
         console.error('[Story Oracle] 导出对话失败', e);
-        window.toastr && window.toastr.error && window.toastr.error('导出失败——浏览器拒绝了这次下载。', '故事神谕');
+        window.toastr && window.toastr.error && window.toastr.error('导出失败——浏览器拒绝了这次下载。', '剧情推进');
         return false;
     }
 }
@@ -29521,7 +29521,7 @@ function exportConvo() {
     // 不允许导出的模式下气泡按钮本就被扫成隐藏；这里再挡一道（键盘等也可能触发）。⚠ 不静默 return——
     // 「点了什么都没发生」是最难报障的一类 bug，跟空房分支一样给一句话。
     if (!convoExportAllowed(mode)) {
-        window.toastr && window.toastr.info && window.toastr.info('导出对话只在普通聊天和剧情参谋里可用。', '故事神谕');
+        window.toastr && window.toastr.info && window.toastr.info('导出对话只在普通聊天和剧情参谋里可用。', '剧情推进');
         return;
     }
     const modeLabel = mode === 'advisor' ? '剧情参谋' : '普通聊天';
@@ -29529,7 +29529,7 @@ function exportConvo() {
     const t = soExportTimeParts(new Date());
     const md = buildConvoExportMd(convo, { modeLabel, chatName, when: t.when });
     if (!md) {
-        window.toastr && window.toastr.info && window.toastr.info('本页还没有对话，先聊两句再导出～', '故事神谕');
+        window.toastr && window.toastr.info && window.toastr.info('本页还没有对话，先聊两句再导出～', '剧情推进');
         return;
     }
     downloadTextFile(buildConvoExportFileName(modeLabel, chatName, t.stamp), md);
@@ -29595,21 +29595,21 @@ function soConvoImportInput() {
 function importConvo() {
     // 与导出同一道模式闸；拦下时不静默（「点了没反应」最难报障）。
     if (!convoExportAllowed(currentOracleMode())) {
-        window.toastr && window.toastr.info && window.toastr.info('导入对话只在普通聊天和剧情参谋里可用。', '故事神谕');
+        window.toastr && window.toastr.info && window.toastr.info('导入对话只在普通聊天和剧情参谋里可用。', '剧情推进');
         return;
     }
     if (isGenerating) {
-        window.toastr && window.toastr.info && window.toastr.info('还有回复正在生成，等它跑完再导入～', '故事神谕');
+        window.toastr && window.toastr.info && window.toastr.info('还有回复正在生成，等它跑完再导入～', '剧情推进');
         return;
     }
     if (!getChatMetadataSafe()) {
-        window.toastr && window.toastr.info && window.toastr.info('请先打开一个聊天，导入的对话要存进这个聊天里。', '故事神谕');
+        window.toastr && window.toastr.info && window.toastr.info('请先打开一个聊天，导入的对话要存进这个聊天里。', '剧情推进');
         return;
     }
     try { soConvoImportInput().click(); }
     catch (e) {
         console.error('[Story Oracle] 打开文件选择器失败', e);
-        window.toastr && window.toastr.error && window.toastr.error('打不开文件选择器。', '故事神谕');
+        window.toastr && window.toastr.error && window.toastr.error('打不开文件选择器。', '剧情推进');
     }
 }
 
@@ -29626,16 +29626,16 @@ async function soImportConvoFile(file) {
     try { text = await soReadTextFile(file); }
     catch (e) {
         console.error('[Story Oracle] 读取导入文件失败', e);
-        window.toastr && window.toastr.error && window.toastr.error('读不了这个文件。', '故事神谕');
+        window.toastr && window.toastr.error && window.toastr.error('读不了这个文件。', '剧情推进');
         return;
     }
     if (!stillHere()) {
-        window.toastr && window.toastr.info && window.toastr.info('选文件期间换了模式 / 聊天，本次导入已取消。', '故事神谕');
+        window.toastr && window.toastr.info && window.toastr.info('选文件期间换了模式 / 聊天，本次导入已取消。', '剧情推进');
         return;
     }
     const parsed = parseConvoExportMd(text);
     if (!parsed || !parsed.turns.length) {
-        window.toastr && window.toastr.error && window.toastr.error('这不是故事神谕导出的对话文件——一条对话都没读到。', '故事神谕');
+        window.toastr && window.toastr.error && window.toastr.error('这不是剧情推进导出的对话文件——一条对话都没读到。', '剧情推进');
         return;
     }
     const have = convoForPrompt(convo).length;
@@ -29643,7 +29643,7 @@ async function soImportConvoFile(file) {
         const ok = await uiConfirm(`当前页已有 ${have} 条对话：导入的 ${parsed.turns.length} 条会接在后面（不会覆盖）。继续吗？`);
         if (!ok) return;
         if (!stillHere()) {
-            window.toastr && window.toastr.info && window.toastr.info('确认期间换了模式 / 聊天，本次导入已取消。', '故事神谕');
+            window.toastr && window.toastr.info && window.toastr.info('确认期间换了模式 / 聊天，本次导入已取消。', '剧情推进');
             return;
         }
     }
@@ -29653,7 +29653,7 @@ async function soImportConvoFile(file) {
     // （parsed.skipped）＋ 落地时被挡掉的条（角色 / 类型不合法）都要报出来，绝不静默少几条。
     const dropped = (Number(parsed.skipped) || 0) + (parsed.turns.length - n);
     const msg = dropped > 0 ? `已导入 ${n} 条对话（${dropped} 段无法识别、已跳过）。` : `已导入 ${n} 条对话。`;
-    window.toastr && window.toastr.success && window.toastr.success(msg, '故事神谕');
+    window.toastr && window.toastr.success && window.toastr.success(msg, '剧情推进');
 }
 
 // 把解析出来的轮次落成【真侧聊条目】并重画。渲染刻意不自己搭气泡：写进 convo + 落盘之后直接调
@@ -29671,7 +29671,7 @@ function appendImportedConvoTurns(turns) {
     if (!n) return 0;
     if (!persistConvo()) {           // 元数据写不进去（没打开聊天）→ 撤回，绝不留下只在屏幕上的假历史
         convo.splice(convo.length - n, n);
-        window.toastr && window.toastr.error && window.toastr.error('无法保存到本聊天，导入已撤销。', '故事神谕');
+        window.toastr && window.toastr.error && window.toastr.error('无法保存到本聊天，导入已撤销。', '剧情推进');
         return 0;
     }
     loadConvoForChat();              // 与重载 / 换房同源的整页重画（末尾自带 scrollToBottom）
