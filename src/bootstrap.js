@@ -153,6 +153,12 @@ export function init() {
             storage: getHostStorage(),
         });
         if (globalMigration.changed && typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+        if (globalMigration.movedLegacySettings) {
+            // 原版若已启用，它手里还握着迁移前的旧设置对象；刷新一次让两边各自重新读取。
+            getHostGlobal('toastr')?.info(
+                '已把旧版设置迁移到剧情推进自己的存储位置。如果同时启用了原版「故事神谕」，请刷新一次页面，让两边各自重新读取设置。',
+                '剧情推进', { timeOut: 0, extendedTimeOut: 0 });
+        }
         if (migrateChatNamespace(ctx.chatMetadata)) {
             const persistMetadata = ctx.saveMetadataDebounced || ctx.saveMetadata;
             if (typeof persistMetadata === 'function') persistMetadata.call(ctx);

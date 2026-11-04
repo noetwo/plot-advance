@@ -21,15 +21,28 @@ function fakeStorage(entries = []) {
     };
 }
 
-test('全局迁移移动旧设置对象、删除旧键并保留原引用', () => {
+test('全局迁移搬走旧设置、删除旧键，新设置是独立副本', () => {
     const legacy = { endpoint: 'https://example.test', nested: { value: 1 } };
     const extensionSettings = { storyOracle: legacy };
 
-    assert.deepEqual(migrateGlobalNamespace({ extensionSettings, storage: null }), { changed: true });
+    assert.deepEqual(migrateGlobalNamespace({ extensionSettings, storage: null }), { changed: true, movedLegacySettings: true });
     assert.equal(extensionSettings.storyOracle, undefined);
-    assert.strictEqual(extensionSettings.plotAdvance, legacy);
-    assert.strictEqual(extensionSettings.plotAdvance.nested, legacy.nested);
-    assert.equal(extensionSettings.plotAdvance._namespaceMigrated, 1);
+    const { _namespaceMigrated, ...moved } = extensionSettings.plotAdvance;
+    assert.equal(_namespaceMigrated, 1);
+    assert.deepEqual(moved, legacy);
+});
+
+test('两者都已启用时首次迁移：原版缓存的旧设置对象与新设置隔离', () => {
+    const legacy = { model: 'shared-model', nested: { value: 1 } };
+    const extensionSettings = { storyOracle: legacy };
+    const originalCachedSettings = extensionSettings.storyOracle;   // 原版 bindControls 先于我们缓存
+
+    migrateGlobalNamespace({ extensionSettings, storage: null });
+    originalCachedSettings.model = 'edited-in-original';
+    originalCachedSettings.nested.value = 2;
+
+    assert.equal(extensionSettings.plotAdvance.model, 'shared-model');
+    assert.equal(extensionSettings.plotAdvance.nested.value, 1);
 });
 
 test('全局迁移标记使第二次调用彻底无操作', () => {
@@ -43,7 +56,7 @@ test('全局迁移标记使第二次调用彻底无操作', () => {
     extensionSettings.regex.push(rebuiltRegex);
     storage.setItem('so.settings.tab', 'second');
 
-    assert.deepEqual(migrateGlobalNamespace({ extensionSettings, storage }), { changed: false });
+    assert.deepEqual(migrateGlobalNamespace({ extensionSettings, storage }), { changed: false, movedLegacySettings: false });
     assert.strictEqual(extensionSettings.storyOracle, rebuiltLegacy);
     assert.strictEqual(extensionSettings.regex[0], rebuiltRegex);
     assert.equal(storage.getItem('so.settings.tab'), 'second');
@@ -54,7 +67,7 @@ test('设置已迁移过时，另一个浏览器的 localStorage 仍迁移一次
     const extensionSettings = { plotAdvance: { _namespaceMigrated: 1 } };
     const secondBrowser = fakeStorage([['so.fixsel.mode', 'tap']]);
 
-    assert.deepEqual(migrateGlobalNamespace({ extensionSettings, storage: secondBrowser }), { changed: false });
+    assert.deepEqual(migrateGlobalNamespace({ extensionSettings, storage: secondBrowser }), { changed: false, movedLegacySettings: false });
     assert.equal(secondBrowser.getItem('so.fixsel.mode'), null);
     assert.equal(secondBrowser.getItem('pad.fixsel.mode'), 'tap');
 
@@ -69,7 +82,7 @@ test('已有新设置不会被旧设置覆盖或触发旧键删除', () => {
     const legacy = { endpoint: 'old' };
     const extensionSettings = { plotAdvance: current, storyOracle: legacy };
 
-    assert.deepEqual(migrateGlobalNamespace({ extensionSettings }), { changed: true });
+    assert.deepEqual(migrateGlobalNamespace({ extensionSettings }), { changed: true, movedLegacySettings: false });
     assert.strictEqual(extensionSettings.plotAdvance, current);
     assert.strictEqual(extensionSettings.storyOracle, legacy);
     assert.equal(current.endpoint, 'new');
@@ -144,12 +157,15 @@ test('聊天迁移移动全部自有键和动态 convo 键，保留旧协议键�
     assert.equal(chatMetadata.plotAdvance_migrated, 1);
     for (const suffix of suffixes) {
         assert.equal(Object.hasOwn(chatMetadata, `storyOracle_${suffix}`), false);
-        assert.strictEqual(chatMetadata[`plotAdvance_${suffix}`], references.get(suffix));
+        assert.deepEqual(chatMetadata[`plotAdvance_${suffix}`], references.get(suffix));
     }
     for (const suffix of untouchedSuffixes) {
         assert.equal(chatMetadata[`storyOracle_${suffix}`], `keep-${suffix}`);
         assert.equal(Object.hasOwn(chatMetadata, `plotAdvance_${suffix}`), false);
     }
+
+    references.get('convo').suffix = 'edited-in-original';   // 原版手里的旧引用继续被改
+    assert.equal(chatMetadata.plotAdvance_convo.suffix, 'convo');
 });
 
 test('聊天迁移第二次调用无操作，null 元数据直接返回 false', () => {
@@ -157,10 +173,10 @@ test('聊天迁移第二次调用无操作，null 元数据直接返回 false', 
     const chatMetadata = { storyOracle_summary: moved };
 
     assert.equal(migrateChatNamespace(chatMetadata), true);
-    assert.strictEqual(chatMetadata.plotAdvance_summary, moved);
+    assert.deepEqual(chatMetadata.plotAdvance_summary, ['original-content']);
     chatMetadata.storyOracle_summary = ['rebuilt-content'];
     assert.equal(migrateChatNamespace(chatMetadata), false);
     assert.deepEqual(chatMetadata.storyOracle_summary, ['rebuilt-content']);
-    assert.strictEqual(chatMetadata.plotAdvance_summary, moved);
+    assert.deepEqual(chatMetadata.plotAdvance_summary, ['original-content']);
     assert.equal(migrateChatNamespace(null), false);
 });

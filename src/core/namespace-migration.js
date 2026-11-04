@@ -59,18 +59,22 @@ function migrateStorage(storage) {
 
 export function migrateGlobalNamespace({ extensionSettings, storage } = {}) {
     migrateStorage(storage);
-    if (!isObject(extensionSettings)) return { changed: false };
+    if (!isObject(extensionSettings)) return { changed: false, movedLegacySettings: false };
 
     const current = extensionSettings[NEW_SETTINGS_KEY];
-    if (isObject(current) && current[MIGRATION_MARKER]) return { changed: false };
+    if (isObject(current) && current[MIGRATION_MARKER]) return { changed: false, movedLegacySettings: false };
 
     let target = current;
+    let movedLegacySettings = false;
     if (!isObject(target)) {
         const legacy = extensionSettings[OLD_SETTINGS_KEY];
         if (isObject(legacy)) {
-            target = legacy;
+            // 必须深拷贝：原版若已同时启用，它在我们之前初始化，控件闭包里缓存着这个旧对象并会继续往里写；
+            // 按引用挪过来，它的改动就会写进剧情推进的设置。
+            target = structuredClone(legacy);
             extensionSettings[NEW_SETTINGS_KEY] = target;
             delete extensionSettings[OLD_SETTINGS_KEY];
+            movedLegacySettings = true;
         } else {
             target = {};
             extensionSettings[NEW_SETTINGS_KEY] = target;
@@ -84,7 +88,7 @@ export function migrateGlobalNamespace({ extensionSettings, storage } = {}) {
             if (extensionSettings.regex[i]?.id === OLD_REGEX_ID) extensionSettings.regex.splice(i, 1);
         }
     }
-    return { changed: true };
+    return { changed: true, movedLegacySettings };
 }
 
 export function migrateChatNamespace(chatMetadata) {
@@ -98,7 +102,8 @@ export function migrateChatNamespace(chatMetadata) {
         if (!CHAT_SUFFIXES.has(suffix) && !suffix.startsWith('convo')) continue;
 
         const newKey = newPrefix + suffix;
-        if (!Object.hasOwn(chatMetadata, newKey)) chatMetadata[newKey] = chatMetadata[oldKey];
+        // 深拷贝同上：原版可能正持有这份元数据值的引用。
+        if (!Object.hasOwn(chatMetadata, newKey)) chatMetadata[newKey] = structuredClone(chatMetadata[oldKey]);
         delete chatMetadata[oldKey];
     }
 
