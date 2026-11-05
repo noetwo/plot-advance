@@ -299,6 +299,12 @@ export const PROMPT_DEFS = [
         + '图片生成提示等。默认把它们连同内部内容【原样逐字保留】，不要改写、精简、翻译或删除，也不要改动其位置。'
         + '【例外·用户指令优先】若用户的修改要求明确指向某个结构块内部的内容，则以用户要求为准、按要求改那一处；'
         + '其余结构块仍原样保留。' },
+    { id: 'fix.variableTextNote', group: '校正', label: '整条校正 · 变量更新块文字例外',
+        desc: '正文标签留空且处理最新一楼时附上：只准改变量摘要和 JSONPatch 的字符串值。',
+        builtin: '【变量更新块例外·硬性】<text_to_transform> 里的变量更新块也要按本次要求处理，但只能改两类文字：'
+        + '<Analysis>（或 <update_analysis>）内的摘要，以及 <JSONPatch>（或 <json_patch>）每条操作中字符串类型的 value。'
+        + '条目数量、op、path、from、所有非字符串 value、标签与其它内容都不得改动；_.set 行必须逐字保留。'
+        + '必须保留完整变量更新块并保持 JSON 合法、结构不变；即使其它结构块规则或用户要求与此冲突，也以本条限制为准。' },
     { id: 'fix.span', group: '校正', label: '✂️ 选段校正 · 系统提示词',
         desc: '选段校正（只改划选的一段）的主指令。', builtin: FIX_SPAN_PROMPT,
         contract: ['<FixedSpan>'], note: '<FixedSpan> 区块是解析契约。' },

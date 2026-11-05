@@ -370,6 +370,9 @@ export function buildFixPrompt(ctx, s, fixContext) {
     if (fc.activeMode === 'manual') {
         prompt += '\n\n' + fixManualStructuralNote();
     }
+    if (fc.rewriteVariableBlock) {
+        prompt += '\n\n' + P('fix.variableTextNote', null, s);
+    }
     return prompt;
 }
 

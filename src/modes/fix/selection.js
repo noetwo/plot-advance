@@ -6,9 +6,9 @@ import { addSystemNote, showTyping } from '../advisor/cards.js';
 import { buildFixPrompt, buildSpanMessages, parseFixSpan, renderFixResultHtml, stripMechanismBlocks } from '../chat/context.js';
 import { appendNoteToRoom, registerFixApply, scrollToBottom } from '../chat/history.js';
 import { isUserAbort } from '../chat/send.js';
-import { extractExcludedSections, fixKeepPlaceholder, fixOutputHasMvuBlock, getLatestAiMessage } from '../diagnose/mvu.js';
+import { extractExcludedSections, fixKeepPlaceholder, getLatestAiMessage } from '../diagnose/mvu.js';
 import { autoFixNoteContent, customTaskNoteContent } from '../diagnose/schema.js';
-import { clampFixAutoMinChars, composeFixedReply, fixJoinTable, fixPiecePlan, fixPieceSummary, fixSpliceTable, renderDiffCard } from './algorithms.js';
+import { clampFixAutoMinChars, composeFixedReply, composeFixedReplyDetailed, fixJoinTable, fixPiecePlan, fixPieceSummary, fixSpliceTable, renderDiffCard } from './algorithms.js';
 import { captureFixContext, fixFingerprint, fixOutputTruncated, fixScopeNoteText, renderFixCard } from './capture.js';
 import { applyFixInPlace, fixActionForMessage, isFixedReply, reapplyFix, registerFixActionPainter, resolveFixAction, undoFix } from './writeback.js';
 import { fixFailureReason } from './staging.js';
@@ -1192,8 +1192,8 @@ async function applyFixSelect(sel, newSpan) {
     if (fixFingerprint(message.mes) !== sel.fingerprint) return '这条回复自划选后已发生变化（切换了回复分支 / 被改过）——为免覆盖新内容，未应用。请重开选段校正。';
     const spliced = spliceSpan(message.mes, sel.start, sel.end, newSpan);
     if (spliced == null) return '回插位置越界，未应用（请重开选段校正）。';
-    const applied = await applyFixInPlace(sel.idx, spliced);
-    return applied ? fixActionForMessage(sel.idx) : '替换回复失败，未应用。';
+    const applied = await applyFixInPlace(sel.idx, spliced, { varTextChanges: [] });
+    return applied?.ok ? fixActionForMessage(sel.idx) : '替换回复失败，未应用。';
 }
 
 /* ------------------------------------------------------------------ *
@@ -1462,8 +1462,8 @@ async function applyFixSelectBatch(job, accepted) {
     if (fixFingerprint(message.mes) !== job.fingerprint) return '这条回复自钉选后已发生变化（切换了回复分支 / 被改过）——为免覆盖新内容，未应用。请重开选段校正。';
     const spliced = spliceSpansBackToFront(message.mes, accepted.map((row) => ({ start: row.pin.start, end: row.pin.end, replacement: row.span })));
     if (spliced == null) return '回插位置越界，未应用（请重开选段校正）。';
-    const applied = await applyFixInPlace(job.idx, spliced);
-    return applied ? fixActionForMessage(job.idx) : '替换回复失败，未应用。';
+    const applied = await applyFixInPlace(job.idx, spliced, { varTextChanges: [] });
+    return applied?.ok ? fixActionForMessage(job.idx) : '替换回复失败，未应用。';
 }
 
 // 「按目标校正最新回复」：用勾选的目标 + 约束（不是手动输入）当指令，对最新回复跑一次两段式校正并出卡。
@@ -1710,13 +1710,15 @@ export function showAutoFixGenerating() {
 // 纯副作用：在侧聊里留一条【持久】自动校正记录（仿 notifyAutoDiagnose 的记录部分）。status:
 // fixed / nochange / failed；problems = 「发现并修正」摘要（仅 fixed 有意义，可空）。窗口关着也留得下
 // （DOM 在 init 建好），随 per-chat 持久化、跨重载存活；是 note 条目、绝不回灌给模型（见 convoForPrompt）。
-export function addAutoFixNote(status, problems, fix = null, meta = null) {
+export function addAutoFixNote(status, problems, fix = null, meta = null, notices = []) {
     try {
         const stamp = (() => { try { return new Date().toLocaleTimeString(); } catch (e) { return ''; } })();
         // 📋 meta = { task:'custom', template } → 记录换族（customTaskNoteContent）；meta 为空 = 校正一族，字节不动。
-        const content = (meta && meta.task === 'custom')
+        const base = (meta && meta.task === 'custom')
             ? customTaskNoteContent({ status, problems, stamp, template: meta.template })
             : autoFixNoteContent({ status, problems, stamp });
+        const extra = (Array.isArray(notices) ? notices : []).map((line) => String(line || '').trim()).filter(Boolean);
+        const content = base + (extra.length ? '\n' + extra.join('\n') : '');
         const entry = { id: nextCid(), role: 'note', content, ...(fix ? { fixAction: fix } : {}) };
         // locator 进入持久侧聊条目；前后正文与 applied 状态仍以主消息自身记录为准。
         appendNoteToRoom('fix', entry, fix ? { fix } : null);
@@ -1803,7 +1805,7 @@ export async function fixPieceCall(ctx, s, a, directive, piece, signal, onDelta,
 
 // 整体校正的一次调用：join 的正文与保留锚点同样只进入派生上下文。
 export async function fixJoinCall(ctx, s, directive, join, signal, onDelta, fixContext) {
-    const pieceProse = (join && join.raw) ? join.core : stripMechanismBlocks(join.core);
+    const pieceProse = fixContext.rewriteVariableBlock ? join.core : stripMechanismBlocks(join.core);
     if (!pieceProse.trim()) return { status: 'gated' };
     const joinContext = Object.freeze({ ...fixContext, targetProse: pieceProse, extraKeep: join.keepBlocks });
     const custom = (ENABLE_FIX_CUSTOM_TASK && joinContext.activeMode === 'custom');
@@ -1820,6 +1822,12 @@ export async function fixJoinCall(ctx, s, directive, join, signal, onDelta, fixC
     if (fixOutputTruncated(parsed.fixed, finishHint, pieceProse).truncated) return { status: 'truncated' };
     if (fixEffectivelyUnchanged(pieceProse, parsed.fixed)) return { status: 'clean' };
     const anchorsMissing = join.keepBlocks.filter((b, i) => !parsed.fixed.includes(fixKeepPlaceholder(i))).length;
-    const composeAgainst = (customRawTable && fixOutputHasMvuBlock(parsed.fixed)) ? stripMechanismBlocks(join.core) : join.core;
-    return { status: 'fixed', fixedCore: composeFixedReply(parsed.fixed, composeAgainst, join.keepBlocks), problems: parsed.problems || '', before: pieceProse, after: parsed.fixed, anchorsMissing, skipMvuTail: customRawTable };
+    const composed = composeFixedReplyDetailed(parsed.fixed, join.core, join.keepBlocks, {
+        rewriteVariableBlock: !!joinContext.rewriteVariableBlock,
+    });
+    return {
+        status: 'fixed', fixedCore: composed.text, problems: parsed.problems || '',
+        before: pieceProse, after: parsed.fixed, anchorsMissing, skipMvuTail: customRawTable,
+        varTextChanges: composed.varTextChanges, variableBlock: composed.variableBlock,
+    };
 }

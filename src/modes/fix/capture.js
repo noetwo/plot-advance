@@ -5,8 +5,8 @@ import { appendConvo, convo } from '../../core/conversation-store.js';
 import { buildCardSection, buildTranscriptTurns, composeSummaryWithBridges, renderFixResultHtml, stripMechanismBlocks } from '../chat/context.js';
 import { registerFixApply } from '../chat/history.js';
 import { chatIdentityKey } from '../chat/send.js';
-import { extractExcludedSections, fixThinkKeepSpec, fixThinkProtectNote, getLatestAiMessage, parseExcludeTags, resolveAutoTargetMessage, splitContentScope } from '../diagnose/mvu.js';
-import { detectScopeTag, fixCustomRawTable, fixKeepNameSet, fixScopeVerdict, fixSegmentReply, fixTableCounts, proseCharCount, resolveFixPieces } from './algorithms.js';
+import { extractExcludedSections, extractUpdateBlock, fixThinkKeepSpec, fixThinkProtectNote, getLatestAiMessage, parseExcludeTags, resolveAutoTargetMessage, splitContentScope } from '../diagnose/mvu.js';
+import { composeFixedReplyDetailed, detectScopeTag, fixCustomRawTable, fixKeepNameSet, fixScopeVerdict, fixSegmentReply, fixTableCounts, proseCharCount, resolveFixPieces } from './algorithms.js';
 import { fixDropMinusKeep, fixUsePresetFor, getEffectiveFixCfg, getFixCfg, resolveFixCustomCfg, resolveFixModeCfg } from './templates.js';
 import { ENABLE_FIX_CUSTOM_TASK, ENABLE_FIX_PIECEWISE, ENABLE_WI_EJS_RENDER, STATUS_PLACEHOLDER } from '../../prompts/builtins.js';
 import { fixNoOp } from '../../prompts/helpers.js';
@@ -218,12 +218,21 @@ export function mergeKeepTags(existing, blocks) {
     if (!add.length) return cur;
     return cur + ((cur && !cur.endsWith('\n')) ? '\n' : '') + add.join('\n');
 }
+const variableBlockTagNames = new Set(['updatevariable', 'update', 'analysis', 'jsonpatch', 'update_analysis', 'json_patch']);
+function withoutVariableBlockTags(tags) {
+    return parseExcludeTags(String(tags == null ? '' : tags))
+        .filter((spec) => !variableBlockTagNames.has(spec.name.toLowerCase()))
+        .map((spec) => spec.bracket ? `[${spec.name}]` : `<${spec.name}>`)
+        .join('\n');
+}
+
 
 // 抓取待校正回复 + 按开关备好上下文块。含前文用 buildTranscriptTurns 多取一条再去掉末条——末条就是待校正回复本身
 // （已在 <text_to_transform>，不重复喂；与 recast 的 slice(-(N+1),-1) 同理）。generateReply 的 fixMode 分支与 runFixByTargets 共用。
 // mode='manual'（在输入框直接说要改什么）或 'auto'（按目标校正按钮 / 每条新回复自动校正）。两套设置经
 // resolveFixModeCfg 归一后彻底独立：手动=上下文丰富 / 无目标 / 不收紧 / 无排除区；自动=按 fixA_* 的目标 + 上下文 +
-// 排除区 + 收紧。排除区仅自动有（手动 keepTags/dropTags 恒空）；MVU 机制块两模式都自动剥离（composeFixedReply 原样接回）。
+// 排除区 + 收紧。排除区仅自动有（手动 keepTags/dropTags 恒空）；变量块默认剥离并原样接回，只有正文标签
+// 留空且目标是聊天最后一楼的整条处理才开放其中受限文字。
 export async function captureFixContext(s, { mode = 'manual', targetId, wholeFloor = false, customTemplateText = '' } = {}) {
     const ctx = getCtx();
     let manualScopeMissed = '';
@@ -239,6 +248,13 @@ export async function captureFixContext(s, { mode = 'manual', targetId, wholeFlo
     const autoLike = mode === 'auto' || (cc && cc.useMechanic);
     const latest = (targetId != null) ? resolveAutoTargetMessage(ctx.chat, targetId) : getLatestAiMessage();
     const targetIdx = latest.idx;
+    // 变量块只在「正文标签显式留空 + 整条处理 + 目标就是聊天最后一楼」时交给模型。选段手动不算整条；
+    // 非末楼与填了标签的路径继续先剥离、应用时逐字接回。
+    const rewriteVariableBlock = targetIdx >= 0
+        && targetIdx === (ctx.chat || []).length - 1
+        && !String(norm.scopeTag == null ? '' : norm.scopeTag).trim()
+        && (mode !== 'manual' || wholeFloor)
+        && !!extractUpdateBlock(latest.text);
     if (autoLike && ENABLE_FIX_PIECEWISE) {
         const dec = resolveFixPieces({ pieceMode: norm.pieceMode, scopeTag: norm.scopeTag, scopeManual: norm.scopeManual, pieceAsked: norm.pieceAsked, reply: latest.text });
         if (dec.action === 'run' && dec.mode === 'wrapped') {
@@ -271,18 +287,24 @@ export async function captureFixContext(s, { mode = 'manual', targetId, wholeFlo
     }
     if (cc && !cc.useMechanic) {
         scopeDecision = null; pieceDecision = null; pieceTable = null; scope = { active: false };
-        customJoin = fixCustomRawTable(latest.text, cc.keepTags, cc.dropTags, { raw: true });
+        const keepTags = rewriteVariableBlock ? withoutVariableBlockTags(cc.keepTags) : cc.keepTags;
+        const dropTags = rewriteVariableBlock ? withoutVariableBlockTags(cc.dropTags) : cc.dropTags;
+        customJoin = fixCustomRawTable(latest.text, keepTags, dropTags, { raw: true });
     } else if (cc && !pieceTable && !(pieceDecision && ['ask', 'pending', 'suggest', 'skip'].includes(pieceDecision.action))) {
         scope = { active: false };
-        customJoin = fixCustomRawTable(latest.text, cc.keepTags, cc.dropTags, { raw: false });
+        const keepTags = rewriteVariableBlock ? withoutVariableBlockTags(cc.keepTags) : cc.keepTags;
+        const dropTags = rewriteVariableBlock ? withoutVariableBlockTags(cc.dropTags) : cc.dropTags;
+        customJoin = fixCustomRawTable(latest.text, keepTags, dropTags, { raw: false });
     }
     const originalReply = customJoin ? customJoin.core : (pieceTable ? pieceTable.pieces.map((p) => p.core).join('\n\n') : (scope.active ? scope.inner : latest.text));
     const thinkKeep = (wholeFloor && mode === 'manual')
         ? fixThinkKeepSpec(originalReply, norm.protectThink) : '';
+    const keepTags = rewriteVariableBlock ? withoutVariableBlockTags(thinkKeep || norm.keepTags) : (thinkKeep || norm.keepTags);
+    const dropTags = rewriteVariableBlock ? withoutVariableBlockTags(norm.dropTags) : norm.dropTags;
     const ex = customJoin
         ? { prose: customJoin.core, keepBlocks: customJoin.keepBlocks }
-        : extractExcludedSections(originalReply, thinkKeep || norm.keepTags, norm.dropTags);
-    const targetProse = (customJoin && customJoin.raw) ? ex.prose : stripMechanismBlocks(ex.prose);
+        : extractExcludedSections(originalReply, keepTags, dropTags);
+    const targetProse = rewriteVariableBlock ? ex.prose : stripMechanismBlocks(ex.prose);
     const extraKeep = ex.keepBlocks;
     const thinkProtected = thinkKeep ? ex.keepBlocks.length : 0;
     const captured = Object.freeze({
@@ -319,7 +341,7 @@ export async function captureFixContext(s, { mode = 'manual', targetId, wholeFlo
         extraKeep, thinkProtected, scope, scopeDecision, pieceDecision, pieceTable, customJoin, captured,
         activeMode: mode, customTemplateText: String(customTemplateText || ''),
         autoPromptVersion: norm.promptVersion, autoPromptFlavor: norm.promptFlavor,
-        wiBefore, wiAfter, manualScopeMissed,
+        wiBefore, wiAfter, manualScopeMissed, rewriteVariableBlock,
     });
 }
 
@@ -331,7 +353,16 @@ export function renderFixCard(assistantEl, contentEl, aEntry, finalText, fixCont
     if (r.status !== 'ok') return r.status;
     const finishHint = (/<FixedReply\b[^>]*>/i.test(finalText) && !/<\/FixedReply\s*>/i.test(finalText)) ? 'length' : undefined;
     if (fixOutputTruncated(r.fixed, finishHint, fc.targetProse).truncated) return 'truncated';
-    const parsed = { fixed: r.fixed, problems: r.problems };
+    const composed = fc.rewriteVariableBlock
+        ? composeFixedReplyDetailed(r.fixed, fc.originalReply, fc.extraKeep, { rewriteVariableBlock: true })
+        : null;
+    const parsed = {
+        fixed: r.fixed,
+        problems: r.problems,
+        varTextChanges: composed ? composed.varTextChanges : [],
+        variableBlock: composed ? composed.variableBlock : null,
+    };
+    const finalOverride = composed ? composed.text : undefined;
     aEntry.content = parsed.fixed;
     if (!convo.includes(aEntry)) appendConvo(aEntry);
     persistConvo();
@@ -363,8 +394,15 @@ export function renderFixCard(assistantEl, contentEl, aEntry, finalText, fixCont
         tn.textContent = thinkNote;
         assistantEl.querySelector('.pad-bubble')?.appendChild(tn);
     }
-    registerFixApply(aEntry, parsed, fc.originalReply, fc.targetIdx, fc.extraKeep, fc.scope, fc.captured, undefined,
-        [parsed.problems ? '发现并修正：\n' + parsed.problems : '', thinkNote].filter(Boolean).join('\n'));
-    addFixApplyControls(assistantEl, parsed, fc.originalReply, fc.targetIdx, fc.extraKeep, fc.scope, fc.captured, undefined, { entry: aEntry });
+    const variableNote = parsed.variableBlock?.fellBack ? '变量更新块校验未通过，已保留原样。' : '';
+    if (variableNote) {
+        const vn = document.createElement('div');
+        vn.className = 'pad-fix-changes';
+        vn.textContent = variableNote;
+        assistantEl.querySelector('.pad-bubble')?.appendChild(vn);
+    }
+    registerFixApply(aEntry, parsed, fc.originalReply, fc.targetIdx, fc.extraKeep, fc.scope, fc.captured, finalOverride,
+        [parsed.problems ? '发现并修正：\n' + parsed.problems : '', thinkNote, variableNote].filter(Boolean).join('\n'));
+    addFixApplyControls(assistantEl, parsed, fc.originalReply, fc.targetIdx, fc.extraKeep, fc.scope, fc.captured, finalOverride, { entry: aEntry });
     return 'ok';
 }

@@ -322,7 +322,7 @@ export function applyWindowMarkup(win) {
                         <div class="pad-hint">仅当模型拒绝校正请求时才开（需先在【设置】里精选一个补全预设）。</div>
                         <div class="pad-hint pad-fixm-warn">⚠ 部分模型（如 DeepSeek、Gemini）在高上下文下会认不准要改哪一条回复、把前文内容混进结果——下面几项默认关闭，仅在确有需要（对齐设定 / 前情）时再逐项开启。若确要带前文，更建议改用 ✂️ 选段校正：只把你划选的一段发给模型，高上下文下更稳，也绝不动没划到的部分。</div>
                         <label class="pad-check pad-lb-check"><span>只改此标签内的正文</span>&nbsp;<input id="pad-fixm-scope" type="text" style="width:110px;" placeholder="留空 = 整条"></label>
-                        <div class="pad-hint">填正文所在的标签名（如 <code>Interleaving</code>，不用写尖括号）：模型只看到、只改这个标签里的正文，标签外的构建块、状态栏、占位符原样保留。留空，或这条回复里没有这个标签时，按整条回复处理。</div>
+                        <div class="pad-hint">填正文所在的标签名（如 <code>Interleaving</code>，不用写尖括号）：模型只看到、只改这个标签里的正文，标签外的构建块、状态栏、占位符原样保留。留空 = 整条回复，连变量更新块里的文字（摘要和更新里的文字值）一起改，并同步这一楼变量里对应的文字；若填了标签但这条回复里没有它，正文仍按整条处理，变量块保持原样。</div>
                         <label class="pad-check pad-lb-check"><span>加载前文条数（0 = 不带，-1 = 全部）</span>&nbsp;<input id="pad-fixm-depth" type="number" min="-1" max="100" style="width:64px;"></label>
                         <label class="pad-check pad-lb-check"><input id="pad-fixm-card" type="checkbox"><span>带上角色卡（描述 / 性格 / 场景）</span></label>
                         <label class="pad-check pad-lb-check"><input id="pad-fixm-world" type="checkbox"><span>带上当前激活世界书</span></label>
@@ -357,7 +357,7 @@ export function applyWindowMarkup(win) {
                         <details class="pad-mode-collapse" id="pad-fix-adv">
                             <summary class="pad-fix-targets-head" style="cursor:pointer;">进阶设置（一般不用动）</summary>
                             <label class="pad-check pad-lb-check"><span>只校正此标签内的正文</span>&nbsp;<input id="pad-fix-scope" type="text" style="width:110px;"></label>
-                            <div class="pad-hint">通常不用动：会自动识别卡片的正文标签（默认 <code>content</code>），认不准时会请你确认一次。识别错了才在这里改（<strong>手填后自动识别会停用</strong>，交还给你）；<strong>留空</strong> = 校正整条回复。</div>
+                            <div class="pad-hint">通常不用动：会自动识别卡片的正文标签（默认 <code>content</code>），认不准时会请你确认一次。识别错了才在这里改（<strong>手填后自动识别会停用</strong>，交还给你）。留空 = 整条回复，连变量更新块里的文字（摘要和更新里的文字值）一起改，并同步这一楼变量里对应的文字。</div>
                             <button type="button" id="pad-fix-scan" class="pad-fix-run-btn"><i class="fa-solid fa-magnifying-glass"></i> 重新扫描正文标签（识别不对时用）</button>
                             <div id="pad-fix-scan-panel" class="pad-fix-scan-panel" hidden></div>
                             <div class="pad-fix-targets-head">保留区 / 丢弃区：结构块会自动识别并原样保留——下面是<strong>本条回复</strong>实际识别到的。没认出的块，点它加进保留区（或手动填，每行一个<strong>起始</strong>标记；支持嵌套同名标签与 <code>[IMG_GEN]</code> 方括号块）；丢弃区 = 直接删掉、不放回。识别不对的格式欢迎在 Discord 私信 <strong>@Prince</strong>，会加进测试集修复。标签写法：&lt;thinking&gt; 或 thinking 都行，不用写闭合标签；方括号块写 [IMG_GEN]；同一标签两边都填按保留处理。</div>
@@ -419,7 +419,7 @@ export function applyWindowMarkup(win) {
                     + '<span id="pad-fixc-dirty" class="pad-hint" hidden>未保存</span>'
                     + '<textarea id="pad-fixc-prompt" rows="6" placeholder="只写你要它做的事（例：把正文完整翻译成日文）。输出格式与保留标记由剧情推进自动附上。"></textarea>'
                     + '<label class="pad-check pad-lb-check"><input id="pad-fixc-mech" type="checkbox"><span>沿用校正的正文识别</span></label>'
-                    + '<div class="pad-hint">开：只处理剧情正文，状态栏、变量块等原样保留。关：整条回复交给模板，输出原样替换。</div>'
+                    + '<div class="pad-hint">开：按校正设置识别剧情正文；正文标签留空时，整条回复（含变量更新块里允许改的文字）交给模板。关：整条回复交给模板；变量更新块是否交给模板仍遵守正文标签设置，交给时只允许改摘要和更新里的字符串值。</div>'
                     + '<div class="pad-fix-targets-head">保留区 / 丢弃区（本档自己的）</div>'
                     // 标签写法提示（1.77.0 UI 二波）：自动面板把同一句追加在它那段长说明末尾，这里因为没有那段
                     // 说明，单独起一行 pad-hint 放在两个 textarea 之上。

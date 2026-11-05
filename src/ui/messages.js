@@ -516,6 +516,17 @@ function staleMsg(reason) {
     if (reason === 'swipeChanged') return '当前显示的回复分支已经变化，未应用。请切回后重新校正。';
     return '目标回复已不在了，未应用。';
 }
+function fixVariableSkippedLine(skipped) {
+    const list = Array.isArray(skipped) ? skipped : [];
+    if (!list.length) return '';
+    const details = list.map((item) => {
+        const path = item?.change?.path || '（无路径）';
+        const reason = item?.reason ? `：${item.reason}` : '';
+        return `${path}${reason}`;
+    }).join('；');
+    return `变量文字有 ${list.length} 处未同步：${details}`;
+}
+
 
 export function addFixApplyControls(assistantEl, parsed, originalReply, targetIdx, keepSections, scope, captured, finalOverride, opts = {}, dependencies) {
     const targetStale = dependencies?.fixTargetStale || fixTargetStale;
@@ -532,8 +543,13 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
     const contentEl = assistantEl.querySelector('.pad-content');
     if (contentEl) contentEl.hidden = true;
 
-    const appliedPreview = stripMechanismBlocks(composeFixedReply(parsed.fixed, originalReply, keepSections));
-    const diffCard = renderDiffCard(stripMechanismBlocks(String(originalReply || '')), appliedPreview);
+    const variableBlockShown = !!parsed?.variableBlock?.exposed;
+    const appliedFull = finalOverride != null
+        ? finalOverride
+        : wrapContentScope(scope, composeFixedReply(parsed.fixed, originalReply, keepSections));
+    const appliedPreview = variableBlockShown ? appliedFull : stripMechanismBlocks(appliedFull);
+    const beforePreview = variableBlockShown ? String(originalReply || '') : stripMechanismBlocks(String(originalReply || ''));
+    const diffCard = renderDiffCard(beforePreview, appliedPreview);
     bubble.appendChild(diffCard);
 
     const bar = document.createElement('div');
@@ -627,12 +643,23 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
             const finalText = finalOverride != null
                 ? finalOverride
                 : wrapContentScope(scope, composeFixedReply(parsed.fixed, originalReply, keepSections));
-            const applied = await applyInPlace(targetIdx, finalText);
-            if (!applied) {
+            const applied = await applyInPlace(targetIdx, finalText, { varTextChanges: parsed?.varTextChanges || [] });
+            const appliedOk = (applied && typeof applied === 'object') ? applied.ok : applied;
+            if (!appliedOk) {
                 status.textContent = '应用失败：没找到目标消息或保存失败。';
                 status.classList.add('pad-hint-error');
                 btn.disabled = false;
                 return;
+            }
+            const skippedLine = fixVariableSkippedLine(applied?.vars?.skipped);
+            if (skippedLine) {
+                let skippedNote = bubble.querySelector('.pad-fix-var-skipped');
+                if (!skippedNote) {
+                    skippedNote = document.createElement('div');
+                    skippedNote.className = 'pad-fix-changes pad-fix-var-skipped';
+                    bubble.insertBefore(skippedNote, bar);
+                }
+                skippedNote.textContent = skippedLine;
             }
             action = actionForMessage(targetIdx);
             if (!action) {

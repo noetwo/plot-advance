@@ -7,7 +7,7 @@ import { scrollToBottom } from '../chat/history.js';
 import { chatIdentityKey } from '../chat/send.js';
 import { fixOutputHasMvuBlock, getLatestAiMessage, getMvu, wrapContentScope } from '../diagnose/mvu.js';
 import { dismissToast } from '../diagnose/schema.js';
-import { clampFixAutoMinChars, composeFixedReply, fixJoinTable, fixPiecePlan, fixPieceSummary, fixSpliceTable, mergeMvuTail } from './algorithms.js';
+import { clampFixAutoMinChars, composeFixedReplyDetailed, fixJoinTable, fixPiecePlan, fixPieceSummary, fixSpliceTable, mergeMvuTail } from './algorithms.js';
 import { captureFixContext, fixCurrentSnapshot, fixOutputTruncated, fixScopeNoteText, fixTargetStale } from './capture.js';
 import { applyFixInPlace, fixActionForMessage, isFixedReply } from './writeback.js';
 import { addAutoFixNote, emitPieceAsk, emitPiecePending, fixCallTransport, fixJoinCall, fixPieceCall, showAutoFixGenerating } from './selection.js';
@@ -151,11 +151,24 @@ function fixParkTake(map, key) {
 }
 
 // 落地 = 原位替换 + 持久记录。写入失败时不创建一条误称“已应用”的记录。
+function variableResultNoteLines(variableBlock, skipped) {
+    const lines = [];
+    if (variableBlock?.fellBack) lines.push('变量更新块校验未通过，已保留原样。');
+    const misses = Array.isArray(skipped) ? skipped : [];
+    if (misses.length) {
+        lines.push(`变量文字有 ${misses.length} 处未同步：` + misses.map((item) => {
+            const path = item?.change?.path || '（无路径）';
+            return path + (item?.reason ? `：${item.reason}` : '');
+        }).join('；'));
+    }
+    return lines;
+}
+
 async function fixLandResult(p) {
-    const applied = await applyFixInPlace(p.targetIdx, p.joined);
-    if (!applied) return false;
+    const applied = await applyFixInPlace(p.targetIdx, p.joined, { varTextChanges: p.varTextChanges || [] });
+    if (!applied?.ok) return false;
     const action = fixActionForMessage(p.targetIdx);
-    addAutoFixNote(p.status, p.problems, action, p.meta || null);
+    addAutoFixNote(p.status, p.problems, action, p.meta || null, variableResultNoteLines(p.variableBlock, applied.vars?.skipped));
     return true;
 }
 
@@ -237,16 +250,18 @@ async function fixRunJoin(ctx, s, directive, join, compatSession, meta, fixConte
     const boundary = await awaitFixMvuBoundary(s, compatSession, cap && cap.chatId);
     if (!boundary.proceed) { if (boundary.status === 'cancelled') fixNoteRunStopped(meta); return; }   // 'timed-out' 只可能来自 MVU 兼容会话（按钮路 compatSession 恒 null），不是「被中断」
     let joined = join.head + r.fixedCore + join.tail;
-    // 📋 raw 表路：成品若已带（被模型改写 / 伪造的）更新区块，补接会造出第二块（MVU 地雷 ②）→ 只跳过块、留占位符。
-    // 判据取 fixJoinCall 算好的 r.skipMvuTail（=「自定义任务 且 表来自 fixCustomRawTable」，两处一份，不再各自
-    // 从 join.raw 重算）；块的有无仍对【拼好的成品】测。校正 / 手动路 r.skipMvuTail 恒 false ⇒ opts.skipBlock 恒
-    // false ⇒ 与 1.76.0 逐字节同。
-    if (boundary.coordinated) joined = mergeMvuTail(joined, (ctx.chat || [])[tIdx]?.mes, { skipBlock: !!(r.skipMvuTail && fixOutputHasMvuBlock(joined)) });
+    // 变量块开放时，compose 已校验并把唯一块放回原位；等待 MVU 的尾合并不得再补原块造成双区块。
+    if (boundary.coordinated) {
+        joined = mergeMvuTail(joined, (ctx.chat || [])[tIdx]?.mes, {
+            skipBlock: !!(fixContext.rewriteVariableBlock || (r.skipMvuTail && fixOutputHasMvuBlock(joined))),
+        });
+    }
     const anchorNote = r.anchorsMissing ? `\n⚠ ${r.anchorsMissing} 个结构块的位置锚点被模型挪动 / 弄丢，内容已兜底接回正文末尾——位置若不对，可在校正记录里点「撤销」还原。` : '';
     // 陈旧守卫 → 落地 / 暂存 / stale（1.77.0 起「切聊天」不再丢弃，见 fixLandOrPark）。
     await fixLandOrPark({
         captured: cap, targetIdx: tIdx, joined, status: 'fixed',
         problems: (r.problems || '') + anchorNote, before: r.before, after: r.after, meta,
+        varTextChanges: r.varTextChanges || [], variableBlock: r.variableBlock || null,
     }, { mvuTolerant: boundary.coordinated });
 }
 
@@ -567,13 +582,17 @@ export async function runAutoFix(ctx, s, targetId, compatSession, options = {}) 
     const finishHint = (/<FixedReply\b[^>]*>/i.test(finalText) && !/<\/FixedReply\s*>/i.test(finalText)) ? 'length' : undefined;
     if (fixOutputTruncated(parsed.fixed, finishHint, fixContext.targetProse).truncated) { addAutoFixNote('truncated'); return; }
 
-    // 接回原回复的机制块与用户保留区，再直接替换当前回复。MVU 协调只负责等额外解析
-    // 完成并合并其机制块；原位写回保持当前变量槽，不复制也不重新解析 MVU。
+    // 接回原回复的机制块与用户保留区，再直接替换当前回复。开放变量文字时合并器只采纳摘要与字符串 value，
+    // 其它结构不合法则整块回退，并把实际字符串变化交给原子写回层同步到本楼变量。
     const boundary = await awaitFixMvuBoundary(s, compatSession, cap && cap.chatId);
     if (!boundary.proceed) return;   // 等 MVU 期间被中断 / supersede / 兼容超时 → 不写
-    const innerFixed = composeFixedReply(parsed.fixed, fixContext.originalReply, fixContext.extraKeep);
-    let finalText2 = wrapContentScope(fixContext.scope, innerFixed);
-    if (boundary.coordinated) finalText2 = mergeMvuTail(finalText2, (ctx.chat || [])[tIdx]?.mes);   // MVU 事后注的机制块补接末尾
+    const composed = composeFixedReplyDetailed(parsed.fixed, fixContext.originalReply, fixContext.extraKeep, {
+        rewriteVariableBlock: !!fixContext.rewriteVariableBlock,
+    });
+    let finalText2 = wrapContentScope(fixContext.scope, composed.text);
+    if (boundary.coordinated) {
+        finalText2 = mergeMvuTail(finalText2, (ctx.chat || [])[tIdx]?.mes, { skipBlock: !!fixContext.rewriteVariableBlock });
+    }
     // P-CORRUPT 权威网：LLM 返回后聊天可能已切走 / 这条回复已换 swipe / 被编辑 / 被删——写入前再核对捕获快照，失效则不写、记一条
     // stale。overlap 模式（fixWaitForMvu）用 mvuTolerant：只比去机制块正文，容忍 MVU 刚注入的块，仍拦真编辑 / 换 swipe / 切聊天 / 目标没了。
     // 陈旧守卫 → 落地 / 暂存 / stale。before / after 仍取纯散文，供默认差异卡展示；
@@ -581,6 +600,7 @@ export async function runAutoFix(ctx, s, targetId, compatSession, options = {}) 
     await fixLandOrPark({
         captured: cap, targetIdx: tIdx, joined: finalText2, status: 'fixed',
         problems: parsed.problems, before: fixContext.targetProse, after: parsed.fixed, meta: null,
+        varTextChanges: composed.varTextChanges, variableBlock: composed.variableBlock,
     }, { mvuTolerant: boundary.coordinated });
 }
 

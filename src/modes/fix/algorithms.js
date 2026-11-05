@@ -7,6 +7,7 @@ import { diagDoubleBlockNotice, diagSchemaDryLines, diagSchemaFilterPatch, diagZ
 import { fixDropMinusKeep, fixTagOverlap } from './templates.js';
 import { ENABLE_FIX_CUSTOM_TASK, ENABLE_SCHEMA_DIAG, FIX_MAX_PIECE_CALLS, FIX_PIECE_MAX_CHARS, STATUS_PLACEHOLDER } from '../../prompts/builtins.js';
 import { fixPreFilter } from '../../prompts/helpers.js';
+import { locateVariableBlock, mergeRewrittenVariableBlock } from './variable-block.js';
 
 /* ------------------------------------------------------------------ *
  * ✨ 校正模式「自动配置」Phase 1 —— 纯检测 + 判定层（无 DOM / 无副作用 / 确定；无时钟无随机）。
@@ -1184,14 +1185,74 @@ export function renderDiffCard(before, after) {
     return card;
 }
 
-// 纯函数：把原回复里的机制块（<UpdateVariable> + 状态栏占位符）原样接回校正稿，让原位替换后的回复
-// 仍携带 MVU 更新 + 触发状态栏。CoT 不接回——那是原回复的推理，与校正无关。幂等。可单测。
-// keepBlocks（用户「排除·保留」区抠出的块）：数组形态按 ⟦SO_KEEP_n⟧ 标记还原到【原位】（模型弄丢则兜底接到
-// 末尾，不丢内容）；字符串形态（旧调用）整体接到末尾。两者都先于机制块。
-export function composeFixedReply(fixedProse, originalReply, keepBlocks) {
+// 把模型丢失的变量块放回原回复中的相对位置。首 / 尾位置是确定的；中间位置优先借原块两侧仍在的
+// 文本作锚，锚也被改写时才按原来的正文比例兜底。只在「整条最新回复开放变量文字」路径使用。
+function restoreVariableBlockPosition(text, original, originalLocated, block) {
+    const source = String(text == null ? '' : text);
+    const before = original.slice(0, originalLocated.start);
+    const after = original.slice(originalLocated.end);
+    if (!before.trim()) return block + (source.trim() ? '\n\n' + source.trimStart() : '');
+    if (!after.trim()) return (source.trim() ? source.trimEnd() + '\n\n' : '') + block;
+
+    let position = -1;
+    const beforeAnchor = before.trimEnd();
+    const afterAnchor = after.trimStart();
+    for (let length = Math.min(160, beforeAnchor.length); length >= 8; length -= 1) {
+        const anchor = beforeAnchor.slice(-length);
+        const at = source.lastIndexOf(anchor);
+        if (at !== -1) { position = at + anchor.length; break; }
+    }
+    if (position < 0) {
+        for (let length = Math.min(160, afterAnchor.length); length >= 8; length -= 1) {
+            const anchor = afterAnchor.slice(0, length);
+            const at = source.indexOf(anchor);
+            if (at !== -1) { position = at; break; }
+        }
+    }
+    if (position < 0) {
+        const total = before.length + after.length;
+        position = total > 0 ? Math.round(source.length * before.length / total) : source.length;
+        const leftBreak = source.lastIndexOf('\n', position);
+        const rightBreak = source.indexOf('\n', position);
+        if (leftBreak >= 0 || rightBreak >= 0) {
+            position = rightBreak < 0 || (leftBreak >= 0 && position - leftBreak <= rightBreak - position)
+                ? leftBreak + 1
+                : rightBreak + 1;
+        }
+    }
+    const left = source.slice(0, position).trimEnd();
+    const right = source.slice(position).trimStart();
+    return (left ? left + '\n\n' : '') + block + (right ? '\n\n' + right : '');
+}
+
+function removeVariableBlocks(text) {
+    let source = String(text == null ? '' : text);
+    let located = locateVariableBlock(source);
+    while (located) {
+        source = source.slice(0, located.start) + source.slice(located.end);
+        located = locateVariableBlock(source);
+    }
+    return source;
+}
+
+function variableBlockPositionMatches(text, original, originalLocated, rewrittenLocated) {
+    const originalBefore = original.slice(0, originalLocated.start).trimEnd();
+    const originalAfter = original.slice(originalLocated.end).trimStart();
+    const rewrittenBefore = text.slice(0, rewrittenLocated.start).trimEnd();
+    const rewrittenAfter = text.slice(rewrittenLocated.end).trimStart();
+    if (!originalBefore || !originalAfter) {
+        return (!originalBefore) === (!rewrittenBefore) && (!originalAfter) === (!rewrittenAfter);
+    }
+    const left = originalBefore.slice(-Math.min(80, originalBefore.length));
+    const right = originalAfter.slice(0, Math.min(80, originalAfter.length));
+    return rewrittenBefore.endsWith(left) || rewrittenAfter.startsWith(right);
+}
+
+// 详细版供整条回复路径把「正文成品 + 变量文字变化 + 整块回退」作为一个结果向写回层传递。
+// rewriteVariableBlock 未开时严格走 3.1.x 的原样接回逻辑；composeFixedReply 保留原字符串接口。
+export function composeFixedReplyDetailed(fixedProse, originalReply, keepBlocks, opts) {
     let out = String(fixedProse || '').trim();
     const orig = String(originalReply || '');
-    // 第三参可为【数组】(新：按占位标记 ⟦SO_KEEP_n⟧ 把保留块还原到【原位】) 或【字符串】(旧调用：整体接到末尾，向后兼容)。
     const blocks = Array.isArray(keepBlocks)
         ? keepBlocks
         : (String(keepBlocks || '').trim() ? [String(keepBlocks).trim()] : []);
@@ -1199,15 +1260,48 @@ export function composeFixedReply(fixedProse, originalReply, keepBlocks) {
     blocks.forEach((blk, i) => {
         const b = String(blk == null ? '' : blk);
         const ph = fixKeepPlaceholder(i);
-        if (out.includes(ph)) out = out.replace(ph, () => b);     // 还原到占位标记的原始位置（只换第一个；重复标记交给下面的扫除）
-        else if (b && !out.includes(b)) tail.push(b);             // 标记被模型弄丢 → 兜底接到末尾（不丢内容）
+        if (out.includes(ph)) out = out.replace(ph, () => b);
+        else if (b && !out.includes(b)) tail.push(b);
     });
-    out = stripFixKeepMarks(out);                                 // 清掉残留 / 重复 / 臆造的孤儿占位标记，绝不让标记漏进正文
+    out = stripFixKeepMarks(out);
     if (tail.length) out = out.trimEnd() + '\n\n' + tail.join('\n\n');
+
+    let variableBlock = null;
+    const originalLocated = locateVariableBlock(orig);
+    if (opts && opts.rewriteVariableBlock && originalLocated) {
+        const rewrittenLocated = locateVariableBlock(out);
+        const merged = mergeRewrittenVariableBlock(originalLocated.block, out);
+        variableBlock = {
+            exposed: true,
+            fellBack: merged.fellBack,
+            reason: merged.reason,
+            before: originalLocated.block,
+            after: merged.block,
+        };
+        if (merged.fellBack) {
+            out = restoreVariableBlockPosition(removeVariableBlocks(out), orig, originalLocated, merged.block);
+        } else if (rewrittenLocated) {
+            if (variableBlockPositionMatches(out, orig, originalLocated, rewrittenLocated)) {
+                out = out.slice(0, rewrittenLocated.start) + merged.block + out.slice(rewrittenLocated.end);
+            } else {
+                const without = out.slice(0, rewrittenLocated.start) + out.slice(rewrittenLocated.end);
+                out = restoreVariableBlockPosition(without, orig, originalLocated, merged.block);
+            }
+        } else {
+            out = restoreVariableBlockPosition(out, orig, originalLocated, merged.block);
+        }
+        if (orig.includes(STATUS_PLACEHOLDER) && !out.includes(STATUS_PLACEHOLDER)) out = out.trimEnd() + '\n\n' + STATUS_PLACEHOLDER;
+        return { text: out, varTextChanges: merged.changes, variableBlock };
+    }
+
     const block = extractUpdateBlock(orig);
     if (block && !out.includes(block)) out = out.trimEnd() + '\n\n' + block;
     if (orig.includes(STATUS_PLACEHOLDER) && !out.includes(STATUS_PLACEHOLDER)) out = out.trimEnd() + '\n\n' + STATUS_PLACEHOLDER;
-    return out;
+    return { text: out, varTextChanges: [], variableBlock };
+}
+
+export function composeFixedReply(fixedProse, originalReply, keepBlocks) {
+    return composeFixedReplyDetailed(fixedProse, originalReply, keepBlocks).text;
 }
 
 // ✨ overlap 版（opt-in fixWaitForMvu）：MVU 额外模型更新在校正【捕获之后】才往回复末尾注入 <UpdateVariable> + 状态栏
