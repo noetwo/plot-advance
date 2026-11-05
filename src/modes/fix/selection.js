@@ -7,9 +7,10 @@ import { buildFixPrompt, buildSpanMessages, parseFixSpan, renderFixResultHtml, s
 import { appendNoteToRoom, registerFixApply, scrollToBottom } from '../chat/history.js';
 import { isUserAbort } from '../chat/send.js';
 import { extractExcludedSections, fixKeepPlaceholder, fixOutputHasMvuBlock, getLatestAiMessage } from '../diagnose/mvu.js';
-import { applyFixAsSwipe, autoFixNoteContent, customTaskNoteContent } from '../diagnose/schema.js';
+import { autoFixNoteContent, customTaskNoteContent } from '../diagnose/schema.js';
 import { clampFixAutoMinChars, composeFixedReply, fixJoinTable, fixPiecePlan, fixPieceSummary, fixSpliceTable, renderDiffCard } from './algorithms.js';
-import { captureFixContext, fixFingerprint, fixOutputTruncated, fixScopeNoteText, isFixSwipe, renderFixCard } from './capture.js';
+import { captureFixContext, fixFingerprint, fixOutputTruncated, fixScopeNoteText, renderFixCard } from './capture.js';
+import { applyFixInPlace, fixActionForMessage, isFixedReply, reapplyFix, registerFixActionPainter, resolveFixAction, undoFix } from './writeback.js';
 import { fixFailureReason } from './staging.js';
 import { fixUsePresetFor, getEffectiveFixCfg, getFixCfg, resolveFixModeCfg, setFixCfg } from './templates.js';
 import { updateFixVerdict } from './ui.js';
@@ -21,7 +22,7 @@ import { addFixApplyControls, addMessage, parseFixedReply, soFollowStream } from
 import { enterFixMode, toggleWindow, updateFixButtonVisual } from '../../ui/mode-shell.js';
 import { maybeWrapJb, presetCurationActive } from '../../ui/settings.js';
 import { beginGeneration, finishGeneration, isGenerating } from '../../core/generation.js';
-import { nextCid } from '../../core/conversation-store.js';
+import { appendConvo, convo, nextCid } from '../../core/conversation-store.js';
 import { fixMode } from '../../core/oracle-modes.js';
 import { win } from '../../ui/refs.js';
 
@@ -1037,6 +1038,41 @@ export async function fixCallTransport(s, messages, signal, onCum, effMaxTokens 
     return deps.callProfile(s.profileId, messages, effMaxTokens, override, signal);
 }
 
+function persistFixResultEntry(entry) {
+    if (!entry) return;
+    if (!convo.includes(entry)) appendConvo(entry);
+    persistConvo();
+}
+
+function paintFixActionButton(button, action) {
+    const state = action ? resolveFixAction(action) : null;
+    button.hidden = Boolean(action && !state);
+    if (!state) return null;
+    button.innerHTML = state.record.applied === false
+        ? '<i class="fa-solid fa-wand-magic-sparkles"></i> 重新应用'
+        : '<i class="fa-solid fa-rotate-left"></i> 撤销';
+    return state;
+}
+
+async function toggleFixAction(button, status, action) {
+    const state = paintFixActionButton(button, action);
+    if (!state) {
+        status.textContent = '目标回复已经变化，无法继续操作。';
+        status.classList.add('pad-hint-error');
+        return false;
+    }
+    const reapplying = state.record.applied === false;
+    const ok = reapplying ? await reapplyFix(action) : await undoFix(action);
+    if (!ok) {
+        status.textContent = '操作已取消，或目标回复已经变化。';
+        status.classList.add('pad-hint-error');
+        return false;
+    }
+    paintFixActionButton(button, action);
+    status.textContent = reapplying ? '已重新应用校正稿。' : '已恢复上一次校正前的正文。';
+    return true;
+}
+
 // ✂️ 选段校正主流程（1.27.0，Part C）：把 fixSelState 里划选的片段 + 用户指令发给模型（冻结 FIX_SPAN_PROMPT），
 // 只回改写片段；上下文走手动那套 fixM_* 开关（captureFixContext 为本轮冻结卡/概要/前文——选段正是能扛高上下文的形态）。
 // 调用机理与 runFixByTargets 同构（direct/profile + 流式 + generation 控制器停止键）。定稿 → renderFixSelectResult。
@@ -1063,7 +1099,7 @@ async function runFixSelect(instruction) {
         finalText = await fixCallTransport(s, messages, ctl.signal, (full) => { clearTyping(); contentEl.textContent = full; if (soFollowStream) scrollToBottom(); });
         contentEl.classList.remove('pad-streaming');
         clearTyping();
-        renderFixSelectResult(assistantEl, contentEl, sel, finalText);
+        renderFixSelectResult(assistantEl, contentEl, sel, finalText, aEntry);
     } catch (e) {
         clearTyping();
         if (isUserAbort(e)) contentEl.textContent = '(已停止)';
@@ -1074,8 +1110,8 @@ async function runFixSelect(instruction) {
     }
 }
 
-// 解析选段结果 + 出结果卡（片段稿 + 片段 diff + 体检警示 + 应用）。截断/无稿 → 诚实提示、不出应用按钮。
-function renderFixSelectResult(assistantEl, contentEl, sel, finalText) {
+// 解析选段结果：默认展示差异；「看全文」只展开新片段。应用后同一按钮切成撤销 / 重新应用。
+function renderFixSelectResult(assistantEl, contentEl, sel, finalText, entry) {
     const parsed = parseFixSpan(finalText);
     if (parsed.status === 'truncated') {
         contentEl.textContent = finalText || '';
@@ -1088,45 +1124,76 @@ function renderFixSelectResult(assistantEl, contentEl, sel, finalText) {
         return;
     }
     const newSpan = parsed.span;
+    entry.content = newSpan;
+    persistFixResultEntry(entry);
     const outside = sel.full.slice(0, sel.start) + sel.full.slice(sel.end);
-    const v = validateSpanFix(sel.text, newSpan, outside);   // 回插前体检（fail-open 守卫）
+    const v = validateSpanFix(sel.text, newSpan, outside);
     const bubble = assistantEl.querySelector('.pad-bubble') || contentEl.parentElement;
     contentEl.textContent = newSpan;
-    for (const w of v.warnings) {   // 警示（近抄 / 越界 / 长度异常）——不拦，只提醒看 diff
-        const warn = document.createElement('div');
-        warn.className = 'pad-fix-nearcopy-warn';
-        warn.textContent = w;
-        bubble.appendChild(warn);
+    contentEl.hidden = true;
+    for (const warningText of v.warnings) {
+        const warning = document.createElement('div');
+        warning.className = 'pad-fix-nearcopy-warn';
+        warning.textContent = warningText;
+        bubble.appendChild(warning);
     }
-    const diff = renderDiffCard(sel.text, newSpan);   // 片段小 → diff 便宜可读
-    diff.style.display = 'none';
-    const bar = document.createElement('div'); bar.className = 'pad-apply-bar';
-    const applyBtn = document.createElement('button'); applyBtn.className = 'pad-apply-btn'; applyBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 应用（回插这段）';
-    const diffBtn = document.createElement('button'); diffBtn.className = 'pad-apply-btn'; diffBtn.innerHTML = '<i class="fa-solid fa-eye"></i> 看改动';
-    const status = document.createElement('span'); status.className = 'pad-apply-status';
-    diffBtn.addEventListener('click', () => { diff.style.display = (diff.style.display === 'none') ? 'block' : 'none'; });
-    applyBtn.addEventListener('click', async () => {
-        applyBtn.disabled = true;
-        const r = await applyFixSelect(sel, newSpan);
-        if (r === true) { status.textContent = '已应用（原回复留在左滑，可随时滑回）'; }
-        else { status.textContent = r; applyBtn.disabled = false; }
+    const diff = renderDiffCard(sel.text, newSpan);
+    const bar = document.createElement('div');
+    bar.className = 'pad-apply-bar';
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'pad-apply-btn';
+    applyBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 应用（回插这段）';
+    const fullBtn = document.createElement('button');
+    fullBtn.className = 'pad-apply-btn';
+    fullBtn.innerHTML = '<i class="fa-solid fa-eye"></i> 看全文';
+    const status = document.createElement('span');
+    status.className = 'pad-apply-status';
+    fullBtn.addEventListener('click', () => {
+        contentEl.hidden = !contentEl.hidden;
+        fullBtn.innerHTML = contentEl.hidden
+            ? '<i class="fa-solid fa-eye"></i> 看全文'
+            : '<i class="fa-solid fa-eye-slash"></i> 收起全文';
     });
-    bar.appendChild(applyBtn); bar.appendChild(diffBtn); bar.appendChild(status);
-    bubble.appendChild(bar); bubble.appendChild(diff);
+    let action = null;
+    registerFixActionPainter(applyBtn, () => action ? paintFixActionButton(applyBtn, action) : null);
+    applyBtn.addEventListener('click', async () => {
+        status.classList.remove('pad-hint-error');
+        applyBtn.disabled = true;
+        if (action) {
+            await toggleFixAction(applyBtn, status, action);
+            applyBtn.disabled = false;
+            return;
+        }
+        const result = await applyFixSelect(sel, newSpan);
+        if (typeof result === 'object' && result) {
+            action = result;
+            entry.fixAction = action;
+            persistConvo();
+            paintFixActionButton(applyBtn, action);
+            status.textContent = '已替换这条回复，可随时撤销。';
+        } else {
+            status.textContent = result;
+        }
+        applyBtn.disabled = false;
+    });
+    bar.appendChild(applyBtn);
+    bar.appendChild(fullBtn);
+    bar.appendChild(status);
+    bubble.appendChild(diff);
+    bubble.appendChild(bar);
     scrollToBottom();
 }
 
-// 应用选段回插：陈旧守卫（切聊天 / 换 swipe / 回复已变 → 指纹不匹配）→ spliceSpan 回插【当前】m.mes →
-// applyFixAsSwipe（复用整套：MVU 快照拷贝 / display_text 作废 / swipe 刷新 / 事件）。返回 true 或人话错误串。
+// 应用选段回插：陈旧守卫通过后直接替换当前回复，并返回持久 action locator。
 async function applyFixSelect(sel, newSpan) {
     const ctx = getCtx();
-    const m = (ctx.chat || [])[sel.idx];
-    if (!m || typeof m.mes !== 'string') return '目标回复已不在了，未应用。';
-    if (fixFingerprint(m.mes) !== sel.fingerprint) return '这条回复自划选后已发生变化（换了 swipe / 被改过）——为免覆盖新内容，未应用。请重开选段校正。';
-    const spliced = spliceSpan(m.mes, sel.start, sel.end, newSpan);
+    const message = (ctx.chat || [])[sel.idx];
+    if (!message || typeof message.mes !== 'string') return '目标回复已不在了，未应用。';
+    if (fixFingerprint(message.mes) !== sel.fingerprint) return '这条回复自划选后已发生变化（切换了回复分支 / 被改过）——为免覆盖新内容，未应用。请重开选段校正。';
+    const spliced = spliceSpan(message.mes, sel.start, sel.end, newSpan);
     if (spliced == null) return '回插位置越界，未应用（请重开选段校正）。';
-    const applied = await applyFixAsSwipe(sel.idx, spliced);
-    return applied ? true : '写入 swipe 失败，未应用。';
+    const applied = await applyFixInPlace(sel.idx, spliced);
+    return applied ? fixActionForMessage(sel.idx) : '替换回复失败，未应用。';
 }
 
 /* ------------------------------------------------------------------ *
@@ -1194,11 +1261,7 @@ async function runSpanCall(s, messages, batchSignal) {
     }
 }
 
-// 多段批发主流程（1.37.0）：captureFixContext 一次 → 【同步】为每段建 prompt（本轮冻结上下文的
-// cardBlock/summaryBlock/contextBlock 在任何 await 前消费完 = 并发绝不互踩，R8 的构造性解法）→ 有界并发池
-// 逐段 runSpanCall → 汇总出评审卡。isGenerating + generation 控制器走标准生成协议：停止键 / 1.36.0
-// 切模式确认（confirmConvoSwap）/ 切聊天中断全部免费继承；不入保活槽（liveForge/liveCondense 是锻造/
-// 深度精简专属）。起跑后绝不 appendConvo（1.36.0 串房教训）——全部落笔进起跑时建好的这只气泡。
+// 多段批发主流程：运行期气泡不会中途进入 convo；形成可用评审卡后才持久化结果。
 async function runFixSelectBatch(sharedInstr) {
     if (!ENABLE_FIX_SELECT || isGenerating) return;
     if (!fixSelState || !Array.isArray(fixSelState.pins) || fixSelState.pins.length < 2) return;
@@ -1229,7 +1292,7 @@ async function runFixSelectBatch(sharedInstr) {
             })
         ), MULTIFIX_CONCURRENCY);
         clearTyping();
-        renderFixSelectBatchResult(assistantEl, contentEl, job, results);
+        renderFixSelectBatchResult(assistantEl, contentEl, job, results, aEntry);
     } catch (e) {
         clearTyping();
         contentEl.textContent = '多段校正失败：' + ((e && e.message) || e);
@@ -1240,16 +1303,15 @@ async function runFixSelectBatch(sharedInstr) {
     }
 }
 
-// 评审卡（多段选段，侧聊气泡内——不占遮罩、天然随窗滚动，无手机夹死风险）：逐段一行 = 状态 + diff +
-// 勾选（ok 默认勾 / warned 默认不勾 / 其余无勾选框）。头部诚实计数；应用勾选段一次性回插；失败段一键重试。
-// 幂等：先摘旧 .pad-multifix-box 再画（重试后整卡重画走这条）。控件是内存闭包 —— 与今天的单段结果卡同一
-// 持久化档次（重载后按钮消失，v1 有意一致）。
-function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
+// 多段评审卡同样默认展示每段差异；各段「看全文」展开新片段。
+function renderFixSelectBatchResult(assistantEl, contentEl, job, results, entry) {
     const rows = prepareBatchRows(job, results);
     const changed = rows.filter((r) => r.status === 'ok' || r.status === 'warned').length;
     const kept = rows.filter((r) => r.status === 'nochange').length;
     const failed = rows.length - changed - kept;
     contentEl.textContent = `多段校正完成：改了 ${changed} 段 / 保留 ${kept} 段 / 失败 ${failed} 段。逐段核对后应用勾选的段。`;
+    entry.content = contentEl.textContent;
+    persistFixResultEntry(entry);
     const bubble = assistantEl.querySelector('.pad-bubble') || contentEl.parentElement;
     const old = bubble.querySelector('.pad-multifix-box');
     if (old) old.remove();
@@ -1271,21 +1333,28 @@ function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
             lb.appendChild(cb);
             lb.appendChild(document.createTextNode(` 片段${i + 1}「${excerpt}」`));
             head.appendChild(lb);
-            const diffBtn = document.createElement('button');
-            diffBtn.className = 'pad-apply-btn pad-multifix-diffbtn';
-            diffBtn.textContent = '看改动';
-            head.appendChild(diffBtn);
+            const fullBtn = document.createElement('button');
+            fullBtn.className = 'pad-apply-btn pad-multifix-diffbtn';
+            fullBtn.textContent = '看全文';
+            head.appendChild(fullBtn);
             row.appendChild(head);
-            for (const w of (r.warnings || [])) {
-                const warn = document.createElement('div');
-                warn.className = 'pad-fix-nearcopy-warn';
-                warn.textContent = w;
-                row.appendChild(warn);
+            for (const warningText of (r.warnings || [])) {
+                const warning = document.createElement('div');
+                warning.className = 'pad-fix-nearcopy-warn';
+                warning.textContent = warningText;
+                row.appendChild(warning);
             }
             const diff = renderDiffCard(r.pin.text, r.span);
-            diff.style.display = 'none';
-            diffBtn.addEventListener('click', () => { diff.style.display = (diff.style.display === 'none') ? 'block' : 'none'; });
+            const full = document.createElement('div');
+            full.className = 'pad-fix-full';
+            full.textContent = r.span;
+            full.hidden = true;
+            fullBtn.addEventListener('click', () => {
+                full.hidden = !full.hidden;
+                fullBtn.textContent = full.hidden ? '看全文' : '收起全文';
+            });
             row.appendChild(diff);
+            row.appendChild(full);
         } else {
             head.textContent = `片段${i + 1}「${excerpt}」：` + (STATUS_LABEL[r.status] || STATUS_LABEL.failed) + (r.reason ? `（${r.reason}）` : '');
             row.appendChild(head);
@@ -1298,22 +1367,46 @@ function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
     applyBtn.className = 'pad-apply-btn';
     const status = document.createElement('span');
     status.className = 'pad-apply-status';
+    let action = null;
+    registerFixActionPainter(applyBtn, () => action ? paintFixActionButton(applyBtn, action) : null);
     const updateApplyLabel = () => {
-        const k = box.querySelectorAll('.pad-multifix-accept:checked').length;
-        applyBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 应用勾选的 ' + k + ' 段';
-        applyBtn.disabled = k === 0;
+        if (action) {
+            paintFixActionButton(applyBtn, action);
+            applyBtn.disabled = false;
+            return;
+        }
+        const count = box.querySelectorAll('.pad-multifix-accept:checked').length;
+        applyBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 应用勾选的 ' + count + ' 段';
+        applyBtn.disabled = count === 0;
     };
-    box.addEventListener('change', (e) => { if (e.target && e.target.classList && e.target.classList.contains('pad-multifix-accept')) updateApplyLabel(); });
+    box.addEventListener('change', (event) => {
+        if (event.target?.classList?.contains('pad-multifix-accept')) updateApplyLabel();
+    });
     applyBtn.addEventListener('click', async () => {
         applyBtn.disabled = true;
+        status.classList.remove('pad-hint-error');
+        if (action) {
+            await toggleFixAction(applyBtn, status, action);
+            applyBtn.disabled = false;
+            return;
+        }
         const accepted = [];
-        box.querySelectorAll('.pad-multifix-accept:checked').forEach((cb) => {
-            const r = rows[Number(cb.dataset.row)];
-            if (r && typeof r.span === 'string') accepted.push(r);
+        box.querySelectorAll('.pad-multifix-accept:checked').forEach((checkbox) => {
+            const row = rows[Number(checkbox.dataset.row)];
+            if (row && typeof row.span === 'string') accepted.push(row);
         });
-        const res = await applyFixSelectBatch(job, accepted);
-        if (res === true) { status.textContent = '已应用（原回复留在左滑，可随时滑回）'; }
-        else { status.textContent = res; updateApplyLabel(); }
+        const result = await applyFixSelectBatch(job, accepted);
+        if (typeof result === 'object' && result) {
+            action = result;
+            entry.fixAction = action;
+            persistConvo();
+            paintFixActionButton(applyBtn, action);
+            status.textContent = '已替换这条回复，可随时撤销。';
+            applyBtn.disabled = false;
+        } else {
+            status.textContent = result;
+            updateApplyLabel();
+        }
     });
     bar.appendChild(applyBtn);
     const retriable = rows.filter((r) => r.status === 'failed' || r.status === 'truncated' || r.status === 'unparseable' || r.status === 'aborted');
@@ -1321,7 +1414,7 @@ function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
         const retryBtn = document.createElement('button');
         retryBtn.className = 'pad-apply-btn';
         retryBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> 重试失败的 ' + retriable.length + ' 段';
-        retryBtn.addEventListener('click', () => retryFixSelectBatch(assistantEl, contentEl, job, rows));
+        retryBtn.addEventListener('click', () => retryFixSelectBatch(assistantEl, contentEl, job, rows, entry));
         bar.appendChild(retryBtn);
     }
     bar.appendChild(status);
@@ -1333,7 +1426,7 @@ function renderFixSelectBatchResult(assistantEl, contentEl, job, results) {
 
 // 重试失败段：只重发 failed/truncated/unparseable/aborted 的段。messages 起跑时已建好、【原样复用】——
 // 不重建 prompt、不再 captureFixContext（信封与首轮字节相同，H2 恒守）。归并结果后整卡重画。
-async function retryFixSelectBatch(assistantEl, contentEl, job, rows) {
+async function retryFixSelectBatch(assistantEl, contentEl, job, rows, entry) {
     if (isGenerating) return;
     const s = getSettings();
     const targets = [];
@@ -1352,7 +1445,7 @@ async function retryFixSelectBatch(assistantEl, contentEl, job, rows) {
             })
         ), MULTIFIX_CONCURRENCY);
         targets.forEach((rowIdx, j) => { rows[rowIdx] = { ...rows[rowIdx], ...rr[j] }; });
-        renderFixSelectBatchResult(assistantEl, contentEl, job, rows);
+        renderFixSelectBatchResult(assistantEl, contentEl, job, rows, entry);
     } catch (e) {
         contentEl.textContent = '重试失败：' + ((e && e.message) || e);
     } finally {
@@ -1360,19 +1453,17 @@ async function retryFixSelectBatch(assistantEl, contentEl, job, rows) {
     }
 }
 
-// 多段应用（原子）：指纹不符 → 整单拒（H4，同单段文案基调）；spliceSpansBackToFront 整单成败（指纹已核
-// 对仍越界 = bug 信号，绝不半套）；成功走 applyFixAsSwipe 全家桶（MVU 快照 / display_text 作废 / swipe
-// 刷新 / 事件——与单段应用同一条路）。返回 true 或人话错误串。
+// 多段应用保持原子性：指纹不符整单拒绝；成功只原位替换一次。
 async function applyFixSelectBatch(job, accepted) {
     if (!accepted || !accepted.length) return '没有勾选任何段，未应用。';
     const ctx = getCtx();
-    const m = (ctx.chat || [])[job.idx];
-    if (!m || typeof m.mes !== 'string') return '目标回复已不在了，未应用。';
-    if (fixFingerprint(m.mes) !== job.fingerprint) return '这条回复自钉选后已发生变化（换了 swipe / 被改过）——为免覆盖新内容，未应用。请重开选段校正。';
-    const spliced = spliceSpansBackToFront(m.mes, accepted.map((r) => ({ start: r.pin.start, end: r.pin.end, replacement: r.span })));
+    const message = (ctx.chat || [])[job.idx];
+    if (!message || typeof message.mes !== 'string') return '目标回复已不在了，未应用。';
+    if (fixFingerprint(message.mes) !== job.fingerprint) return '这条回复自钉选后已发生变化（切换了回复分支 / 被改过）——为免覆盖新内容，未应用。请重开选段校正。';
+    const spliced = spliceSpansBackToFront(message.mes, accepted.map((row) => ({ start: row.pin.start, end: row.pin.end, replacement: row.span })));
     if (spliced == null) return '回插位置越界，未应用（请重开选段校正）。';
-    const applied = await applyFixAsSwipe(job.idx, spliced);
-    return applied ? true : '写入 swipe 失败，未应用。';
+    const applied = await applyFixInPlace(job.idx, spliced);
+    return applied ? fixActionForMessage(job.idx) : '替换回复失败，未应用。';
 }
 
 // 「按目标校正最新回复」：用勾选的目标 + 约束（不是手动输入）当指令，对最新回复跑一次两段式校正并出卡。
@@ -1384,8 +1475,8 @@ export async function runFixByTargets(options = {}) {
     if (s.mode === 'profile' && !s.profileId) { addSystemNote('请先在设置里选择一个连接配置档。'); return; }
     const fixContext = options.fixContext || await captureFixContext(s, { mode: 'auto' });
     if (!fixContext.targetProse.trim()) { addSystemNote('没找到可校正的 AI 回复（主聊天里要先有一条 AI 回复）。'); return; }
-    // R2 双重校正（一次性手动触发）：目标当前 swipe 已是校正结果 → 提醒会在其基础上再校正，随后继续。
-    if (isFixSwipe((getCtx().chat || [])[fixContext.targetIdx])) addSystemNote('这条回复当前显示的已是一次校正结果；将在其基础上再次校正（如需校正原文请先左滑回原文）。');
+    // 手动重复校正继续允许，但明确提醒会覆盖上一层单步撤销记录。
+    if (isFixedReply((getCtx().chat || [])[fixContext.targetIdx])) addSystemNote('这条回复当前显示的已是一次校正结果；继续应用会覆盖上一层撤销记录。');
     // ✨ Phase 5 D+E 门：与 runAutoFix 同一套判断（RESOLUTION A——这个按钮走的也是「自动」那套配置，理应遵守
     // 同一份 D 静默兜底），只是这里是一次性、有人盯着屏幕的手动触发，所以走 addSystemNote 通道（普通侧聊提示），
     // 不是 addAutoFixNote 的持久记录；suggest / skip 时直接 return，不出校正卡（呼应下面「没找到可校正的
@@ -1548,7 +1639,7 @@ async function runFixByTargetsPieces(s, fixContext) {
             }
             const spliced2 = join.head + r.fixedCore + join.tail;
             aEntry.content = r.after;
-            persistConvo();
+            persistFixResultEntry(aEntry);
             const html2 = renderFixResultHtml(r.after);
             if (html2 != null) {
                 contentEl.innerHTML = html2;
@@ -1576,8 +1667,8 @@ async function runFixByTargetsPieces(s, fixContext) {
             return;
         }
         const spliced = fixSpliceTable(table, results);
-        aEntry.content = summary.afterJoined;   // 历史存干净的校正正文拼接（同 renderFixCard 惯例）
-        persistConvo();
+        aEntry.content = summary.afterJoined;
+        persistFixResultEntry(aEntry);
         const html = renderFixResultHtml(summary.afterJoined);
         if (html != null) {
             contentEl.innerHTML = html;
@@ -1626,10 +1717,9 @@ export function addAutoFixNote(status, problems, fix = null, meta = null) {
         const content = (meta && meta.task === 'custom')
             ? customTaskNoteContent({ status, problems, stamp, template: meta.template })
             : autoFixNoteContent({ status, problems, stamp });
-        const entry = { id: nextCid(), role: 'note', content };
-        // fix（仅 'fixed' 结果带）= { idx, before, after, fixSwipeId }，给记录挂「用原文 / 看改动」按钮。
-        // 注意：和手动校正回复一样，按钮只在【本会话】可用——重载后记录是纯文本（fix 不进 persistConvo）。
-        appendNoteToRoom('fix', entry, fix ? { fix } : null);   // 自动校正记录归入【校正房间】（不可见时直接落其元数据、不上屏）
+        const entry = { id: nextCid(), role: 'note', content, ...(fix ? { fixAction: fix } : {}) };
+        // locator 进入持久侧聊条目；前后正文与 applied 状态仍以主消息自身记录为准。
+        appendNoteToRoom('fix', entry, fix ? { fix } : null);
     } catch (e) { console.warn('[剧情推进] 自动校正记录写入侧聊失败：', e); }
 }
 

@@ -137,7 +137,7 @@ const defaults = {
     // 'thorough' = 三道工序精校版，按侧重再分 'deepseek'（克制，默认）/ 'opus'（数据包强攻）。见 resolveFixAutoPrompt。
     fixA_promptVersion: 'light', fixA_promptFlavor: 'deepseek',
     fixA_tighten: true,          // ✨ 收紧：自动校正后再精修一遍（删冗词废话 / 过度描写，读感更紧）；默认开
-    // ✨ 校正模式 Phase 3：自动校正（开启后每条新主聊天 AI 回复后台跑一次校正、自动应用为新 swipe；
+    // ✨ 校正模式 Phase 3：自动校正（开启后每条新主聊天 AI 回复后台跑一次校正、原位替换正文并保留一步撤销；
     // 经 maybePostReply 编排 → runAutoFix）。默认关。fixAutoMinChars = 成本门最小字符数（短回复不值得发调用，见
     // fixPreFilter）。共享 settle 仍复用 autoDiagnoseDelayMs（不另加延时）。
     autoFixEnabled: false,
@@ -198,8 +198,8 @@ const defaults = {
     // 🩺 把诊断修正写进正文（ENABLE_DIAG_BODY_INJECT，默认关；1.65.0 起 UI 上不再标「实验性」、行住在诊断设置栏）。开了才会动消息正文；
     // 关着时核验（甲）分支的行为与 1.40.2 逐字节相同。详见该开关处的长注释。
     diagInjectBody: false,
-    // ✨ 自动校正 ↔ MVU「额外模型更新」抢写协调（opt-in，默认关）。开启后校正【照常立刻并行跑】——只在【落新 swipe
-    // 之前】等 MVU 的额外模型解析写完（awaitMvuIdle 轮询 isDuringExtraAnalysis），再把它注入的机制块接到校正稿末尾
+    // ✨ 自动校正 ↔ MVU「额外模型更新」抢写协调（opt-in，默认关）。开启后校正【照常立刻并行跑】——只在【原位替换
+    // 正文之前】等 MVU 的额外模型解析写完（awaitMvuIdle 轮询 isDuringExtraAnalysis），再把它注入的机制块接到校正稿末尾
     // （mergeMvuTail），两者不抢写同一条消息、且几乎不增加等待。只有【用 MVU 额外模型更新】的人需要开；不用的保持
     // 关 = 现行行为字节不变（无 MVU / MVU 不忙时 awaitMvuIdle + mergeMvuTail 都是即时空操作）。
     fixWaitForMvu: false,

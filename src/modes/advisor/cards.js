@@ -247,12 +247,8 @@ export function modeEntryNote(text) {
     if (convo.length) addSystemNote(text);
 }
 
-// 持久化的「系统记录」气泡（自动诊断 / 自动校正的记录、导入分隔线等）。带 entry（写进 convo → 持久化 → 重载可
-// 重建），左对齐、补丁可滚动。opts.{snapshot,patch} 挂「撤销 / 重新应用」按钮、opts.{fix} 挂「用原文 /
-// 看改动」、opts.{mvued} 挂 🎛 手动编辑的整份快照撤销——仅改动型记录、仅本会话：opts 走内存注册表
-// （registerNoteOpts），本会话内重画由
-// loadConvoForChat 凭 peekNoteOpts 重挂；重载后注册表为空 → 记录变只读（重放旧补丁不安全，与手动
-// 诊断回复重载后失去按钮一致）。
+// 持久 note 的诊断快照仍只在会话注册表中；校正记录则额外把最小 fixAction locator
+// 落盘，刷新后可从主消息自身的单步记录重建撤销 / 重新应用。
 export function addNoteMessage(entry, opts) {
     const empty = messagesEl.querySelector('.pad-empty');
     if (empty) empty.remove();
@@ -263,11 +259,11 @@ export function addNoteMessage(entry, opts) {
     txt.className = 'pad-note-record-text';
     txt.textContent = entry ? entry.content : '';
     wrap.appendChild(txt);
-    if (opts && opts.snapshot && opts.patch) addNoteUndoControls(wrap, opts);   // info 形状：{snapshot, applied, patch, writeBack, undone?}
-    else if (opts && opts.fix) addAutoFixControls(wrap, opts.fix);
-    else if (opts && opts.health) addSaveHealthControls(wrap, opts.health);   // 🩺 1.89.0 存档检查：跳格按钮 + 技术细节
-    else if (opts && opts.mvued) addMvuedUndoControls(wrap, opts.mvued);   // 🎛 手动编辑记录：整份快照互换的撤销
-    else if (opts && opts.fullReply) addFullReplyControls(wrap, opts.fullReply);   // 1.71.1 unparsed 记录：查看完整回复
+    if (opts && opts.snapshot && opts.patch) addNoteUndoControls(wrap, opts);
+    else if ((opts && opts.fix) || entry?.fixAction) addAutoFixControls(wrap, (opts && opts.fix) || entry.fixAction);
+    else if (opts && opts.health) addSaveHealthControls(wrap, opts.health);
+    else if (opts && opts.mvued) addMvuedUndoControls(wrap, opts.mvued);
+    else if (opts && opts.fullReply) addFullReplyControls(wrap, opts.fullReply);
     messagesEl.appendChild(wrap);
     scrollToBottom();
     return wrap;
@@ -366,11 +362,8 @@ function repaintHtmlForRoom(streamKey, content) {
     if (streamKey === 'fix') return renderFixResultHtml(t);
     return renderMarkdownOnly(t);   // main 房：1.20.0 F5 补渲行为不变
 }
-// PURE：按房间算重画后该重挂哪些动作卡。参谋采纳卡（单拍 / 序列）/ 世界书应用控件从【字符串】可完整导出 →
-// 全记录重挂（采用 = 元数据 + 注入、应用 = 现读整本书，各自带守卫）；诊断补丁 / 校正应用只挂
-// 【最新一条 AI 回复】（Prince 定案 2026-07-16：旧补丁对着已前进的状态回放不安全——校正另有
-// 陈旧守卫，但最新一条已覆盖全部真实价值）。校正材料在会话注册表里，这里只标记候选；挂载端凭
-// id+内容取材料，取不到（重载过 / 内容不符）= 保持只读（1.31.1 契约）。
+// 按房间算重挂计划。校正后已落盘 fixAction 的 assistant 卡逐条重建；尚未应用的最新
+// 校正卡仍可在同一会话里凭注册表材料重挂首次应用按钮。
 function repaintControlPlan(streamKey, list) {
     const arr = Array.isArray(list) ? list : [];
     const out = [];
@@ -392,7 +385,10 @@ function repaintControlPlan(streamKey, list) {
         const block = latest ? extractUpdateBlock(latest.content) : '';
         if (block) out.push({ id: latest.id, kind: 'diagPatch', block });
     } else if (streamKey === 'fix') {
-        const latest = [...arr].reverse().find(isReply);
+        for (const message of arr) {
+            if (isReply(message) && message.fixAction) out.push({ id: message.id, kind: 'storedFix', action: message.fixAction });
+        }
+        const latest = [...arr].reverse().find((message) => isReply(message) && !message.fixAction);
         if (latest) out.push({ id: latest.id, kind: 'fixApply' });
     }
     return out;
@@ -427,7 +423,7 @@ export function loadConvoForChat() {
     soBulkRender(() => {
         if (!convo.length) renderEmptyState();
         for (const m of convo) {
-            // note 重画时凭注册表重挂本会话的按钮（自动诊断撤销 / 自动校正用原文——重载后注册表为空 = 只读记录，契约不变）
+            // note 的校正 locator 自身可跨刷新；其它按钮材料仍从会话注册表重挂。
             m._el = (m.role === 'note') ? addNoteMessage(m, peekNoteOpts(convoStreamKey, m)) : addMessage(m.role, m.content, m);
             // F5 补渲，1.33.1 起按房间分道（repaintHtmlForRoom）：恢复的 AI 回复用与定稿路径
             // 同源的渲染器（参谋 StoryPlan 进 <pre>、诊断/世界书保持纯文本原样、校正走 ST 格式器、其余渲
@@ -451,6 +447,7 @@ export function loadConvoForChat() {
                 addApplyControls(m._el, p.block, m);
                 if (ENABLE_SCHEMA_DIAG) diagSchemaAfterManualReply(m._el, p.block, m, { previewOnly: true });   // 重画补回预演块，不重发
             }
+            else if (p.kind === 'storedFix') addAutoFixControls(m._el, p.action);
             else if (p.kind === 'fixApply') {
                 const fa = (peekNoteOpts(convoStreamKey, m) || {}).fixApply;
                 if (fa) rehangFixApply(m._el, fa, m);
@@ -491,15 +488,15 @@ export function syncConvoStream() {
 }
 
 /* ------------------------------------------------------------------ *
- * 会话内「记录按钮」注册表（1.31.1）。自动诊断的 {snapshot,patch}（撤销）与自动校正的 {fix}
- * （用原文/看改动）是内存里的闭包材料，从不落盘（重放旧补丁不安全——「重载后记录只读」契约不变）。
+ * 会话内「记录按钮」注册表（1.31.1）。自动诊断的 {snapshot,patch} 撤销材料和尚未应用的手动校正稿
+ * 仍只在内存中；已经应用的校正把最小 fixAction locator 落盘，刷新后从主消息自己的单步记录重建操作。
  * 1.28.0 分房间后，后台记录常落进【不可见】房间（旧实现直接丢 opts），且换房重画（loadConvoForChat）
- * 也会把已挂的按钮抹掉 → 把 opts 按 房间::记录id 登记在这里，重画 note 时凭 id+内容取回重挂。
+ * 也会把已挂的按钮抹掉 → 把运行期 opts 按 房间::记录id 登记在这里，重画 note 时凭 id+内容取回重挂。
  * 内容必须参与校验：cidSeq 只爬过【已载入房间】的 id，重载后新记录可能与未访问房间里的旧记录撞号——
- * 旧记录（时间戳+补丁不同）凭内容拒挂、保持只读。换聊天必须作废（见 onChatChanged）：撤销/换 swipe
- * 写的是【当前聊天】的 MVU / 楼层，跨聊天重挂会写错对象——与 1.28.0 前「切聊天即失按钮」语义一致。
+ * 旧的运行期材料凭内容拒挂、保持只读；持久 fixAction 另有聊天与生成绑定守卫。换聊天必须作废运行期材料
+ * （见 onChatChanged），避免把诊断补丁写进错误房间。
  * ------------------------------------------------------------------ */
-const NOTE_OPTS_MAX = 60;   // 内存保险：自动校正 opts 带整楼 before/after，超长会话只留最近 60 条
+const NOTE_OPTS_MAX = 60;
 const noteOptsById = new Map();   // 'room::id' → { content, opts }（opts 存同一引用，不拷贝）
 export function registerNoteOpts(roomKey, entry, opts) {
     if (!opts || !entry) return;

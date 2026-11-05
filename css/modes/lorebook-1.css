@@ -353,6 +353,8 @@
 .pad-apply-btn:hover:not(:disabled) { filter: brightness(1.08); }
 .pad-apply-btn:active:not(:disabled) { transform: scale(0.96); }
 .pad-apply-btn:disabled { opacity: 0.6; cursor: default; }
+/* display: inline-flex 盖过了浏览器默认的 [hidden]；校正结果卡在回复换了分支后要靠 hidden 收起「撤销 / 重新应用」 */
+.pad-apply-btn[hidden] { display: none; }
 
 .pad-apply-status {
     font-size: 0.8em;

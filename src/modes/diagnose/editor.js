@@ -458,9 +458,9 @@ export function mvuedMaybeRefresh(reason) {
     console.debug('[剧情推进] 🎛 变量编辑器：已随外部改动刷新（' + (reason || '') + '）');
 }
 
-// 「跟随现实」的防抖入口（约 300ms）。一条回复落地时事件常常连着来（MESSAGE_RECEIVED 之后
-// 校正还会补发 MESSAGE_SWIPED / MESSAGE_UPDATED），逐个刷就是逐次重建整棵树。卡没开时连定时器
-// 都不起：这是全聊天每条消息都会经过的路径，能不做的活一点都别做。
+// 「跟随现实」的防抖入口（约 300ms）。一条回复落地时事件常常连着来（MESSAGE_RECEIVED，原位校正还会补发
+// MESSAGE_EDITED / MESSAGE_UPDATED），逐个刷就是逐次重建整棵树。卡没开时连定时器都不起：
+// 这是全聊天每条消息都会经过的路径，能不做的活一点都别做。
 export function mvuedScheduleRefresh(reason) {
     if (!ENABLE_MVU_EDITOR) return;
     if (!document.getElementById('pad-mvued-card')) return;

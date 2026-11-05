@@ -66,28 +66,6 @@ export function resolveAutoTargetMessage(chat, messageId) {
     return { idx, text: m.mes };
 }
 
-// 纯函数（数据变更）：把 text 作为【新 swipe】追加到消息 m 上并切到它——非破坏性，原 m.mes 留在
-// swipe 0。若消息还没有 swipes 数组，先用当前 m.mes 播种 swipe 0。info（swipe 元数据）由调用方传入，
-// 便于纯函数确定性单测。返回新的 swipe_id；m 无效返回 -1。可单测。
-export function addSwipeToMessage(m, text, info) {
-    if (!m || typeof m !== 'object') return -1;
-    if (!Array.isArray(m.swipes) || m.swipes.length === 0) {
-        m.swipes = [typeof m.mes === 'string' ? m.mes : ''];
-        m.swipe_info = [Array.isArray(m.swipe_info) && m.swipe_info[0] ? m.swipe_info[0] : {}];
-        m.swipe_id = 0;
-    }
-    if (!Array.isArray(m.swipe_info)) m.swipe_info = m.swipes.map(() => ({}));
-    m.swipes.push(String(text == null ? '' : text));
-    m.swipe_info.push(info || {});
-    m.swipe_id = m.swipes.length - 1;
-    m.mes = m.swipes[m.swipe_id];
-    // Bug 3：换到新 swipe 后，作废渲染器写在 extra.display_text 上的【旧回复渲染缓存】。ST 的 updateMessageBlock
-    // 渲染的是 extra.display_text ?? mes——小白X（LittleWhiteBox，本卡正用它）/ 翻译扩展会把渲染稿写进
-    // display_text，不清掉它屏幕就停在旧回复，要用户点一下/划一下才切到校正稿（用户反馈：「自动修正后要调出界面
-    // 才切到修正后的回复」）。对齐 ST 原生 swipe 的 loadFromSwipeId → clearMessageData（同样 delete display_text）。
-    if (m.extra && typeof m.extra === 'object') delete m.extra.display_text;
-    return m.swipe_id;
-}
 
 // 摘出这段文本里的更新区块（跨方言，见 MVU_BLOCK_DIALECTS）。取【文本里最早出现】的那一块——
 // 自动诊断写回后一条消息里可能同时躺着卡片的方言块和神谕补的经典块，先来的那个才是这一楼原本的更新。

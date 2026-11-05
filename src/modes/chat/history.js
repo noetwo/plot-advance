@@ -1,4 +1,4 @@
-import { buildConvoExportFileName, buildConvoExportMd, convoExportAllowed, convoForPrompt, convoMetaKeyFor, getSummary, parseConvoExportMd, persistConvo, saveChatMetadata, soExportTimeParts } from '../../core/chat-metadata.js';
+import { buildConvoExportFileName, buildConvoExportMd, convoExportAllowed, convoForPrompt, convoMetaKeyFor, getSummary, parseConvoExportMd, persistConvo, saveChatMetadata, serializeConvo, soExportTimeParts } from '../../core/chat-metadata.js';
 import { getCtx, uiConfirm } from '../../core/settings.js';
 
 import { addNoteMessage, loadConvoForChat, registerNoteOpts } from '../advisor/cards.js';
@@ -81,9 +81,10 @@ export function rehangFixApply(assistantEl, fa, entry) {
         note.textContent = fa.noteText;
         assistantEl.querySelector('.pad-bubble')?.appendChild(note);
     }
-    // 1.33.2：applied 旗标透传——应用过的稿子以「✓ 已应用」态重生（防重复 swipe）；entry 让重挂后
-    // 首次点「应用」也能给注册表打旗标。
-    addFixApplyControls(assistantEl, fa.parsed, fa.originalReply, fa.targetIdx, fa.keepSections, fa.scope, fa.captured, fa.finalOverride, { entry, applied: !!fa.applied });
+    addFixApplyControls(assistantEl, fa.parsed, fa.originalReply, fa.targetIdx, fa.keepSections, fa.scope, fa.captured, fa.finalOverride, {
+        entry,
+        action: entry.fixAction || fa.action || null,
+    });
 }
 
 // 后台记录写入指定房间（推广自 appendNoteToMain）。目标房间正可见 → 推 convo + 画气泡；否则直接写该房间元数据、
@@ -102,7 +103,8 @@ export function appendNoteToRoom(roomKey, entry, opts) {
     if (!md) return;
     const mk = convoMetaKeyFor(key);
     const arr = Array.isArray(md[mk]) ? md[mk].slice() : [];
-    arr.push({ id: entry.id, role: 'note', content: entry.content });
+    const serialized = serializeConvo([entry])[0];
+    if (serialized) arr.push(serialized);
     md[mk] = arr;
     saveChatMetadata();
 }

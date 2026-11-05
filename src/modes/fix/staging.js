@@ -6,9 +6,10 @@ import { buildFixPrompt } from '../chat/context.js';
 import { scrollToBottom } from '../chat/history.js';
 import { chatIdentityKey } from '../chat/send.js';
 import { fixOutputHasMvuBlock, getLatestAiMessage, getMvu, wrapContentScope } from '../diagnose/mvu.js';
-import { applyFixAsSwipe, dismissToast } from '../diagnose/schema.js';
+import { dismissToast } from '../diagnose/schema.js';
 import { clampFixAutoMinChars, composeFixedReply, fixJoinTable, fixPiecePlan, fixPieceSummary, fixSpliceTable, mergeMvuTail } from './algorithms.js';
-import { captureFixContext, fixCurrentSnapshot, fixOutputTruncated, fixScopeNoteText, fixTargetStale, isFixSwipe } from './capture.js';
+import { captureFixContext, fixCurrentSnapshot, fixOutputTruncated, fixScopeNoteText, fixTargetStale } from './capture.js';
+import { applyFixInPlace, fixActionForMessage, isFixedReply } from './writeback.js';
 import { addAutoFixNote, emitPieceAsk, emitPiecePending, fixCallTransport, fixJoinCall, fixPieceCall, showAutoFixGenerating } from './selection.js';
 import { findFixTemplate, fixDropMinusKeep, fixNoTemplateNoted, fixNoTemplateShouldNote, fixUsePresetFor, getEffectiveFixCfg, getFixCfg, resolveFixCustomCfg, resolveFixModeCfg, setFixCfg } from './templates.js';
 import { buildFixPresetMessages } from '../../presets/messages.js';
@@ -31,7 +32,7 @@ const FIX_PARK_MAX = 8;
  * 📋 自定义模板任务的【流式直播】（1.77.0，Prince 点单 2026-09-04）。
  * 模板任务常常是「整条翻译 / 整条改写」，一趟往返几十秒起步——非流式时用户只看得到一个不动的提示，
  * 分不清「在跑」与「卡死」；而中转（navy 一类）对静默连接有 ~100s 的 CF 顶，流式还能把连接喂活。
- * 直播落在【哪里】按房间可见性分流，两条路都绝不碰主聊天（写入仍只发生在 applyFixAsSwipe 那一刻）：
+ * 分流都不碰主聊天；写入只发生在 applyFixInPlace 那一刻：
  *   · 校正房正开着 → 临时气泡（与「按目标校正」的手动卡同一条 DOM 路：addMessage + pad-streaming），
  *     绝不进 convo / 不落盘，收尾必删（fixRunJoin 的 finally）。
  *   · 房间不可见（窗口关着 / 在别的房） → 把进度挂到「正在校正…」提示上（字数计数器）。
@@ -110,11 +111,9 @@ function fixCustomPreviewStart(meta, toastHandle, s) {
 }
 
 /* ------------------------------------------------------------------ *
- * ✨/📋 切聊天不取消：暂存 → 回到原聊天落地（1.77.0）。存取两个纯口 + 落地/暂存三件套。
- * 下面四个函数是【三条运行路 + 补落地】共用的唯一实现：整体校正 fixRunJoin、老单段 runAutoFix、
- * 分段 runAutoFixPieces 各自的「陈旧守卫 → 落 swipe → 记录」尾巴都收敛到这里，两边绝不漂移。
+ * ✨/📋 切聊天不取消：暂存 → 回到原聊天落地。整体校正、单段与分段路径的
+ * 「陈旧守卫 → 原位替换 → 记录」尾巴统一收敛到这里。
  * ------------------------------------------------------------------ */
-
 // 纯（唯一副作用是改【传进来的】map，可单测）：存一份暂存结果，同一聊天后来居上。返回是否真的存下。
 function fixParkPut(map, key, entry) {
     if (!map || key == null || key === '' || !entry) return false;
@@ -124,7 +123,7 @@ function fixParkPut(map, key, entry) {
 
 // 纯（唯一副作用是改【传进来的】map，可单测）：清掉过期与超额的槽。复审 minor #8 —— 暂存是「等你回来」
 // 的短期承诺，不是无期限的存档：半小时前那条回复的处理结果再落地已经离用户的心智太远（他多半早就
-// 手动重掷 / 换 swipe 了），而 Map 不封顶就会随着「切了 N 个聊天」一路长。
+// 手动重掷 / 切换回复分支了），而 Map 不封顶就会随着「切了 N 个聊天」一路长。
 //   · 过期：`at` 早于 now - FIX_PARK_TTL_MS（30 分钟）的一律丢。
 //   · 封顶：留最新 FIX_PARK_MAX 个（按 `at` 排序，旧的先出）。
 // `at` 缺失（异常写入）按 0 处理 = 立刻过期，绝不让一条没有时间戳的成品赖在槽里。
@@ -151,19 +150,18 @@ function fixParkTake(map, key) {
     return entry;
 }
 
-// 落地 = 写入 + 记录，两句【连体】。记录实参逐字节沿用各路原样（meta 为空 = 校正一族老字节；
-// 分段路的 problems 是对象，照传不动）。即时落地与暂存补落地共用这一份。
+// 落地 = 原位替换 + 持久记录。写入失败时不创建一条误称“已应用”的记录。
 async function fixLandResult(p) {
-    const ctx = getCtx();
-    await applyFixAsSwipe(p.targetIdx, p.joined);
-    // 抓【应用后】落点的 swipe_id（addSwipeToMessage 把新 swipe 设为当前），给记录的「用原文 ↔ 用校正稿」开关用。
-    const fixSwipeId = ((ctx && ctx.chat) || [])[p.targetIdx]?.swipe_id;
-    addAutoFixNote(p.status, p.problems, { idx: p.targetIdx, before: p.before, after: p.after, fixSwipeId }, p.meta || null);
+    const applied = await applyFixInPlace(p.targetIdx, p.joined);
+    if (!applied) return false;
+    const action = fixActionForMessage(p.targetIdx);
+    addAutoFixNote(p.status, p.problems, action, p.meta || null);
+    return true;
 }
 
 // 落地闸：陈旧守卫的裁决 → 立刻落 / 暂存 / 记一条 stale。返回 'landed' | 'parked' | 'stale'（供测试与日志）。
-// 'chatSwitched' 是【唯一】可暂存的理由：其余（换 swipe / 正文被编辑 / 目标没了）说明这条回复本身已经
-// 不是当初那条，暂存只会在用户回来时写坏东西 —— 照旧记一条 stale（文案字节不变）。
+// 'chatSwitched' 是【唯一】可暂存的理由：其余（切换回复分支 / 正文被编辑 / 目标没了）说明这条回复本身已经
+// 不是当初那条，暂存只会在用户回来时写坏东西 —— 照旧记一条 stale。
 // 暂存时【绝不】往当前这个（别人的）聊天里写记录，只弹一句 toast。
 // ★ 判据只认 payload.captured / payload.targetIdx，它们来自触发本轮时冻结的 fixContext ★
 // （复审 Critical #1，1.77.0 fix round 1）：旧单槽实现会在用户切到聊天 B 并触发另一轮捕获后，把 A 轮
@@ -173,7 +171,7 @@ async function fixLandResult(p) {
 async function fixLandOrPark(payload, opts) {
     const cap = payload.captured || null;
     const st = fixTargetStale(cap, fixCurrentSnapshot(payload.targetIdx), opts);
-    if (!st.stale) { await fixLandResult(payload); return 'landed'; }
+    if (!st.stale) return (await fixLandResult(payload)) ? 'landed' : 'stale';
     if (st.reason === 'chatSwitched' && cap) {
         fixParkPut(fixParked, cap.chatId, { ...payload, captured: cap, at: Date.now() });
         try { getHostGlobal('toastr')?.info?.('结果已暂存，回到原聊天时自动落地', '剧情推进'); } catch (e) { /* ignore */ }
@@ -186,8 +184,7 @@ async function fixLandOrPark(payload, opts) {
 // 回到原聊天：把暂存的成品落地。onChatChanged 末尾 + drainPendingPostReply 里 fire-and-forget 调用
 // （与后者同一约定：事件监听不该被一趟 saveChat 拖住）。取出【先于】任何 await，重入不会落两遍。
 export async function fixDrainParked() {
-    // 复审 minor #9：绝不与在飞的一轮交错落地（它随时会 applyFixAsSwipe / 写记录）。有轮在飞就让位，
-    // 由那一轮 finally 里的 drainPendingPostReply 再唤我们一次（锁那时已释放）。
+    // 不与在飞的一轮交错落地（它随时会原位替换正文 / 写记录）。有轮在飞就让位。
     if (isPostReplyBusy()) return 'deferred';
     // ★ 顺序是【先取本聊天这一份、再扫其余】★（G 轮复审）：反过来的话，槽里挤着 ≥9 个聊天、而本聊天恰是
     // 其中最旧的那一个时，封顶淘汰会把「马上就要落地的这一份」当成最旧的踢掉——用户回到原聊天，已经
@@ -197,12 +194,11 @@ export async function fixDrainParked() {
     fixParkSweep(fixParked, now);          // 本聊天这一份已经出槽，扫的是【别人】的过期 / 超额
     if (!entry) return null;
     if (now - (Number(entry.at) || 0) > FIX_PARK_TTL_MS) return null;   // 过期：与被扫掉时一样，静默不落地
-    // 回来后再核一次：暂存期间这条回复可能在别处被换过 swipe / 编辑过 / 删掉了。mvuTolerant 恒 false ——
+    // 回来后再核一次：暂存期间这条回复可能在别处切换过回复分支 / 编辑过 / 删掉了。mvuTolerant 恒 false ——
     // MVU 早在暂存前就写完了，容忍窗口没有意义，宁可判陈旧也不写坏。
     const st = fixTargetStale(entry.captured, fixCurrentSnapshot(entry.targetIdx), { mvuTolerant: false });
     if (st.stale) { addAutoFixNote('stale', st.reason, null, entry.meta || null); return 'stale'; }
-    await fixLandResult(entry);
-    return 'landed';
+    return (await fixLandResult(entry)) ? 'landed' : 'stale';
 }
 
 // 📋 按钮路（meta.manual）专属：fixRunJoin 里三处 `postReplyShouldStop()` 的静默出口补一句人话。
@@ -215,7 +211,7 @@ function fixNoteRunStopped(meta) {
     }
 }
 
-// ✨/📋 整体校正与自定义模板任务共用的「一次调用 → 闸门 → MVU 等待 → 陈旧守卫 → 落 swipe → 记录」尾巴。
+// ✨/📋 整体校正与自定义模板任务共用的「一次调用 → 闸门 → MVU 等待 → 陈旧守卫 → 原位替换 → 记录」尾巴。
 // meta = null（校正）| { task:'custom', template, manual }（自定义，记录换族）。校正一族的记录实参逐字节不动
 // （meta 为空时 nochange 恒不带理由 = 老字节；自定义才补「模型没有改动」）。
 async function fixRunJoin(ctx, s, directive, join, compatSession, meta, fixContext) {
@@ -246,7 +242,7 @@ async function fixRunJoin(ctx, s, directive, join, compatSession, meta, fixConte
     // 从 join.raw 重算）；块的有无仍对【拼好的成品】测。校正 / 手动路 r.skipMvuTail 恒 false ⇒ opts.skipBlock 恒
     // false ⇒ 与 1.76.0 逐字节同。
     if (boundary.coordinated) joined = mergeMvuTail(joined, (ctx.chat || [])[tIdx]?.mes, { skipBlock: !!(r.skipMvuTail && fixOutputHasMvuBlock(joined)) });
-    const anchorNote = r.anchorsMissing ? `\n⚠ ${r.anchorsMissing} 个结构块的位置锚点被模型挪动 / 弄丢，内容已兜底接回正文末尾——位置若不对，左滑「用原文」即可还原。` : '';
+    const anchorNote = r.anchorsMissing ? `\n⚠ ${r.anchorsMissing} 个结构块的位置锚点被模型挪动 / 弄丢，内容已兜底接回正文末尾——位置若不对，可在校正记录里点「撤销」还原。` : '';
     // 陈旧守卫 → 落地 / 暂存 / stale（1.77.0 起「切聊天」不再丢弃，见 fixLandOrPark）。
     await fixLandOrPark({
         captured: cap, targetIdx: tIdx, joined, status: 'fixed',
@@ -256,8 +252,7 @@ async function fixRunJoin(ctx, s, directive, join, compatSession, meta, fixConte
 
 // 自动分段校正【运行步】：整体校正（fixA_pieceJoin，默认开）= 折成一次调用（锚点原位保留结构）；
 // 关掉则分段逐次调用（最大优先、上限 FIX_MAX_PIECE_CALLS、逐段成本门），全部结果一次性 splice 回原位。
-// 两种都是单次 applyFixAsSwipe（绝不一段一个 swipe）+ 诚实侧聊记录。中断（「点此中断」toast →
-// cancelPostReply）随时废弃整轮、不写任何东西（1.17.4「abort 在写入之前」不变量原样）。
+// 两种路径都只原位替换一次，并留下可撤销的诚实侧聊记录。中断随时废弃整轮、不写任何东西。
 // fixWaitForMvu / 陈旧守卫（mvuTolerant）与老单段路径同一套、只跑一次。
 async function runAutoFixPieces(ctx, s, compatSession, fixContext) {
     const cap = fixContext.captured;
@@ -457,7 +452,7 @@ export async function runCustomTask(ctx, s, targetId, compatSession, manual = fa
     const fixContext = await captureFixContext(s, { mode: 'custom', targetId, customTemplateText: tpl.prompt });
     const tIdx = fixContext.targetIdx;
     if (!fixContext.targetProse.trim()) return;
-    if (isFixSwipe((ctx.chat || [])[tIdx])) { addAutoFixNote('nochange', '这条已是一次处理结果', null, meta); return; }
+    if (isFixedReply((ctx.chat || [])[tIdx])) { addAutoFixNote('nochange', '这条已是一次处理结果', null, meta); return; }
     if (cc.useMechanic && fixLandAutoDecisions(s, meta, fixContext).stop) return;
     const join = fixContext.customJoin || (fixContext.pieceTable ? fixJoinTable(fixContext.pieceTable, fixDropMinusKeep(cc.keepTags, cc.dropTags)) : null);
     if (!join) { addAutoFixNote('nochange', '没有可处理的正文', null, meta); return; }
@@ -504,10 +499,8 @@ export async function runCustomTaskNow() {
     }
 }
 
-// 自动校正【运行步】（仿 runAutoDiagnose）：对最新一条主聊天 AI 回复用【勾选目标 + 约束】跑一次两段式校正，
-// 解析成功且确有改动则自动【作为新 swipe】应用（非破坏性，原文留在 swipe 0），每跑一轮在侧聊留一条记录。
-// 后台操作：自建上下文、不碰窗口共享态、不 beginGeneration、不出问答气泡（与手动 runFixByTargets 的区别）。
-// 【不】自管锁 / settle——编排（Task 5 的 message_received 监听）持锁；本函数只负责「跑这一次」。
+// 自动校正【运行步】：对最新一条主聊天 AI 回复跑一次校正，解析成功且确有改动便直接替换
+// 当前回复，并在侧聊留一条带撤销入口的持久记录。
 // 一次性非流式调用（own AbortController + 120s 超时）。
 export async function runAutoFix(ctx, s, targetId, compatSession, options = {}) {
     // 连接没配好就静默退出——别让每条回复都报错（开自动模式的人一般已配好直连 / 配置档）。
@@ -521,7 +514,7 @@ export async function runAutoFix(ctx, s, targetId, compatSession, options = {}) 
     // R2 双重校正（自动）：目标当前 swipe 已是一次校正结果 → 跳过 + 记一条 nochange（防止在校正稿上再叠一层、越改越偏）。
     // 楼号一律读 tIdx（G 轮复审的纪律条）：快照取下之后，本函数只认 fixContext，
     // 让后续即使在中间加入 await，也不会转而读取另一轮捕获。
-    if (isFixSwipe((ctx.chat || [])[tIdx])) { addAutoFixNote('nochange'); return; }
+    if (isFixedReply((ctx.chat || [])[tIdx])) { addAutoFixNote('nochange'); return; }
 
     if (fixLandAutoDecisions(s, null, fixContext).stop) return;
     if (ENABLE_FIX_PIECEWISE && fixContext.pieceDecision && fixContext.pieceTable) { await runAutoFixPieces(ctx, s, compatSession, fixContext); return; }
@@ -574,10 +567,8 @@ export async function runAutoFix(ctx, s, targetId, compatSession, options = {}) 
     const finishHint = (/<FixedReply\b[^>]*>/i.test(finalText) && !/<\/FixedReply\s*>/i.test(finalText)) ? 'length' : undefined;
     if (fixOutputTruncated(parsed.fixed, finishHint, fixContext.targetProse).truncated) { addAutoFixNote('truncated'); return; }
 
-    // 接回原回复的机制块（<UpdateVariable> + 状态栏占位符）+ 用户「排除·保留」区，再作为【新 swipe】应用。
-    // ✨ overlap（opt-in fixWaitForMvu）：校正的 LLM 已和 MVU 额外模型更新【并行】跑完；写 swipe 前【等 MVU 写完】，
-    // 再把它事后注入的机制块（<UpdateVariable> + 占位符）从【当前】回复接到校正稿末尾（mergeMvuTail）。不开 / 无 MVU /
-    // MVU 不忙 → awaitMvuIdle 即时返回、mergeMvuTail 无操作，行为字节不变。
+    // 接回原回复的机制块与用户保留区，再直接替换当前回复。MVU 协调只负责等额外解析
+    // 完成并合并其机制块；原位写回保持当前变量槽，不复制也不重新解析 MVU。
     const boundary = await awaitFixMvuBoundary(s, compatSession, cap && cap.chatId);
     if (!boundary.proceed) return;   // 等 MVU 期间被中断 / supersede / 兼容超时 → 不写
     const innerFixed = composeFixedReply(parsed.fixed, fixContext.originalReply, fixContext.extraKeep);
@@ -585,12 +576,8 @@ export async function runAutoFix(ctx, s, targetId, compatSession, options = {}) 
     if (boundary.coordinated) finalText2 = mergeMvuTail(finalText2, (ctx.chat || [])[tIdx]?.mes);   // MVU 事后注的机制块补接末尾
     // P-CORRUPT 权威网：LLM 返回后聊天可能已切走 / 这条回复已换 swipe / 被编辑 / 被删——写入前再核对捕获快照，失效则不写、记一条
     // stale。overlap 模式（fixWaitForMvu）用 mvuTolerant：只比去机制块正文，容忍 MVU 刚注入的块，仍拦真编辑 / 换 swipe / 切聊天 / 目标没了。
-    // 陈旧守卫 → 落地 / 暂存 / stale（1.77.0 起「切聊天」不再丢弃，见 fixLandOrPark）。落地时抓【应用后】
-    // 落点的 swipe_id（fixLandResult 里），给记录的「用原文 ↔ 用校正稿」开关用；原文留在 swipe 0。
-    // before = 去机制块的本轮 targetProse；after 必须也是【纯散文】parsed.fixed——不是 finalText2：
-    // finalText2 经 composeFixedReply 接回了 <UpdateVariable> + 状态栏占位符 + 保留区，拿它做 after 会让 MVU 卡
-    // 的整个状态块在差异里被误标成大段绿色新增。prose ↔ prose 才干净（与手动卡 stripMechanismBlocks(原文)
-    // vs parsed.fixed 一致）。swipe 目标仍是 finalText2 落点（不动）。
+    // 陈旧守卫 → 落地 / 暂存 / stale。before / after 仍取纯散文，供默认差异卡展示；
+    // 实际写入 joined 包含接回的机制块与保留区。
     await fixLandOrPark({
         captured: cap, targetIdx: tIdx, joined: finalText2, status: 'fixed',
         problems: parsed.problems, before: fixContext.targetProse, after: parsed.fixed, meta: null,

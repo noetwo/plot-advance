@@ -863,7 +863,7 @@ function bindControls() {
         win.querySelector('#pad-fixc-share').addEventListener('click', () => { openFixShare(); });
         win.querySelector('#pad-fixc-mech').addEventListener('change', async (e) => {
             if (!e.target.checked && !getSettings().customFixWarned) {
-                const ok = await uiConfirm('关掉后，状态栏 / 变量块也会一起交给模板，模板输出会原样替换整条回复。原文仍留在 swipe 0。确定？');
+                const ok = await uiConfirm('关掉后，状态栏 / 变量块也会一起交给模板，模板输出会原样替换整条回复。应用后仍可在结果卡撤销。确定？');
                 if (!ok) { e.target.checked = true; return; }
                 getSettings().customFixWarned = true; save();
             }

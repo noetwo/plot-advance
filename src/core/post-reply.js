@@ -85,7 +85,7 @@ export function supersedePostReply() {
 
 // 纯（1.77.0）：切聊天时【哪些处理器】的在途轮次必须随之作废。
 // 🩺 诊断 / 🎛 修改器写的是【当前聊天】的 MVU 状态 —— 切走即作废，这一条不变。
-// ✨ 校正 / 📋 模板任务只往【那条回复】里写一个新 swipe，让它跑完：落地时发现聊天已切走就暂存
+// ✨ 校正 / 📋 模板任务只原位替换【那条回复】，让它跑完：落地时发现聊天已切走就暂存
 // （fixLandOrPark），回到原聊天时自动落地（fixDrainParked）。step 为空（还没进任一步）时不作废——
 // 那一轮还没花钱，也没有任何待写的东西。
 function postReplyStepCancels(step) {
@@ -156,7 +156,7 @@ export function postReplyHandlesType(type) {
 
 // message_received 监听的落点：在共享锁下，对一条 AI 回复按 postReplyPlan 顺序跑校正 / 诊断。
 // ✨ 自动校正 ↔ MVU「额外模型更新」抢写协调（opt-in fixWaitForMvu）。MVU 的额外模型解析在回复后【自己异步】发一次
-// 模型调用再写 <UpdateVariable> + 状态；auto-校正也在回复后异步发调用 + 写新 swipe——两者抢写同一条消息会串味 /
+// 模型调用再写 <UpdateVariable> + 状态；auto-校正也在回复后异步发调用 + 原位替换正文——两者抢写同一条消息会串味 /
 // 覆盖 / 出重复块。MVU 暴露 isDuringExtraAnalysis()（+ mag_variable_update_started/ended 事件），据此在动手前等它写完。
 // 纯防御：无 MVU / 旧版无此 API → 一律「不忙」，等待即刻结束，对不用额外模型更新的人零影响。可单测。
 export function mvuIsBusy(mvu) {
@@ -854,9 +854,9 @@ export function refreshLatestMvuBar() {
 }
 
 // 纯函数：把 block（+ 可选状态栏占位符 placeholder）幂等追加到 m.mes，并【镜像到当前 swipe 槽】。
-// 为什么要镜像：校正模式把校正稿换成了新 swipe（addSwipeToMessage），此时 m.mes 与 m.swipes[swipe_id]
-// 指向同一文本；若只改 m.mes 不改槽，下一次 swipe 重渲染会从 m.swipes[swipe_id] 取回旧文本 → 追加的更新块
-// 被丢弃。故：追加完 m.mes 后，若有 swipes 数组且当前槽是字符串，把当前槽对齐成 m.mes。
+// 为什么要镜像：SillyTavern 把 m.mes 与 m.swipes[swipe_id] 作为当前回复的两份同步表示；若只改 m.mes，
+// 下一次 swipe 重渲染会从 m.swipes[swipe_id] 取回旧文本，追加的更新块就会丢失。故：追加完 m.mes 后，
+// 若有 swipes 数组且当前槽是字符串，把当前槽对齐成 m.mes。
 // 幂等（!includes 守卫）；无 swipes 时退化为「只动 m.mes」（与改写前的写回逐字节相同）。返回新的 m.mes。
 export function applyBlockToCurrentSwipe(m, block, placeholder) {
     if (!m || typeof m.mes !== 'string') return m ? m.mes : '';

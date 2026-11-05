@@ -7,7 +7,8 @@ import { applyOutputRegex, assembleExternalWorld, buildMessages, renderAdvisorRe
 import { autoGrowInput, scrollToBottom } from './history.js';
 import { diagStatKey } from '../diagnose/patch.js';
 import { captureManualDiagnoseContext, extractUpdateBlock, getLatestAiMessage, getLatestAiMessageText, getMvuStatData } from '../diagnose/mvu.js';
-import { captureFixContext, isFixSwipe, renderFixCard } from '../fix/capture.js';
+import { captureFixContext, renderFixCard } from '../fix/capture.js';
+import { isFixedReply } from '../fix/writeback.js';
 import { diagSelHasRules } from '../fix/templates.js';
 import { buildBuilderContext, captureBuilderStatData, clearBuilderStatData } from '../builder/context.js';
 import { applyDraftPatchOps, builderVariantKey, classifyBuilderReply, renderBuilderReplyHtml, sanitizePersonaDraft } from '../builder/model.js';
@@ -149,8 +150,8 @@ export async function generateReply(options = {}) {
         // wholeFloor:true = 整篇手动（思考块保护 W1 只在这条分支生效；✂️ 选段家族同以 mode:'manual' 调用但不传）。
         fixContext = await captureFixContext(s, { mode: 'manual', wholeFloor: true });
         if (fixContext.manualScopeMissed) addSystemNote(`这条回复里没找到 <${fixContext.manualScopeMissed}> 标签，本次按整条回复校正。`);
-        // R2 双重校正（手动）：目标当前 swipe 已是校正结果 → 提醒；仍继续（在其基础上再校正）。
-        if (isFixSwipe((getCtx().chat || [])[fixContext.targetIdx])) addSystemNote('这条回复当前显示的已是一次校正结果；将在其基础上再次校正（如需校正原文请先左滑回原文）。');
+        // 手动重复校正继续允许，但会覆盖消息里上一层单步撤销记录。
+        if (isFixedReply((getCtx().chat || [])[fixContext.targetIdx])) addSystemNote('这条回复当前显示的已是一次校正结果；继续应用会覆盖上一层撤销记录。');
     } else if (builderMode) {
         // 角色工坊：读勾选的世界书条目（原样投喂），并按需取权威变量状态（与普通聊天 chatStatData 同源）。
         await buildBuilderContext();

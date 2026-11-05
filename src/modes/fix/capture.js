@@ -1,5 +1,6 @@
 import { getSummary, persistConvo } from '../../core/chat-metadata.js';
 import { getCtx } from '../../core/settings.js';
+import { appendConvo, convo } from '../../core/conversation-store.js';
 
 import { buildCardSection, buildTranscriptTurns, composeSummaryWithBridges, renderFixResultHtml, stripMechanismBlocks } from '../chat/context.js';
 import { registerFixApply } from '../chat/history.js';
@@ -77,11 +78,6 @@ export function fixOutputTruncated(fixedText, finish, originalText) {
     return { truncated: false, reason: 'ok' };
 }
 
-// 纯函数：目标消息【当前】swipe 是否已是一次校正结果（applyFixAsSwipe 在 swipe_info[...].extra.story_oracle_fix
-// 打了 true）。只看当前 swipe（防止在校正稿上再叠一层）。nullish 安全。可单测。
-export function isFixSwipe(m) {
-    return m?.swipe_info?.[m.swipe_id]?.extra?.story_oracle_fix === true;
-}
 
 // 运行时薄封装（非导出）：读【当前】getCtx() 造出 current 快照供 fixTargetStale 比对。复用 resolveAutoTargetMessage
 // 的「仍是非空 AI 回复」判据（失效 → idx:-1 → exists:false → gone）；指纹取当前 m.mes；swipe 取当前 swipe_id。
@@ -337,6 +333,7 @@ export function renderFixCard(assistantEl, contentEl, aEntry, finalText, fixCont
     if (fixOutputTruncated(r.fixed, finishHint, fc.targetProse).truncated) return 'truncated';
     const parsed = { fixed: r.fixed, problems: r.problems };
     aEntry.content = parsed.fixed;
+    if (!convo.includes(aEntry)) appendConvo(aEntry);
     persistConvo();
     const html = renderFixResultHtml(parsed.fixed);
     if (html != null) {

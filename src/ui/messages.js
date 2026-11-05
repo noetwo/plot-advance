@@ -10,9 +10,10 @@ import { diagUserFloorNotice, mvuMsgOpts } from '../modes/diagnose/auto.js';
 import { diagStatKey } from '../modes/diagnose/patch.js';
 import { extractUpdateBlock, getLatestAiMessage, getMvu, getMvuStatData, mvuStatOf, wrapContentScope } from '../modes/diagnose/mvu.js';
 import { diagSchemaDryLines, diagSchemaFilterPatch, diagSchemaRetryPlan, repairDiagNote, repairDiagPatch } from '../modes/diagnose/diagnostics.js';
-import { applyFixAsSwipe, canonicalizeDiagOps, injectDiagPatchIntoMessage, removeDiagWriteBack, restoreDiagWriteBack } from '../modes/diagnose/schema.js';
+import { canonicalizeDiagOps, injectDiagPatchIntoMessage, removeDiagWriteBack, restoreDiagWriteBack } from '../modes/diagnose/schema.js';
 import { applyFix, composeFixedReply, diagReportLines, diagStampDrifted, diagUndoDrifted, renderDiffCard, undoFix } from '../modes/fix/algorithms.js';
 import { fixCurrentSnapshot, fixOutputTruncated, fixTargetStale } from '../modes/fix/capture.js';
+import { applyFixInPlace, fixActionForMessage, reapplyFix, registerFixActionPainter, resolveFixAction, undoFix as undoReplyFix } from '../modes/fix/writeback.js';
 import { applyLorebookOps, lbDryRunOps, lbFormatApplyLine, lbSummaryOf, lbVerdictRow, undoLorebookOps } from '../modes/lorebook/operations.js';
 import { ENABLE_DIAG_BODY_INJECT } from '../prompts/builtins.js';
 import { fixNearCopyNote } from '../prompts/helpers.js';
@@ -507,132 +508,155 @@ export function addApplyControls(assistantEl, patchBlock, entry, replyText) {
     });
 }
 
-// 校正卡的「应用到回复」按钮条（仿 addApplyControls）。应用 = 把校正稿（接回原文机制块后）作为新
-// swipe 写入目标消息；原文留在左滑。Phase 1 只做应用（撤销 = 左滑回 swipe 0）。
-// ✨ Phase 4：校正「应用」被陈旧守卫拦下时给手动卡片 status span 的人话文案（P-CORRUPT 切聊天 / 内容变更 / 换 swipe / 目标消失）。
+// 校正卡默认显示差异；「看全文」展开新稿。首次应用直接替换当前回复，之后同一按钮在
+// 「撤销 / 重新应用」间切换。陈旧与截断守卫仍只约束首次应用。
 function staleMsg(reason) {
     if (reason === 'chatSwitched') return '聊天已切换，未把校正写入这条回复（避免写到别的对话）。';
     if (reason === 'contentChanged') return '这条回复已发生变化，未应用（避免覆盖新内容）。请重新校正。';
-    if (reason === 'swipeChanged') return '这条回复已切到别的 swipe，未应用。请切回后重新校正。';
-    return '目标回复已不在了，未应用。';   // gone（含未知原因兜底）
+    if (reason === 'swipeChanged') return '当前显示的回复分支已经变化，未应用。请切回后重新校正。';
+    return '目标回复已不在了，未应用。';
 }
 
-// finalOverride（✨ 分段校正 1.18.0）：非空 = 「应用」写入这份【已 splice 回原位的整条】，跳过整稿截断复检
-// （逐段已各自查过；拼接稿的「断句 + 偏短」启发式不适用）；陈旧守卫照跑。空 = 老行为（composeFixedReply +
-// wrapContentScope），既有调用点传 7 参 → undefined → 逐字节不变。
 export function addFixApplyControls(assistantEl, parsed, originalReply, targetIdx, keepSections, scope, captured, finalOverride, opts = {}, dependencies) {
     const targetStale = dependencies?.fixTargetStale || fixTargetStale;
     const currentSnapshot = dependencies?.fixCurrentSnapshot || fixCurrentSnapshot;
     const outputTruncated = dependencies?.fixOutputTruncated || fixOutputTruncated;
-    const applyAsSwipe = dependencies?.applyFixAsSwipe || applyFixAsSwipe;
+    const applyInPlace = dependencies?.applyFixInPlace || applyFixInPlace;
+    const actionForMessage = dependencies?.fixActionForMessage || fixActionForMessage;
+    const resolveAction = dependencies?.resolveFixAction || resolveFixAction;
+    const undoAction = dependencies?.undoFix || undoReplyFix;
+    const reapplyAction = dependencies?.reapplyFix || reapplyFix;
     const staleMessage = dependencies?.staleMsg || staleMsg;
     const nearCopyNote = dependencies?.fixNearCopyNote || fixNearCopyNote;
+    const bubble = assistantEl.querySelector('.pad-bubble');
+    const contentEl = assistantEl.querySelector('.pad-content');
+    if (contentEl) contentEl.hidden = true;
+
+    const appliedPreview = stripMechanismBlocks(composeFixedReply(parsed.fixed, originalReply, keepSections));
+    const diffCard = renderDiffCard(stripMechanismBlocks(String(originalReply || '')), appliedPreview);
+    bubble.appendChild(diffCard);
+
     const bar = document.createElement('div');
     bar.className = 'pad-apply-bar';
     const btn = document.createElement('button');
     btn.className = 'pad-apply-btn';
     btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 应用到回复';
-    // 「看改动」：原文（去机制块，prose↔prose）→ 校正稿的内联差异卡，懒构建一次后切 hidden 复用。
-    const diffBtn = document.createElement('button');
-    diffBtn.className = 'pad-apply-btn';
-    diffBtn.innerHTML = '<i class="fa-solid fa-eye"></i> 看改动';
+    const fullBtn = document.createElement('button');
+    fullBtn.className = 'pad-apply-btn';
+    fullBtn.innerHTML = '<i class="fa-solid fa-eye"></i> 看全文';
     const status = document.createElement('span');
     status.className = 'pad-apply-status';
     bar.appendChild(btn);
-    bar.appendChild(diffBtn);
+    bar.appendChild(fullBtn);
     bar.appendChild(status);
-    const bubble = assistantEl.querySelector('.pad-bubble');
     bubble.appendChild(bar);
-    // 近抄警示（Tier 0 ①，Prince 定案：手动只【警示】、不拦应用）：稿子与原文几乎相同时如实告知——高上下文
-    // DeepSeek 的「抄原文不改」此前以一枚正常「应用」按钮示人（fixNoOp 只抓逐字相同）。警示是加分项、包 try 不阻断。
-    // 已应用态重挂（1.33.2）时不再出警示——稿子已写入，警示徒增噪音。
-    if (!opts.applied) {
-        try {
-            const ncBefore = (captured && captured.prose) || stripMechanismBlocks(String(originalReply || ''));
-            const ncNote = nearCopyNote(ncBefore, (parsed && parsed.fixed) || '');
-            if (ncNote) {
-                const warn = document.createElement('div');
-                warn.className = 'pad-fix-nearcopy-warn';
-                warn.textContent = ncNote;
-                bubble.insertBefore(warn, bar);
-            }
-        } catch (e) { /* 警示失败不影响应用流程 */ }
-    }
-    scrollToBottom();
 
-    let diffCard = null;
-    diffBtn.addEventListener('click', () => {
-        if (!diffCard) {
-            // 看改动 = 原文 ↔【实际会应用的结果】。after 用 composeFixedReply（把保留区块 + 机制块接回原位）而非
-            // 裸 parsed.fixed——否则「保留区块」在 after 里是被抹掉的占位标记，会被【误标成大段删除】（用户报的
-            // 「<branches> 放进保留区还是被删」其实是这个 diff 假象：块并没送模型、应用后也在，只是看改动显示错了）。
-            // 两侧都 stripMechanismBlocks，让 <UpdateVariable> 不在差异里刷屏；真正被删的【未保留】块仍会如实标红。
-            const appliedPreview = stripMechanismBlocks(composeFixedReply(parsed.fixed, originalReply, keepSections));
-            diffCard = renderDiffCard(stripMechanismBlocks(String(originalReply || '')), appliedPreview);
-            bubble.appendChild(diffCard);
-        } else {
-            diffCard.hidden = !diffCard.hidden;
+    let action = opts.action || opts.entry?.fixAction || null;
+    if (!action && opts.applied) action = actionForMessage(targetIdx);
+    const paintAction = () => {
+        const state = action ? resolveAction(action) : null;
+        if (!state) {
+            btn.hidden = Boolean(action);
+            return null;
         }
+        btn.hidden = false;
+        btn.innerHTML = state.record.applied === false
+            ? '<i class="fa-solid fa-wand-magic-sparkles"></i> 重新应用'
+            : '<i class="fa-solid fa-rotate-left"></i> 撤销';
+        return state;
+    };
+    paintAction();
+    registerFixActionPainter(btn, paintAction);
+
+    if (!action) {
+        try {
+            const nearCopyBefore = (captured && captured.prose) || stripMechanismBlocks(String(originalReply || ''));
+            const note = nearCopyNote(nearCopyBefore, (parsed && parsed.fixed) || '');
+            if (note) {
+                const warning = document.createElement('div');
+                warning.className = 'pad-fix-nearcopy-warn';
+                warning.textContent = note;
+                bubble.insertBefore(warning, diffCard);
+            }
+        } catch (error) { /* 警示失败不影响应用流程 */ }
+    }
+
+    fullBtn.addEventListener('click', () => {
+        if (!contentEl) return;
+        contentEl.hidden = !contentEl.hidden;
+        fullBtn.innerHTML = contentEl.hidden
+            ? '<i class="fa-solid fa-eye"></i> 看全文'
+            : '<i class="fa-solid fa-eye-slash"></i> 收起全文';
         scrollToBottom();
     });
 
-    let applied = false;
-    if (opts.applied) {
-        // 已应用状态（1.33.2）：会话内应用过、换房重画重生——按钮以已应用态出现（防止再点出重复
-        // swipe），「看改动」照常可用（材料都在）。
-        applied = true;
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fa-solid fa-check"></i> 已应用（左滑看原文）';
-        status.textContent = '已作为新 swipe 写入这条回复。';
-    }
     btn.addEventListener('click', async () => {
-        if (applied) return;
         status.classList.remove('pad-hint-error');
         btn.disabled = true;
-        status.textContent = '正在应用…';
         try {
-            // P-CORRUPT（主要面 = 延迟点击「应用」）：写入前再核对捕获快照。这段时间里可能切了聊天、划了 swipe、
-            // 或编辑了这条回复——失效则不写、给人话原因、把按钮放回去让用户重新校正（绝不写到别的对话 / 覆盖新内容）。
-            const st = targetStale(captured, currentSnapshot(targetIdx));
-            if (st.stale) {
-                status.textContent = staleMessage(st.reason);
+            const actionState = paintAction();
+            if (actionState) {
+                const reapplying = actionState.record.applied === false;
+                status.textContent = reapplying ? '正在重新应用…' : '正在撤销…';
+                const ok = reapplying ? await reapplyAction(action) : await undoAction(action);
+                if (ok) {
+                    status.textContent = reapplying ? '已重新应用校正稿。' : '已恢复上一次校正前的正文。';
+                    paintAction();
+                } else {
+                    status.textContent = '操作已取消，或目标回复已经变化。';
+                    status.classList.add('pad-hint-error');
+                }
+                btn.disabled = false;
+                return;
+            }
+
+            status.textContent = '正在应用…';
+            const stale = targetStale(captured, currentSnapshot(targetIdx));
+            if (stale.stale) {
+                status.textContent = staleMessage(stale.reason);
                 status.classList.add('pad-hint-error');
                 btn.disabled = false;
                 return;
             }
-            // P-TRUNC 廉价复检：成品（parsed.fixed）像是半句且明显短于原文 → 不写入（半句稿会腰斩回复）。
-            // 分段校正（finalOverride）已逐段查过截断，整稿复检跳过（拼接稿的「断句 + 偏短」启发式不适用）。
             if (finalOverride == null && outputTruncated(parsed.fixed, undefined, captured && captured.prose).truncated) {
                 status.textContent = '校正稿似乎被截断了，未应用。请点 ↻ 重试或调大「最大 token 数」后重新校正。';
                 status.classList.add('pad-hint-error');
                 btn.disabled = false;
                 return;
             }
-            const finalText = (finalOverride != null)
-                ? finalOverride   // ✨ 分段校正：已 splice 回原位的整条（守卫逐字、修好的段进原槽）
-                : wrapContentScope(scope, composeFixedReply(parsed.fixed, originalReply, keepSections));   // ✨ 作用域：校正稿回插信封原位（inactive 时为无操作）
-            const ok = await applyAsSwipe(targetIdx, finalText);
-            if (ok) {
-                applied = true;
-                if (opts.entry) {
-                    // 已应用状态（1.33.2）：给注册表里的材料打 applied 旗标——换房重画以已应用态重生，
-                    // 防止重挂出崭新按钮、再点写出第二条重复 swipe。
-                    const cur = peekNoteOpts(convoStreamKey, opts.entry);
-                    if (cur && cur.fixApply) cur.fixApply.applied = true;
-                }
-                btn.innerHTML = '<i class="fa-solid fa-check"></i> 已应用（左滑看原文）';
-                status.textContent = '已作为新 swipe 写入这条回复。';
-            } else {
+            const finalText = finalOverride != null
+                ? finalOverride
+                : wrapContentScope(scope, composeFixedReply(parsed.fixed, originalReply, keepSections));
+            const applied = await applyInPlace(targetIdx, finalText);
+            if (!applied) {
                 status.textContent = '应用失败：没找到目标消息或保存失败。';
                 status.classList.add('pad-hint-error');
                 btn.disabled = false;
+                return;
             }
-        } catch (e) {
-            status.textContent = '应用失败：' + (e?.message || e);
+            action = actionForMessage(targetIdx);
+            if (!action) {
+                status.textContent = '回复已替换，但没能建立撤销记录。';
+                status.classList.add('pad-hint-error');
+                btn.disabled = true;
+                return;
+            }
+            if (opts.entry) {
+                opts.entry.fixAction = action;
+                const registered = peekNoteOpts(convoStreamKey, opts.entry);
+                if (registered?.fixApply) registered.fixApply.action = action;
+                persistConvo();
+            }
+            paintAction();
+            status.textContent = '已替换这条回复，可随时撤销。';
+            btn.disabled = false;
+        } catch (error) {
+            status.textContent = '应用失败：' + (error?.message || error);
             status.classList.add('pad-hint-error');
             btn.disabled = false;
         }
     });
+    scrollToBottom();
 }
 
 // Apply / Undo bar appended to a lorebook reply that contains a <LorebookEdit>

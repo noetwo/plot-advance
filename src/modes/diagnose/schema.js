@@ -6,9 +6,10 @@ import { diagUserFloorNotice, mvuMsgOpts, mvuedPathStr } from './auto.js';
 import { diagDoubleBlockNotice, diagSchemaDryLines, diagZeroHeadline, maybeRunSaveHealth, repairDiagNote } from './diagnostics.js';
 import { trainerReadRules, trainerSetRule } from './editor.js';
 import { buildDiagPatchPayload, diffMvuStat, insertDiagPatchIntoBlock, stripDiagPatchFromText, verifyDiagOps } from './patch.js';
-import { addSwipeToMessage, getMvu, stripFixKeepMarks } from './mvu.js';
+import { getMvu, stripFixKeepMarks } from './mvu.js';
 import { applyFix, diagReportLines, diagUndoDrifted, renderDiffCard, undoFix } from '../fix/algorithms.js';
 import { fixScopeNoteText } from '../fix/capture.js';
+import { reapplyFix as reapplyReplyFix, registerFixActionPainter, resolveFixAction, undoFix as undoReplyFix } from '../fix/writeback.js';
 import { ENABLE_MODE_ROOMS, ENABLE_MVU_TRAINER, ENABLE_SCHEMA_DIAG } from '../../prompts/builtins.js';
 import { syncChatBarButton, syncQrButton } from '../../ui/chat-entry.js';
 import { centeredWindowBox, currentView } from '../../ui/geometry.js';
@@ -16,6 +17,8 @@ import { toggleWindow } from '../../ui/mode-shell.js';
 import { nextCid } from '../../core/conversation-store.js';
 import { win } from '../../ui/refs.js';
 import { getHostGlobal } from '../../st/host.js';
+
+const mountedFixControls = new WeakSet();
 // 取「诊断前快照」与「诊断后现状」的差异 → 绝对值 ops。现取 MVU（autoApplyFix 刚 replaceMvuData 写过）。
 // 尽力而为：拿不到任一侧 / 抛错 / 自检不过 → []（调用方据此不注入，行为回到不开时的样子）。
 export function canonicalizeDiagOps(snapshot, Mvu) {
@@ -102,97 +105,6 @@ export async function restoreDiagWriteBack(wb) {
     refreshMessageBar(wb.idx);
 }
 
-// 把校正稿作为【新 swipe】写入第 idx 条消息（非破坏性，原文留在 swipe 0），保存、重渲染、补发
-// MESSAGE_SWIPED/UPDATED（让酒馆助手重建状态栏 iframe，与 refreshMessageBar 同理）。返回 true=成功。
-// 2026-06-26 两个真机 bug 的修复（手动与自动校正共用本函数，一处修两处都好）：
-//  · Bug 1（计数停在 1/1、滑不回原文，得重载才变 2/2）：updateMessageBlock 只重渲染 .mes_text，不碰 ST
-//    的 .swipes-counter / 左右箭头；补发 MESSAGE_SWIPED 也不刷新计数。故加一刀 ctx.swipe.refresh(true)
-//    （= refreshSwipeButtons(updateCounters=true)）——更新「X/Y」文字、并在 swipes.length>1 时点亮左箭头
-//    （swipes_visible），于是无需重载即可滑回原文。
-//  · Bug 2（机制块随校正稿带过来了，但 stats 没应用）：MVU 只在 MESSAGE_RECEIVED/SENT 解析更新块，新 swipe
-//    是代码造的，MVU 不会给它建变量快照 → 状态栏读不到原回复那次更新。修法：把【原回复已生效】的 MVU 整盘
-//    状态【拷贝】到新 swipe（换前 getMvuData 抓快照、换后 replaceMvuData 写回 latest）。是【拷贝】不是
-//    【重解析】——绝不会把「好感度 += 5」这类相对更新二次累加；最坏情形（被某 MVU 监听覆盖）也只是没刷新 =
-//    与修复前一致，绝不会改坏存档。真实卡片上的状态栏【数值】仍需肉眼复核（MVU 的 swipe 语义此处测不到）。
-export async function applyFixAsSwipe(idx, finalText) {
-    const ctx = getCtx();
-    const m = (ctx.chat || [])[idx];
-    if (!m || typeof m.mes !== 'string') return false;
-
-    // Bug 2 ①：换 swipe 前，抓住当前（= 被校正那条 swipe 已生效）的 MVU 整盘状态，待会儿原样拷给新 swipe。
-    let mvuSnapshot = null;
-    try {
-        const Mvu = await getMvu();
-        if (Mvu && typeof Mvu.getMvuData === 'function') {
-            const cur = Mvu.getMvuData(mvuMsgOpts());
-            if (cur) mvuSnapshot = JSON.parse(JSON.stringify(cur));
-        }
-    } catch (e) { console.warn('[剧情推进] 校正前读取 MVU 状态失败：', e); }
-
-    const now = new Date();
-    const info = { send_date: now.toISOString(), gen_started: null, gen_finished: now.toISOString(), extra: { story_oracle_fix: true } };
-    addSwipeToMessage(m, finalText, info);
-    try { if (typeof ctx.saveChat === 'function') await ctx.saveChat(); }
-    catch (e) { console.warn('[剧情推进] 校正写入 swipe 后保存失败：', e); return false; }
-
-    // Bug 2 ②：把抓到的状态【拷贝】到新 swipe（它现在已是 latest）。replaceMvuData 同时写 stat_data +
-    // display_data，下面 updateMessageBlock 重渲染时状态栏即读到正确值。放在补发事件【之前】，尽量先于
-    // MVU 可能的 swipe 监听落定。
-    if (mvuSnapshot) {
-        try {
-            const Mvu = await getMvu();
-            if (Mvu && typeof Mvu.replaceMvuData === 'function') {
-                await Mvu.replaceMvuData(mvuSnapshot, mvuMsgOpts());
-            }
-        } catch (e) { console.warn('[剧情推进] 校正后写回 MVU 状态失败：', e); }
-    }
-
-    try { if (typeof ctx.updateMessageBlock === 'function') ctx.updateMessageBlock(idx, m); }
-    catch (e) { console.warn('[剧情推进] 校正后重渲染失败：', e); }
-
-    // Bug 1：刷新 ST 的 swipe 计数 + 左右箭头（updateMessageBlock 不管这块）。ctx.swipe.refresh 即
-    // refreshSwipeButtons；传 true 连「X/Y」文字一起更新。带回退以防个别 ST 构建把它摆在别处。
-    try {
-        const swipeRefresh = (ctx.swipe && ctx.swipe.refresh) || ctx.refreshSwipeButtons;
-        if (typeof swipeRefresh === 'function') swipeRefresh(true);
-    } catch (e) { console.warn('[剧情推进] 校正后刷新 swipe 计数失败：', e); }
-
-    try {
-        const et = ctx.eventTypes || ctx.event_types || {};
-        if (ctx.eventSource && typeof ctx.eventSource.emit === 'function') {
-            Promise.resolve(ctx.eventSource.emit(et.MESSAGE_SWIPED || 'message_swiped', idx)).catch(() => {});
-            Promise.resolve(ctx.eventSource.emit(et.MESSAGE_UPDATED || 'message_updated', idx)).catch(() => {});
-        }
-    } catch (e) { console.warn('[剧情推进] 校正后发事件失败：', e); }
-    return true;
-}
-
-// 非破坏性地把某条消息切到一个【已存在的】swipe（不新增、不删除——只换 swipe_id + mes）。Task 3 的
-// 「用原文」会用它切回原文 swipe；现在仅作为已挂载的 async 函数存在。swipeId 越界 / 不是字符串 → 返回
-// false（不动）。命中后复用 applyFixAsSwipe 的保存 / 重渲染 / 发事件尾巴（saveChat → updateMessageBlock →
-// emit MESSAGE_SWIPED + MESSAGE_UPDATED），让状态栏 iframe 随之刷新。
-async function selectSwipe(idx, swipeId) {
-    const ctx = getCtx();
-    const m = (ctx.chat || [])[idx];
-    if (!m || !Array.isArray(m.swipes) || typeof m.swipes[swipeId] !== 'string') return false;
-    m.swipe_id = swipeId;
-    m.mes = m.swipes[swipeId];
-    // Bug 3（同 addSwipeToMessage）：切到另一条已存在 swipe（用原文 / 用校正稿）也要作废 extra.display_text 的旧
-    // 渲染缓存，否则 updateMessageBlock 会渲染旧 display_text 而不是切过去的 mes。对齐 ST 原生 swipe。
-    if (m.extra && typeof m.extra === 'object') delete m.extra.display_text;
-    try { if (typeof ctx.saveChat === 'function') await ctx.saveChat(); }
-    catch (e) { console.warn('[剧情推进] 校正写入 swipe 后保存失败：', e); return false; }
-    try { if (typeof ctx.updateMessageBlock === 'function') ctx.updateMessageBlock(idx, m); }
-    catch (e) { console.warn('[剧情推进] 校正后重渲染失败：', e); }
-    try {
-        const et = ctx.eventTypes || ctx.event_types || {};
-        if (ctx.eventSource && typeof ctx.eventSource.emit === 'function') {
-            Promise.resolve(ctx.eventSource.emit(et.MESSAGE_SWIPED || 'message_swiped', idx)).catch(() => {});
-            Promise.resolve(ctx.eventSource.emit(et.MESSAGE_UPDATED || 'message_updated', idx)).catch(() => {});
-        }
-    } catch (e) { console.warn('[剧情推进] 校正后发事件失败：', e); }
-    return true;
-}
 
 // 纯函数：unparsed 记录里那段「回复摘要」的唯一裁剪口（1.71.1 从 autoDiagNoteContent 提炼，逻辑
 // 逐字节不变）。只取开头 3 行【且】至多 400 字：记录是给人看的，不是日志。行数闸单独用是不够的
@@ -326,15 +238,14 @@ function diagCoWriteDroppedLine(scoped) {
     return `\n（有 ${d.length} 条与其他脚本的改动冲突，已跳过：${paths}）`;
 }
 
-// 纯函数：拼一条自动【校正】侧聊记录的正文（仿 autoDiagNoteContent）。status: fixed（已校正、已作为新
-// swipe 应用）/ nochange（成本门 / 无操作，未改动）/ failed（没解析出 <FixedReply>，未改动）。fixed 提示
-// 向左划可看原文（原文留在 swipe 0，本扩展不破坏它），并附上「发现并修正」摘要（problems，可空）。
-// stamp 由调用方传入（纯函数不读时钟，便于单测）。可单测。
+// 纯函数：拼一条自动【校正】侧聊记录的正文。fixed / partial 表示校正稿已经直接替换当前回复，
+// 同时回复自身保留一层可撤销记录；nochange / failed 等状态没有改动正文。
+// stamp 由调用方传入（纯函数不读时钟，便于单测）。
 export function autoFixNoteContent({ status, problems, stamp }) {
     const t = stamp ? ' · ' + stamp : '';
     if (status === 'fixed') {
         const body = (problems && String(problems).trim()) ? `\n发现并修正：\n${String(problems).trim()}` : '';
-        return `✨ 自动校正${t} —— 已校正最新回复，并作为新 swipe 应用。原文还在——向左划看原文，或点下方「看改动」对比。${body}`;
+        return `✨ 自动校正${t} —— 已校正并替换最新回复。可点下方「撤销」恢复上一次正文。${body}`;
     }
     if (status === 'failed') {
         // ✨ 防呆（P5 接线）：problems 槽可携带 fixFailureReason 的人话原因（空 / 拒绝 / 垃圾），空则字节不变。
@@ -355,7 +266,7 @@ export function autoFixNoteContent({ status, problems, stamp }) {
             return `⚠️ 自动校正${t} —— 大部分正文没能校正（${p.headline || ''}），未校正的段落已保留原文，建议稍后点 ↻ 重试。${lines}${body}`;
         }
         const kept = lines ? '；未校正的段落已保留原文' : '';
-        return `✨ 自动校正${t} —— ${p.headline || '已校正'}，已作为新 swipe 应用${kept}。原文还在——向左划看原文，或点下方「看改动」对比。${lines}${body}`;
+        return `✨ 自动校正${t} —— ${p.headline || '已校正'}，已替换当前回复${kept}。可点下方「撤销」恢复。${lines}${body}`;
     }
     // ✨ 分段校正：确认一次（散文+结构混排 / 未知包裹名的卡）——本轮不校正，等用户一次确认（详见 emitPieceAsk）。
     if (status === 'ask') {
@@ -370,7 +281,7 @@ export function autoFixNoteContent({ status, problems, stamp }) {
         const why = {
             chatSwitched: '聊天已切换（避免写到别的对话）',
             contentChanged: '这条回复已发生变化（避免覆盖新内容）',
-            swipeChanged: '这条回复已切到别的 swipe',
+            swipeChanged: '这条回复已切换到别的回复分支',
             gone: '目标回复已不在了',
         }[problems] || '目标已失效';
         return `⏭️ 自动校正${t} —— 已跳过：${why}，未改动这条回复。`;
@@ -394,13 +305,13 @@ export function customTaskNoteContent({ status, problems, stamp, template }) {
     const t = stamp ? ' · ' + stamp : '';
     const who = `📋 模板〔${template || ''}〕${t}`;
     const p = (problems && typeof problems === 'string') ? problems.trim() : '';
-    if (status === 'fixed') return `${who} —— 已处理最新回复，并作为新 swipe 应用。原文还在——向左划看原文，或点下方「看改动」对比。${p ? '\n' + p : ''}`;
+    if (status === 'fixed') return `${who} —— 已处理并替换最新回复。可点下方「撤销」恢复。${p ? '\n' + p : ''}`;
     if (status === 'nochange') return `${who} —— 无需处理${p ? '（' + p + '）' : ''}，未改动回复。`;
     if (status === 'notemplate') return `⚠ 模板〔${template || ''}〕不存在或正文为空，本条未处理——到「校正设置 → 自定义」里选一份模板。`;
     if (status === 'failed') return `⚠️ ${who} —— 跑完了，但没能从模型回复里解析出处理稿（已跳过，未改动回复）。${p ? '\n可能原因：' + p : ''}`;
     if (status === 'truncated') return `⚠️ ${who} —— 模型回复像是被截断了（没写完就断了），未应用（把「校正输出上限」调大些再试）。`;
     if (status === 'stale') {
-        const why = { chatSwitched: '聊天已切换（避免写到别的对话）', contentChanged: '这条回复已发生变化（避免覆盖新内容）', swipeChanged: '这条回复已切到别的 swipe', gone: '目标回复已不在了' }[problems] || '目标已失效';
+        const why = { chatSwitched: '聊天已切换（避免写到别的对话）', contentChanged: '这条回复已发生变化（避免覆盖新内容）', swipeChanged: '这条回复已切换到别的回复分支', gone: '目标回复已不在了' }[problems] || '目标已失效';
         return `⏭️ ${who} —— 已跳过：${why}，未改动这条回复。`;
     }
     return autoFixNoteContent({ status, problems, stamp });   // scope / ask 等共用句式
@@ -677,63 +588,85 @@ export function addNoteUndoControls(wrap, info) {
     });
 }
 
-// ✨ 校正 Phase 4：自动校正【已应用】记录上的「用原文 / 看改动」按钮条（仿 addNoteUndoControls 的结构）。
-// info = { idx, before, after, fixSwipeId }。自动校正在创建记录时已把校正稿作为新 swipe 应用，原文留在
-// swipe 0。两个按钮：
-//   · 用原文：切回 swipe 0（selectSwipe(idx,0)），成功后改标签为「用校正稿」并把动作翻到切回 fixSwipeId——
-//     原文 ↔ 校正稿 的二态开关（本会话内）。selectSwipe 返回 false（swipe 已不在，例如用户重 roll 了）→
-//     状态写「无法切换」并禁用按钮。
-//   · 看改动：懒构建一次 renderDiffCard(before, after) 接到 wrap 上，之后切 hidden 复用（与手动卡同款）。
+// 自动校正、模板任务和重载后的手动结果共用这一条持久控件。info 是仅含聊天身份、
+// 目标楼层和生成绑定的 locator；正文前后稿及 applied 状态以主消息里的单步记录为准。
+// 当前生成不匹配时不显示操作；左右切回原生成后由全局 painter 自动重建。
 export function addAutoFixControls(wrap, info) {
+    let resolved = resolveFixAction(info);
+    if (!resolved) {
+        registerFixActionPainter(wrap, () => {
+            if (!mountedFixControls.has(wrap) && resolveFixAction(info)) addAutoFixControls(wrap, info);
+        });
+        return false;
+    }
+    if (mountedFixControls.has(wrap)) return true;
+    mountedFixControls.add(wrap);
+    const host = (typeof wrap.querySelector === 'function' && wrap.querySelector('.pad-bubble')) || wrap;
+    const contentEl = typeof wrap.querySelector === 'function' ? wrap.querySelector('.pad-content') : null;
+    const full = contentEl || document.createElement('div');
+    if (!contentEl) {
+        full.className = 'pad-fix-full';
+        full.textContent = stripFixKeepMarks(resolved.record.after);
+        host.appendChild(full);
+    }
+    full.hidden = true;
+
+    const diffCard = renderDiffCard(stripFixKeepMarks(resolved.record.before), stripFixKeepMarks(resolved.record.after));
+    host.appendChild(diffCard);
+
     const bar = document.createElement('div');
     bar.className = 'pad-apply-bar pad-note-undo';
-    const swapBtn = document.createElement('button');
-    swapBtn.className = 'pad-apply-btn';
-    swapBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> 用原文';
-    const diffBtn = document.createElement('button');
-    diffBtn.className = 'pad-apply-btn';
-    diffBtn.innerHTML = '<i class="fa-solid fa-eye"></i> 看改动';
+    const actionBtn = document.createElement('button');
+    actionBtn.className = 'pad-apply-btn';
+    const fullBtn = document.createElement('button');
+    fullBtn.className = 'pad-apply-btn';
+    fullBtn.innerHTML = '<i class="fa-solid fa-eye"></i> 看全文';
     const status = document.createElement('span');
     status.className = 'pad-apply-status';
-    bar.appendChild(swapBtn);
-    bar.appendChild(diffBtn);
-    bar.appendChild(status);
-    wrap.appendChild(bar);
-
-    // 原文 ↔ 校正稿 二态开关。showingOriginal=false = 当前显示校正稿（记录创建时即此态）。
-    let showingOriginal = false;
-    swapBtn.addEventListener('click', async () => {
-        status.classList.remove('pad-hint-error');
-        swapBtn.disabled = true;
-        const targetSwipe = showingOriginal ? info.fixSwipeId : 0;
-        const ok = await selectSwipe(info.idx, targetSwipe);
-        if (!ok) {
-            // swipe 不在了（用户重 roll / 删了）——这条记录的切换不再可靠，停用。
-            status.textContent = '无法切换（原 swipe 已不在）。';
-            status.classList.add('pad-hint-error');
-            return;   // 留 disabled
+    const paint = () => {
+        resolved = resolveFixAction(info);
+        if (!resolved) {
+            actionBtn.hidden = true;
+            status.textContent = '当前显示的已不是这次校正稿。';
+            return false;
         }
-        showingOriginal = !showingOriginal;
-        if (showingOriginal) {
-            swapBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 用校正稿';
-            status.textContent = '已切回原文。';
-        } else {
-            swapBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> 用原文';
-            status.textContent = '已切回校正稿。';
-        }
-        swapBtn.disabled = false;
-    });
-
-    let diffCard = null;
-    diffBtn.addEventListener('click', () => {
-        if (!diffCard) {
-            diffCard = renderDiffCard(stripFixKeepMarks(info.before), stripFixKeepMarks(info.after));   // 别把 ⟦SO_KEEP_n⟧ 锚点露进「看改动」
-            wrap.appendChild(diffCard);
-        } else {
-            diffCard.hidden = !diffCard.hidden;
-        }
+        actionBtn.hidden = false;
+        if (status.textContent === '当前显示的已不是这次校正稿。') status.textContent = '';
+        actionBtn.innerHTML = resolved.record.applied === false
+            ? '<i class="fa-solid fa-wand-magic-sparkles"></i> 重新应用'
+            : '<i class="fa-solid fa-rotate-left"></i> 撤销';
+        return true;
+    };
+    paint();
+    registerFixActionPainter(actionBtn, paint);
+    fullBtn.addEventListener('click', () => {
+        full.hidden = !full.hidden;
+        fullBtn.innerHTML = full.hidden
+            ? '<i class="fa-solid fa-eye"></i> 看全文'
+            : '<i class="fa-solid fa-eye-slash"></i> 收起全文';
         scrollToBottom();
     });
+    actionBtn.addEventListener('click', async () => {
+        if (!paint()) return;
+        status.classList.remove('pad-hint-error');
+        actionBtn.disabled = true;
+        const reapplying = resolved.record.applied === false;
+        status.textContent = reapplying ? '正在重新应用…' : '正在撤销…';
+        const ok = reapplying ? await reapplyReplyFix(info) : await undoReplyFix(info);
+        if (ok) {
+            status.textContent = reapplying ? '已重新应用校正稿。' : '已恢复上一次校正前的正文。';
+            paint();
+        } else {
+            status.textContent = '操作已取消，或目标回复已经变化。';
+            status.classList.add('pad-hint-error');
+        }
+        actionBtn.disabled = false;
+    });
+    bar.appendChild(actionBtn);
+    bar.appendChild(fullBtn);
+    bar.appendChild(status);
+    host.appendChild(bar);
+    return true;
 }
 
 // 🎛 手动编辑记录的「撤销 / 重新应用」二态按钮（仿 addNoteUndoControls，但走 replaceMvuData 整份快照

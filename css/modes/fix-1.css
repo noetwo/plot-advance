@@ -33,10 +33,16 @@
 }
 /* 校正稿卡片里"改了哪些"的小字摘要。 */
 .pad-fix-changes { margin-top: 6px; font-size: 0.85em; opacity: 0.78; line-height: 1.4; white-space: pre-wrap; }
-/* 「看改动」内联差异卡：原文→校正稿，删划掉红、增高亮绿。 */
-.pad-diff-card { white-space: pre-wrap; font-size: 0.9em; margin-top: 6px; padding: 6px 8px; border-radius: var(--pad-r-md, 8px); background: color-mix(in srgb, var(--pad-accent) 6%, transparent); line-height: 1.5; }
-.pad-diff-del { background: color-mix(in srgb, #e5544b 30%, transparent); text-decoration: line-through; opacity: 0.85; }
-.pad-diff-ins { background: color-mix(in srgb, #2a9d6f 32%, transparent); }
+/* 内联差异卡：头部先说明改动量和图例，正文用颜色 + 线型双重区分删除与新增。文字颜色沿用主题，
+   高饱和半透明底色在深、浅主题上都保留对比度。 */
+.pad-diff-card { margin-top: 6px; padding: 7px 9px; border-radius: var(--pad-r-md, 8px); background: color-mix(in srgb, var(--pad-accent) 8%, transparent); font-size: 0.9em; line-height: 1.5; }
+.pad-diff-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin-bottom: 6px; padding-bottom: 5px; border-bottom: 1px solid color-mix(in srgb, currentColor 22%, transparent); }
+.pad-diff-summary { font-weight: 650; }
+.pad-diff-legend { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; font-size: 0.84em; }
+.pad-diff-legend-item { padding: 0 3px; border-radius: 3px; }
+.pad-diff-body { white-space: pre-wrap; }
+.pad-diff-del { background-color: color-mix(in srgb, #ff4d5f 38%, transparent); text-decoration-line: line-through; text-decoration-color: color-mix(in srgb, currentColor 35%, #ff3048 65%); text-decoration-thickness: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.pad-diff-ins { background-color: color-mix(in srgb, #20c878 40%, transparent); text-decoration-line: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, #00a85a 65%); text-decoration-thickness: 2px; text-underline-offset: 0.15em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 
 #pad-diag-pill {
     display: none;

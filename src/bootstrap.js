@@ -35,6 +35,7 @@ import { refreshWiCustomUI } from './modes/diagnose/pickers.js';
 import { injectWandButton, refreshOracleEntries } from './modes/diagnose/schema.js';
 import { clearFixChatSel, onChatSelectionChange, refreshFixChatEntry } from './modes/fix/selection.js';
 import { armGuide, disarmGuide, glueGen, glueGenReset, onPromptReadyGlue } from './modes/fix/templates.js';
+import { refreshFixActionPainters } from './modes/fix/writeback.js';
 import { migrateBuiltinJbDefault, migrateFixLeanDefaults } from './modes/lorebook/migrations.js';
 import { BUILTIN_JB_AUTHOR } from './presets/builtin-jailbreak.js';
 import { ENABLE_INJECT_GLUE, ENABLE_LWB_BRIDGE, ENABLE_MVU_EDITOR, ENABLE_WI_CUSTOM_PICK } from './prompts/builtins.js';
@@ -219,6 +220,7 @@ function initNow() {
             ctx.eventSource.on(et.CHAT_CHANGED || 'chat_id_changed', () => supersedePostReplyOnChatSwitch());
             ctx.eventSource.on(et.CHAT_CHANGED || 'chat_id_changed', onChatChanged);
             ctx.eventSource.on(et.MESSAGE_RECEIVED || 'message_received', checkPlanReminder);
+            ctx.eventSource.on(et.MESSAGE_RECEIVED || 'message_received', refreshFixActionPainters);
             // 1.3.1：剧情导向只在主聊天拼提示词时挂上（见 armGuide 上方说明）。
             ctx.eventSource.on(et.GENERATION_STARTED || 'generation_started', (type) => armGuide(type));
             for (const ev of [et.GENERATE_AFTER_DATA || 'generate_after_data', et.GENERATION_STOPPED || 'generation_stopped',
@@ -263,8 +265,8 @@ function initNow() {
                 et.MESSAGE_SWIPED || 'message_swiped',
                 et.MESSAGE_EDITED || 'message_edited',
                 et.MESSAGE_DELETED || 'message_deleted',
-            ].forEach((ev) => ctx.eventSource.on(ev, () => { refreshFixChatEntry(); refreshOracleEntries(); }));
-            ctx.eventSource.on(et.CHAT_CHANGED || 'chat_id_changed', () => { clearFixChatSel(); refreshFixChatEntry(); refreshOracleEntries(); });
+            ].forEach((ev) => ctx.eventSource.on(ev, () => { refreshFixActionPainters(); refreshFixChatEntry(); refreshOracleEntries(); }));
+            ctx.eventSource.on(et.CHAT_CHANGED || 'chat_id_changed', () => { clearFixChatSel(); refreshFixActionPainters(); refreshFixChatEntry(); refreshOracleEntries(); });
             if (ENABLE_MVU_EDITOR) {
                 // 🎛 打开中的编辑器「跟随现实」（1.59.0）：这六个事件是「本聊天的 stat_data 可能刚被别人
                 // 改过」的信号源。清单来自 staleness-audit §9 的写者盘点（每一条都对着真实写者列的）：

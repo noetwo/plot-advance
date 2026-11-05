@@ -1112,22 +1112,79 @@ function diffSegments(before, after) {
     return segments;
 }
 
-// 把 diffSegments(before, after) 渲染成一张内联差异卡（<div.pad-diff-card>）：equal 段普通文字、del 段
-// 划掉红、ins 段绿。文本一律走 textContent（差异文本不可信，绝不 innerHTML）。返回未挂载的元素，由调用方插入。
+function diffSummaryText(before, after, segments) {
+    let changes = 0;
+    let inChange = false;
+    for (const seg of segments) {
+        if (seg.type === 'equal') {
+            inChange = false;
+        } else if (!inChange) {
+            changes += 1;
+            inChange = true;
+        }
+    }
+    if (changes === 0) return '没有改动';
+
+    const beforeChars = Array.from(before).length;
+    const afterChars = Array.from(after).length;
+    const delta = afterChars - beforeChars;
+    const deltaText = delta > 0 ? `+${delta}` : (delta < 0 ? String(delta) : '±0');
+    return `改了 ${changes} 处 · ${beforeChars}→${afterChars} 字（${deltaText}）`;
+}
+
+// 纯函数：汇总 before→after 的连续改动区间与 Unicode 字符数。相邻 del + ins 同属一个改动区间；
+// 字符数按 Unicode code point 统计，代理对组成的 emoji 只算一个字。
+export function summarizeDiff(before, after) {
+    const beforeText = String(before == null ? '' : before);
+    const afterText = String(after == null ? '' : after);
+    const segments = diffSegments(beforeText, afterText);
+    return diffSummaryText(beforeText, afterText, segments);
+}
+
+// 把 diffSegments(before, after) 渲染成一张内联差异卡（<div.pad-diff-card>）：头部显示摘要与图例，
+// 正文 equal 段为普通文字、del 段划掉红、ins 段绿并加下划线。所有文本一律走 textContent
+//（差异文本不可信，绝不 innerHTML）。返回未挂载的元素，由调用方插入。
 export function renderDiffCard(before, after) {
+    const beforeText = String(before == null ? '' : before);
+    const afterText = String(after == null ? '' : after);
+    const segments = diffSegments(beforeText, afterText);
+
     const card = document.createElement('div');
     card.className = 'pad-diff-card';
-    for (const seg of diffSegments(String(before == null ? '' : before), String(after == null ? '' : after))) {
+
+    const header = document.createElement('div');
+    header.className = 'pad-diff-header';
+    const summary = document.createElement('span');
+    summary.className = 'pad-diff-summary';
+    summary.textContent = diffSummaryText(beforeText, afterText, segments);
+    const legend = document.createElement('span');
+    legend.className = 'pad-diff-legend';
+    const delLegend = document.createElement('span');
+    delLegend.className = 'pad-diff-del pad-diff-legend-item';
+    delLegend.textContent = '删除';
+    const insLegend = document.createElement('span');
+    insLegend.className = 'pad-diff-ins pad-diff-legend-item';
+    insLegend.textContent = '新增';
+    legend.appendChild(delLegend);
+    legend.appendChild(insLegend);
+    header.appendChild(summary);
+    header.appendChild(legend);
+    card.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'pad-diff-body';
+    for (const seg of segments) {
         const span = document.createElement('span');
         if (seg.type === 'del') span.className = 'pad-diff-del';
         else if (seg.type === 'ins') span.className = 'pad-diff-ins';
         span.textContent = seg.text;
-        card.appendChild(span);
+        body.appendChild(span);
     }
+    card.appendChild(body);
     return card;
 }
 
-// 纯函数：把原回复里的机制块（<UpdateVariable> + 状态栏占位符）原样接回校正稿，让校正后的 swipe
+// 纯函数：把原回复里的机制块（<UpdateVariable> + 状态栏占位符）原样接回校正稿，让原位替换后的回复
 // 仍携带 MVU 更新 + 触发状态栏。CoT 不接回——那是原回复的推理，与校正无关。幂等。可单测。
 // keepBlocks（用户「排除·保留」区抠出的块）：数组形态按 ⟦SO_KEEP_n⟧ 标记还原到【原位】（模型弄丢则兜底接到
 // 末尾，不丢内容）；字符串形态（旧调用）整体接到末尾。两者都先于机制块。
@@ -1155,7 +1212,7 @@ export function composeFixedReply(fixedProse, originalReply, keepBlocks) {
 
 // ✨ overlap 版（opt-in fixWaitForMvu）：MVU 额外模型更新在校正【捕获之后】才往回复末尾注入 <UpdateVariable> + 状态栏
 // 占位符；校正是并行跑的，composeFixedReply 只接回了【捕获时】的机制块（那时 MVU 还没写）。这里把【当前】回复里的
-// 机制块补接到校正稿末尾（已在则不重复），让新 swipe 带上 MVU 刚写好的变量块。MVU 注在整条消息末尾，故末尾追加即对齐。
+// 机制块补接到校正稿末尾（已在则不重复），让替换后的回复带上 MVU 刚写好的变量块。MVU 注在整条消息末尾，故末尾追加即对齐。
 // 纯函数、幂等、nullish 安全、可单测。
 // opts.skipBlock（📋 1.77.0，仅「整条」模板任务传）：成品里【已经】带着一个（被模型改写过的）更新区块——
 // 逐字包含判不出来，再补一块就是 MVU 地雷 ②。占位符分支不受影响（那一块补接是幂等的、也不会造成双区块）。
@@ -1322,9 +1379,9 @@ export async function applyFix(patchBlock, statusEl, expectStatKey, replyText) {
         if (ENABLE_SCHEMA_DIAG && zero.code !== 'empty' && (snapshot || {}).schema === '没有用别管这个') maybeRunSaveHealth('failure');
         return null;
     }
-    // swipe 钉（审计簇 M1）：解析等待期间换了楼 / 划了 swipe → 放弃，绝不把 A swipe 算的状态写进 B。
+    // 分支钉（审计簇 M1）：解析等待期间换了楼 / 切换回复分支 → 放弃，绝不把 A 分支算的状态写进 B。
     if (diagPinMoved(swipePin, diagCaptureSwipe())) {
-        statusEl.textContent = '这条消息在应用期间被切换（楼层或 swipe 已变），未写入。请重试。';
+        statusEl.textContent = '这条消息在应用期间被切换（楼层或回复分支已变），未写入。请重试。';
         statusEl.classList.add('pad-hint-error');
         return null;
     }

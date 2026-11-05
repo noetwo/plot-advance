@@ -334,7 +334,7 @@ export function onChatChanged() {
     primeLwbFromMetadata();   // 小白X 记忆桥(a)：从本聊天 metadata 快照回填缓存（重开酒馆 / 切聊天即暖；自守门）
     // ✨ Phase 4 P-CORRUPT 的【1.77.0 修订】（Prince 亲裁 2026-09-04）：切聊天不再无条件作废在途那一轮。
     //   · 🩺 自动诊断 / 🎛 修改器写的是【当前聊天】的 MVU 状态 —— 切走即作废，这一条不变。
-    //   · ✨ 自动校正 / 📋 模板任务 只往【那条回复】里写一个新 swipe —— 让它跑完，落地时发现聊天已切走就
+    //   · ✨ 自动校正 / 📋 模板任务只原位替换【那条回复】——让它跑完，落地时发现聊天已切走就
     //     暂存（fixLandOrPark），等回到那个聊天再落（下面的 fixDrainParked）。此前这里的无条件 cancel 把
     //     已经买单的模型回复直接扔掉。
     // 判据里的 postReplyBusy 那一半同样不可少：postReplyCancelled 是【轮次级】状态，没有轮次在飞时置位就是

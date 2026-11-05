@@ -19,21 +19,34 @@ export function saveChatMetadata() {
     } catch (e) { /* metadata still set in memory */ }
 }
 
-// 纯函数：剥掉 _el（DOM 链接）等运行期字段，只留可持久化的 {id, role, content}。也保留自动诊断
-// 的 note 记录（用户功能请求：把自动诊断的回复留在侧聊框里、跨重载存活）。可单测。
-// diagStamp（Task 5）是唯一的例外字段：诊断卡片的陈旧印章要跨重载才拦得住「躺了很久的卡片按旧状态
-// 写入」。只留【最后一枚】——能重挂应用按钮的只有本房最新那张卡（repaintControlPlan 的 latest-only
-// 规则），旧印章纯粹占元数据，而 statKey 是整份 stat_data 的指纹、不小。
-// 读回（loadConvoForChat）也走本函数：落盘与读回共用一份口径，两处各写一遍必然漂移。
+// 剥掉 DOM 链接等运行期字段，只保留侧聊基础字段、最后一枚诊断印章，以及校正操作的
+// 最小 locator。校正前后正文不重复塞进 metadata，实际单步记录在主消息自身。
 export function serializeConvo(list) {
     const out = (Array.isArray(list) ? list : [])
-        .filter((m) => m && (m.role === 'user' || m.role === 'assistant' || m.role === 'note') && typeof m.content === 'string')
-        .map((m) => (m.diagStamp && typeof m.diagStamp === 'object')
-            ? { id: m.id, role: m.role, content: m.content, diagStamp: m.diagStamp }
-            : { id: m.id, role: m.role, content: m.content });
-    for (let i = out.length - 1, seen = false; i >= 0; i--) {
+        .filter((message) => message && (message.role === 'user' || message.role === 'assistant' || message.role === 'note') && typeof message.content === 'string')
+        .map((message) => {
+            const serialized = { id: message.id, role: message.role, content: message.content };
+            if (message.diagStamp && typeof message.diagStamp === 'object') serialized.diagStamp = message.diagStamp;
+            const action = message.fixAction;
+            if (action?.version === 1 && typeof action.chatId === 'string' && Number.isInteger(action.targetIdx) && action.binding && typeof action.binding === 'object') {
+                serialized.fixAction = {
+                    version: 1,
+                    chatId: action.chatId,
+                    targetIdx: action.targetIdx,
+                    ...(typeof action.actionId === 'string' ? { actionId: action.actionId } : {}),
+                    binding: {
+                        swipe_id: Number(action.binding.swipe_id) || 0,
+                        gen_started: String(action.binding.gen_started ?? ''),
+                        send_date: String(action.binding.send_date ?? ''),
+                    },
+                };
+            }
+            return serialized;
+        });
+    for (let i = out.length - 1, seen = false; i >= 0; i -= 1) {
         if (!out[i].diagStamp) continue;
-        if (seen) delete out[i].diagStamp; else seen = true;
+        if (seen) delete out[i].diagStamp;
+        else seen = true;
     }
     return out;
 }
