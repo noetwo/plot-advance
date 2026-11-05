@@ -178,11 +178,12 @@ function restoreExtra(owner, hadExtra, original, snapshot) {
     Object.assign(original, snapshot);
 }
 
-async function writeCurrentBody(idx, text, updateExtra) {
+async function writeCurrentBody(idx, text, updateExtra, expectedMessage) {
     const ctx = getCtx();
     const chat = Array.isArray(ctx?.chat) ? ctx.chat : [];
     const message = chat[idx];
     if (!message || typeof message.mes !== 'string' || typeof text !== 'string') return false;
+    if (expectedMessage && message !== expectedMessage) return false;
     const swipeInfo = ensureCurrentSwipe(message);
     if (!swipeInfo) return false;
 
@@ -297,36 +298,53 @@ function resolveTarget(target) {
     return resolveFixAction(target);
 }
 
-export async function undoFix(target, options = {}) {
+// 确认框是异步的：等待期间可能切了聊天、删了楼（楼号错位）、换了分支，或后台又校正了一次。
+// 确认后按同一个 target 重新解析，要求聊天、消息对象、本次记录与确认时看到的正文全都没变，否则放弃。
+// 只认消息对象不认楼号：前面删了楼时同一条消息会挪到新楼号，写到它现在的位置才是对的。
+function resolveUnchanged(target, seen) {
+    if (chatIdentity(getCtx()) !== seen.chatId) return null;
+    const again = resolveTarget(target);
+    if (!again || again.message !== seen.message) return null;
+    const { record } = again;
+    if (record.actionId !== seen.record.actionId || record.applied !== seen.record.applied
+        || record.before !== seen.record.before || record.after !== seen.record.after
+        || !sameBinding(record.binding, seen.record.binding)) return null;
+    if (again.message.mes !== seen.body) return null;
+    return again;
+}
+
+// wantApplied：撤销要求记录处于「已应用」，正文应等于 after；重新应用要求「已撤销」，正文应等于 before。
+async function confirmedTarget(target, wantApplied, question, confirm) {
     const resolved = resolveTarget(target);
-    if (!resolved || resolved.record.applied === false) return false;
-    const confirm = options.confirm || uiConfirm;
-    if (resolved.message.mes !== resolved.record.after) {
-        const accepted = await confirm('校正后这条回复又被改过，撤销会丢掉这些改动。确定撤销？');
-        if (!accepted) return false;
-    }
+    if (!resolved || (resolved.record.applied !== false) !== wantApplied) return null;
+    const seen = { ...resolved, chatId: chatIdentity(getCtx()), body: resolved.message.mes };
+    const expectedBody = wantApplied ? resolved.record.after : resolved.record.before;
+    if (seen.body !== expectedBody && !(await confirm(question))) return null;
+    return resolveUnchanged(target, seen);
+}
+
+export async function undoFix(target, options = {}) {
+    const resolved = await confirmedTarget(target, true, '校正后这条回复又被改过，撤销会丢掉这些改动。确定撤销？',
+        options.confirm || uiConfirm);
+    if (!resolved) return false;
     const { actionId, binding, before, after } = resolved.record;
     return writeCurrentBody(resolved.idx, before, (topExtra, swipeExtra) => {
         delete topExtra[FIX_MARKER_KEY];
         delete swipeExtra[FIX_MARKER_KEY];
         topExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, after, false);
         swipeExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, after, false);
-    });
+    }, resolved.message);
 }
 
 export async function reapplyFix(target, options = {}) {
-    const resolved = resolveTarget(target);
-    if (!resolved || resolved.record.applied !== false) return false;
-    const confirm = options.confirm || uiConfirm;
-    if (resolved.message.mes !== resolved.record.before) {
-        const accepted = await confirm('撤销后这条回复又被改过，重新应用会丢掉这些改动。确定重新应用？');
-        if (!accepted) return false;
-    }
+    const resolved = await confirmedTarget(target, false, '撤销后这条回复又被改过，重新应用会丢掉这些改动。确定重新应用？',
+        options.confirm || uiConfirm);
+    if (!resolved) return false;
     const { actionId, binding, before, after } = resolved.record;
     return writeCurrentBody(resolved.idx, after, (topExtra, swipeExtra) => {
         topExtra[FIX_MARKER_KEY] = markerFor(binding, actionId);
         swipeExtra[FIX_MARKER_KEY] = markerFor(binding, actionId);
         topExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, after, true);
         swipeExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, after, true);
-    });
+    }, resolved.message);
 }
