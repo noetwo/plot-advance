@@ -64,16 +64,28 @@ function skipAll(changes, reason) {
     return (Array.isArray(changes) ? changes : []).map((change) => ({ change, reason }));
 }
 
-function mvuFloor(idx) {
+const TARGET_CHANGED = '目标回复已经变化';
+
+function abort(code, message) {
+    const error = new Error(message);
+    error.code = code;
+    return error;
+}
+
+// floorIndex：调用方给的「此刻目标在哪一楼」，目标已切走（换聊天 / 删楼 / 换分支）时返回 -1。
+// 每次都在同步读取变量前现取，读和写之间没有 await，所以写入的就是刚核对过的那一楼。
+function mvuFloor(floorIndex) {
+    const idx = floorIndex();
+    if (idx < 0) return { Mvu: null, data: null, idx, reason: TARGET_CHANGED };
     const Mvu = getLoadedMvu();
     if (!Mvu || typeof Mvu.getMvuData !== 'function' || typeof Mvu.replaceMvuData !== 'function') {
-        return { Mvu: null, data: null, reason: '未检测到 MVU' };
+        return { Mvu: null, data: null, idx, reason: '未检测到 MVU' };
     }
     const data = Mvu.getMvuData({ type: 'message', message_id: idx });
     if (!data || !data.stat_data || typeof data.stat_data !== 'object') {
-        return { Mvu, data: null, reason: '这一楼没有 MVU 变量' };
+        return { Mvu, data: null, idx, reason: '这一楼没有 MVU 变量' };
     }
-    return { Mvu, data, reason: '' };
+    return { Mvu, data, idx, reason: '' };
 }
 
 function locateChange(stat, change) {
@@ -127,12 +139,12 @@ async function replaceFloor(Mvu, idx, data) {
  * 把变量更新块中真正改过的字符串同步到目标楼当前 swipe 的 MVU 状态。
  * 找不到 MVU、该楼没有变量或单条路径不再匹配时均安全跳过；实际写入异常会抛给正文事务回滚。
  */
-export async function applyVariableTextChanges(idx, changes) {
+export async function applyVariableTextChanges(floorIndex, changes) {
     const list = Array.isArray(changes) ? changes : [];
     const result = { applied: [], skipped: [] };
     if (!list.length) return result;
 
-    const floor = mvuFloor(idx);
+    const floor = mvuFloor(floorIndex);
     if (!floor.data) {
         result.skipped = skipAll(list, floor.reason);
         return result;
@@ -155,7 +167,7 @@ export async function applyVariableTextChanges(idx, changes) {
         syncDisplay(next.display_data, result.applied, 'newValue');
     }
     try {
-        await replaceFloor(floor.Mvu, idx, next);
+        await replaceFloor(floor.Mvu, floor.idx, next);
     } catch (error) {
         if (error && typeof error === 'object') error.variableTextResult = result;
         throw error;
@@ -163,23 +175,35 @@ export async function applyVariableTextChanges(idx, changes) {
     return result;
 }
 
-// 撤销 / 重应用已经由 writeback 做过漂移确认；这里不再要求现值等于 expected，
-// 只要求 concrete pointer 仍存在。这样用户确认“会丢掉改动”后才能按契约真正覆盖回来。
-async function writeAppliedVariableText(idx, changes, valueKey) {
+// 撤销 / 重应用已经由 writeback 做过漂移确认；expected 是确认时看到的各 pointer 现值
+// （inspectVariableTextChanges 的 entries）。正文写入要 await，这期间那几处若又被改过，
+// 整笔放弃（抛 variable-drift，什么都不写）；确认时就找不到的 pointer 跳过。目标走掉抛 target-changed。
+// 不带 expected 只用于事务回滚：把自己刚写进去的值换回来。
+async function writeAppliedVariableText(floorIndex, changes, valueKey, expected) {
     const list = Array.isArray(changes) ? changes : [];
     const result = { applied: [], skipped: [] };
     if (!list.length) return result;
 
-    const floor = mvuFloor(idx);
+    const floor = mvuFloor(floorIndex);
+    if (floor.idx < 0) throw abort('target-changed', TARGET_CHANGED);
     if (!floor.data) {
         result.skipped = skipAll(list, floor.reason);
         return result;
     }
 
     const next = cloneJson(floor.data);
-    for (const change of list) {
+    for (const [index, change] of list.entries()) {
         const segments = parsePointer(change?.pointer);
         const found = segments && locate(next.stat_data, segments);
+        const seen = Array.isArray(expected) ? expected[index] : null;
+        if (seen && !seen.found) {
+            result.skipped.push({ change, reason: '变量路径不存在' });
+            continue;
+        }
+        if (seen && (!found?.found
+            || JSON.stringify(inspectedValue(found.value)) !== JSON.stringify(seen.current))) {
+            throw abort('variable-drift', '变量在确认之后又被改过');
+        }
         if (!found?.found) {
             result.skipped.push({ change, reason: segments ? '变量路径不存在' : '变量路径无效' });
             continue;
@@ -193,7 +217,7 @@ async function writeAppliedVariableText(idx, changes, valueKey) {
         syncDisplay(next.display_data, result.applied, valueKey);
     }
     try {
-        await replaceFloor(floor.Mvu, idx, next);
+        await replaceFloor(floor.Mvu, floor.idx, next);
     } catch (error) {
         if (error && typeof error === 'object') error.variableTextResult = result;
         throw error;
@@ -201,12 +225,12 @@ async function writeAppliedVariableText(idx, changes, valueKey) {
     return result;
 }
 
-export function revertVariableTextChanges(idx, changes) {
-    return writeAppliedVariableText(idx, changes, 'oldValue');
+export function revertVariableTextChanges(floorIndex, changes, expected) {
+    return writeAppliedVariableText(floorIndex, changes, 'oldValue', expected);
 }
 
-export function reapplyVariableTextChanges(idx, changes) {
-    return writeAppliedVariableText(idx, changes, 'newValue');
+export function reapplyVariableTextChanges(floorIndex, changes, expected) {
+    return writeAppliedVariableText(floorIndex, changes, 'newValue', expected);
 }
 
 function inspectedValue(value) {
@@ -220,7 +244,7 @@ export function inspectVariableTextChanges(idx, changes, expectedKey) {
     const list = Array.isArray(changes) ? changes : [];
     if (!list.length) return { matches: true, entries: [] };
 
-    const floor = mvuFloor(idx);
+    const floor = mvuFloor(() => idx);
     if (!floor.data) {
         return {
             matches: false,

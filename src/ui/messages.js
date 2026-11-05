@@ -646,7 +646,9 @@ export function addFixApplyControls(assistantEl, parsed, originalReply, targetId
             const applied = await applyInPlace(targetIdx, finalText, { varTextChanges: parsed?.varTextChanges || [] });
             const appliedOk = (applied && typeof applied === 'object') ? applied.ok : applied;
             if (!appliedOk) {
-                status.textContent = '应用失败：没找到目标消息或保存失败。';
+                status.textContent = applied?.reason === 'target-changed'
+                    ? '应用中途切换了聊天、删了楼或换了回复分支，已停下，没有改动变量。'
+                    : '应用失败：没找到目标消息或保存失败。';
                 status.classList.add('pad-hint-error');
                 btn.disabled = false;
                 return;

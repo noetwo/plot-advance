@@ -72,6 +72,21 @@ function sameBinding(left, right) {
         && stamp(left.send_date) === stamp(right.send_date);
 }
 
+// 一次写回事务的目标：聊天 + 消息对象 + 生成绑定。正文事件、保存、MVU 写入都要 await，
+// 期间可能切了聊天（同楼号换成另一条消息）、删了楼或换了分支；每个 await 之后都用它重新定位，
+// 定位不到就停手，绝不按旧楼号去写变量、重渲染、发事件或保存。
+function captureTarget(ctx, message) {
+    return { chatId: chatIdentity(ctx), message, binding: fixGenerationBinding(message) };
+}
+
+function liveIndex(target) {
+    const ctx = getCtx();
+    if (!target || chatIdentity(ctx) !== target.chatId) return -1;
+    const idx = Array.isArray(ctx?.chat) ? ctx.chat.indexOf(target.message) : -1;
+    if (idx < 0) return -1;
+    return sameBinding(fixGenerationBinding(target.message), target.binding) ? idx : -1;
+}
+
 function activeExtra(message) {
     const info = currentSwipeInfo(message);
     if (info && info.extra && typeof info.extra === 'object') return info.extra;
@@ -183,19 +198,25 @@ function mutationMeta(messageId, messages) {
     };
 }
 
-async function repaintAndEmit(ctx, chat, idx, message) {
-    try { if (typeof ctx.updateMessageBlock === 'function') ctx.updateMessageBlock(idx, message); }
+// 返回目标是否在整个过程中都还在原位；中途走掉就不再发后面的事件。
+async function repaintAndEmit(ctx, target) {
+    let idx = liveIndex(target);
+    if (idx < 0) return false;
+    try { if (typeof ctx.updateMessageBlock === 'function') ctx.updateMessageBlock(idx, target.message); }
     catch (error) { console.warn('[剧情推进] 校正后重渲染失败：', error); }
 
     const eventTypes = ctx.eventTypes || ctx.event_types || {};
     if (ctx.eventSource && typeof ctx.eventSource.emit === 'function') {
         try {
-            await ctx.eventSource.emit(eventTypes.MESSAGE_EDITED || 'message_edited', idx, mutationMeta(idx, chat));
+            await ctx.eventSource.emit(eventTypes.MESSAGE_EDITED || 'message_edited', idx, mutationMeta(idx, getCtx().chat));
         } catch (error) { console.warn('[剧情推进] 校正后发送 MESSAGE_EDITED 失败：', error); }
+        idx = liveIndex(target);
+        if (idx < 0) return false;
         try {
             await ctx.eventSource.emit(eventTypes.MESSAGE_UPDATED || 'message_updated', idx);
         } catch (error) { console.warn('[剧情推进] 校正后发送 MESSAGE_UPDATED 失败：', error); }
     }
+    return liveIndex(target) >= 0;
 }
 
 function restoreExtra(owner, hadExtra, original, snapshot) {
@@ -237,10 +258,9 @@ function restoreBodyState(ctx, message, before) {
     }
 }
 
-async function rollbackWrittenBody(ctx, chat, idx, message, before) {
-    restoreBodyState(ctx, message, before);
-    const currentIdx = chat.indexOf(message);
-    await repaintAndEmit(ctx, chat, currentIdx >= 0 ? currentIdx : idx, message);
+async function rollbackWrittenBody(ctx, target, before) {
+    restoreBodyState(ctx, target.message, before);
+    if (!(await repaintAndEmit(ctx, target))) return;
     try {
         if (typeof ctx.saveChat === 'function') await ctx.saveChat();
     } catch (error) {
@@ -248,14 +268,14 @@ async function rollbackWrittenBody(ctx, chat, idx, message, before) {
     }
 }
 
-async function writeCurrentBody(idx, text, updateExtra, expectedMessage) {
+// 'ok' 已写入并保存；'failed' 没写成（已恢复原样）；'detached' 写完后目标在等待事件期间走掉了，
+// 没有保存，也不该再做后续任何一步。
+async function writeCurrentBody(target, text, updateExtra) {
     const ctx = getCtx();
-    const chat = Array.isArray(ctx?.chat) ? ctx.chat : [];
-    const message = chat[idx];
-    if (!message || typeof message.mes !== 'string' || typeof text !== 'string') return false;
-    if (expectedMessage && message !== expectedMessage) return false;
+    const message = target.message;
+    if (liveIndex(target) < 0 || typeof message.mes !== 'string' || typeof text !== 'string') return 'failed';
     const swipeInfo = ensureCurrentSwipe(message);
-    if (!swipeInfo) return false;
+    if (!swipeInfo) return 'failed';
 
     const before = captureBodyState(ctx, message, swipeInfo);
 
@@ -268,17 +288,17 @@ async function writeCurrentBody(idx, text, updateExtra, expectedMessage) {
     message.swipes[message.swipe_id] = text;
     if (ctx.chatMetadata && typeof ctx.chatMetadata === 'object') ctx.chatMetadata.tainted = true;
 
-    await repaintAndEmit(ctx, chat, idx, message);
+    if (!(await repaintAndEmit(ctx, target))) return 'detached';
 
     try {
         if (typeof ctx.saveChat === 'function') await ctx.saveChat();
     } catch (error) {
         console.warn('[剧情推进] 校正替换回复后保存失败，已恢复写入前内容：', error);
         restoreBodyState(ctx, message, before);
-        await repaintAndEmit(ctx, chat, idx, message);
-        return false;
+        await repaintAndEmit(ctx, target);
+        return 'failed';
     }
-    return true;
+    return liveIndex(target) >= 0 ? 'ok' : 'detached';
 }
 
 function markerFor(binding, actionId) {
@@ -317,6 +337,8 @@ export async function applyFixInPlace(idx, finalText, { varTextChanges = [] } = 
     const swipeInfo = ensureCurrentSwipe(message);
     const binding = fixGenerationBinding(message);
     if (!swipeInfo || !binding) return applyResult(false, emptyVars, 'invalid-target');
+    const target = captureTarget(ctx, message);
+    const floorIndex = () => liveIndex(target);
 
     // 顺序是事务契约：正文必须先成功落盘，才允许碰 MVU。此时还不知道哪些路径真能命中，
     // 所以先持久化 vars:[]；变量写完后再把实际 applied 固化进同一条撤销记录。
@@ -325,25 +347,26 @@ export async function applyFixInPlace(idx, finalText, { varTextChanges = [] } = 
     const actionId = newActionId();
     const marker = markerFor(binding, actionId);
     const record = recordFor(binding, actionId, before, finalText, true, []);
-    const bodyWritten = await writeCurrentBody(idx, finalText, (topExtra, currentExtra) => {
+    const bodyState = await writeCurrentBody(target, finalText, (topExtra, currentExtra) => {
         topExtra[FIX_MARKER_KEY] = markerFor(binding, actionId);
         topExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, finalText, true, []);
         currentExtra[FIX_MARKER_KEY] = marker;
         currentExtra[FIX_UNDO_KEY] = record;
-    }, message);
-    if (!bodyWritten) return applyResult(false, emptyVars, 'text-write');
+    });
+    if (bodyState === 'failed') return applyResult(false, emptyVars, 'text-write');
+    if (bodyState === 'detached') return applyResult(false, emptyVars, 'target-changed');
 
     let vars;
     try {
-        vars = await applyVariableTextChanges(idx, varTextChanges);
+        vars = await applyVariableTextChanges(floorIndex, varTextChanges);
     } catch (error) {
         console.warn('[剧情推进] 校正同步变量失败，已回滚正文：', error);
         try {
-            await revertVariableTextChanges(idx, error?.variableTextResult?.applied || []);
+            await revertVariableTextChanges(floorIndex, error?.variableTextResult?.applied || []);
         } catch (rollbackError) {
             console.warn('[剧情推进] 校正变量写入失败后的变量回滚也失败：', rollbackError);
         }
-        await rollbackWrittenBody(ctx, chat, idx, message, transactionBefore);
+        await rollbackWrittenBody(ctx, target, transactionBefore);
         return applyResult(false, emptyVars, 'variable-write');
     }
 
@@ -351,13 +374,18 @@ export async function applyFixInPlace(idx, finalText, { varTextChanges = [] } = 
     // 就按同一事务把变量和正文都换回 transactionBefore，不能留下“正文已改但撤销不知道变量”的半状态。
     if (vars.applied.length) {
         updateRecordVars(message, swipeInfo, actionId, vars.applied);
+        if (liveIndex(target) < 0) {
+            // 变量已写进原楼；写完后目标才走掉，此时保存只会存到别的聊天，留给宿主切换时的保存。
+            console.warn('[剧情推进] 校正变量写入后目标回复已切走，撤销记录未能单独保存。');
+            return applyResult(true, vars);
+        }
         try {
             if (typeof ctx.saveChat === 'function') await ctx.saveChat();
         } catch (error) {
             console.warn('[剧情推进] 校正变量记录保存失败，已回滚正文和变量：', error);
-            try { await revertVariableTextChanges(idx, vars.applied); }
+            try { await revertVariableTextChanges(floorIndex, vars.applied); }
             catch (rollbackError) { console.warn('[剧情推进] 校正变量记录失败后的变量回滚也失败：', rollbackError); }
-            await rollbackWrittenBody(ctx, chat, idx, message, transactionBefore);
+            await rollbackWrittenBody(ctx, target, transactionBefore);
             return applyResult(false, emptyVars, 'variable-record-write');
         }
     }
@@ -441,7 +469,7 @@ async function confirmedTarget(target, wantApplied, question, confirm) {
         variableState,
     };
     const expectedBody = wantApplied ? resolved.record.after : resolved.record.before;
-    if (seen.body === expectedBody && variableState.matches) return resolved;
+    if (seen.body === expectedBody && variableState.matches) return { ...resolved, variableState };
     if (!(await confirm(question))) return null;
 
     const unchanged = resolveUnchanged(target, seen);
@@ -453,65 +481,58 @@ async function confirmedTarget(target, wantApplied, question, confirm) {
         console.warn('[剧情推进] 校正确认后复核变量失败：', error);
         return null;
     }
-    return sameVariableTextInspection(variableState, currentVariableState) ? unchanged : null;
+    return sameVariableTextInspection(variableState, currentVariableState)
+        ? { ...unchanged, variableState: currentVariableState }
+        : null;
+}
+
+// 撤销（reapplying=false）与重新应用（true）共用：先换正文，再按确认时看到的变量现值换回变量。
+// 正文的事件 / 保存都要 await，期间目标走掉或那几处变量又被改过，变量一步都不写，正文按事务回滚。
+async function swapRecordedFix(resolved, reapplying) {
+    const ctx = getCtx();
+    const swipeInfo = ensureCurrentSwipe(resolved.message);
+    if (!swipeInfo) return false;
+    const target = captureTarget(ctx, resolved.message);
+    const floorIndex = () => liveIndex(target);
+    const transactionBefore = captureBodyState(ctx, resolved.message, swipeInfo);
+    const { actionId, binding, before, after } = resolved.record;
+    const vars = normalizedRecordVars(resolved.record);
+    const bodyState = await writeCurrentBody(target, reapplying ? after : before, (topExtra, currentExtra) => {
+        if (reapplying) {
+            topExtra[FIX_MARKER_KEY] = markerFor(binding, actionId);
+            currentExtra[FIX_MARKER_KEY] = markerFor(binding, actionId);
+        } else {
+            delete topExtra[FIX_MARKER_KEY];
+            delete currentExtra[FIX_MARKER_KEY];
+        }
+        topExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, after, reapplying, vars);
+        currentExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, after, reapplying, vars);
+    });
+    if (bodyState !== 'ok') return false;
+    const writeVars = reapplying ? reapplyVariableTextChanges : revertVariableTextChanges;
+    const restoreVars = reapplying ? revertVariableTextChanges : reapplyVariableTextChanges;
+    try {
+        await writeVars(floorIndex, vars || [], resolved.variableState?.entries);
+    } catch (error) {
+        console.warn(reapplying
+            ? '[剧情推进] 重新应用校正变量失败，已恢复操作前正文：'
+            : '[剧情推进] 撤销校正变量失败，已恢复撤销前正文：', error);
+        try { await restoreVars(floorIndex, error?.variableTextResult?.applied || []); }
+        catch (rollbackError) { console.warn('[剧情推进] 变量失败后的变量回滚也失败：', rollbackError); }
+        await rollbackWrittenBody(ctx, target, transactionBefore);
+        return false;
+    }
+    return true;
 }
 
 export async function undoFix(target, options = {}) {
     const resolved = await confirmedTarget(target, true, '校正后这条回复或它的变量又被改过，撤销会丢掉这些改动。确定撤销？',
         options.confirm || uiConfirm);
-    if (!resolved) return false;
-    const ctx = getCtx();
-    const chat = Array.isArray(ctx?.chat) ? ctx.chat : [];
-    const swipeInfo = ensureCurrentSwipe(resolved.message);
-    if (!swipeInfo) return false;
-    const transactionBefore = captureBodyState(ctx, resolved.message, swipeInfo);
-    const { actionId, binding, before, after } = resolved.record;
-    const vars = normalizedRecordVars(resolved.record);
-    const bodyWritten = await writeCurrentBody(resolved.idx, before, (topExtra, currentExtra) => {
-        delete topExtra[FIX_MARKER_KEY];
-        delete currentExtra[FIX_MARKER_KEY];
-        topExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, after, false, vars);
-        currentExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, after, false, vars);
-    }, resolved.message);
-    if (!bodyWritten) return false;
-    try {
-        await revertVariableTextChanges(resolved.idx, vars || []);
-    } catch (error) {
-        console.warn('[剧情推进] 撤销校正变量失败，已恢复撤销前正文：', error);
-        try { await reapplyVariableTextChanges(resolved.idx, error?.variableTextResult?.applied || []); }
-        catch (rollbackError) { console.warn('[剧情推进] 撤销变量失败后的变量回滚也失败：', rollbackError); }
-        await rollbackWrittenBody(ctx, chat, resolved.idx, resolved.message, transactionBefore);
-        return false;
-    }
-    return true;
+    return resolved ? swapRecordedFix(resolved, false) : false;
 }
 
 export async function reapplyFix(target, options = {}) {
     const resolved = await confirmedTarget(target, false, '撤销后这条回复或它的变量又被改过，重新应用会丢掉这些改动。确定重新应用？',
         options.confirm || uiConfirm);
-    if (!resolved) return false;
-    const ctx = getCtx();
-    const chat = Array.isArray(ctx?.chat) ? ctx.chat : [];
-    const swipeInfo = ensureCurrentSwipe(resolved.message);
-    if (!swipeInfo) return false;
-    const transactionBefore = captureBodyState(ctx, resolved.message, swipeInfo);
-    const { actionId, binding, before, after } = resolved.record;
-    const vars = normalizedRecordVars(resolved.record);
-    const bodyWritten = await writeCurrentBody(resolved.idx, after, (topExtra, currentExtra) => {
-        topExtra[FIX_MARKER_KEY] = markerFor(binding, actionId);
-        currentExtra[FIX_MARKER_KEY] = markerFor(binding, actionId);
-        topExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, after, true, vars);
-        currentExtra[FIX_UNDO_KEY] = recordFor(binding, actionId, before, after, true, vars);
-    }, resolved.message);
-    if (!bodyWritten) return false;
-    try {
-        await reapplyVariableTextChanges(resolved.idx, vars || []);
-    } catch (error) {
-        console.warn('[剧情推进] 重新应用校正变量失败，已恢复操作前正文：', error);
-        try { await revertVariableTextChanges(resolved.idx, error?.variableTextResult?.applied || []); }
-        catch (rollbackError) { console.warn('[剧情推进] 重新应用变量失败后的变量回滚也失败：', rollbackError); }
-        await rollbackWrittenBody(ctx, chat, resolved.idx, resolved.message, transactionBefore);
-        return false;
-    }
-    return true;
+    return resolved ? swapRecordedFix(resolved, true) : false;
 }
